@@ -1,0 +1,14 @@
+node_modules/
+dist/
+dist-widget/
+.env
+*.log
+apps/api/storage/
+apps/api/prisma/generated-campaign-client/
+apps/api/prisma/generated-api-client/
+apps/web/public/widget.js
+
+# Salida de "tsc -b" sobre vite.config.ts (queda al lado del .ts al no tener noEmit): son
+# artefactos de compilación, no código fuente.
+apps/web/vite.config.js
+apps/web/vite.config.d.ts

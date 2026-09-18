@@ -1,0 +1,8 @@
+# Artefacto de entrega original, redundante con niro-enterprise-inicial/ ya descomprimido.
+niro-enterprise-inicial.zip
+
+# Caché de compilación incremental de TypeScript (se regenera sola).
+*.tsbuildinfo
+
+# Archivo de bloqueo de tareas programadas de Claude Code (estado local de la sesión).
+.claude/scheduled_tasks.lock

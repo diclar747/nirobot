@@ -1,0 +1,55 @@
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-niro}
+      POSTGRES_USER: ${POSTGRES_USER:-niro}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    volumes:
+      - niro_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-niro} -d ${POSTGRES_DB:-niro}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    networks: [niro]
+
+  api:
+    build: ./apps/api
+    restart: unless-stopped
+    environment:
+      PORT: 4000
+      DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL in .env}
+      JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in .env}
+      WEB_ORIGIN: ${WEB_ORIGIN:-http://localhost:3000}
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
+      SEED_SUPERADMIN_EMAIL: ${SEED_SUPERADMIN_EMAIL:-}
+      SEED_SUPERADMIN_PASSWORD: ${SEED_SUPERADMIN_PASSWORD:-}
+      STORAGE_ROOT: /app/storage/uploads
+      NIRO_AI_BASE_URL: ${NIRO_AI_BASE_URL:-https://niro.cnid.com.py}
+      NIRO_AI_API_KEY: ${NIRO_AI_API_KEY:-}
+    volumes:
+      - niro_uploads:/app/storage/uploads
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "${API_PORT:-4000}:4000"
+    networks: [niro]
+
+  web:
+    build: ./apps/web
+    restart: unless-stopped
+    depends_on: [api]
+    ports:
+      - "${WEB_PORT:-3000}:80"
+    networks: [niro]
+
+volumes:
+  niro_pgdata:
+  niro_uploads:
+
+networks:
+  niro:
+    driver: bridge
