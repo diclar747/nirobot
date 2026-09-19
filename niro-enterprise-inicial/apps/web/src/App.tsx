@@ -1,9 +1,9 @@
 import { BrowserRouter, Route, Routes } from 'react-router-dom';
 import { AuthProvider } from './context/AuthContext';
 import { ThemeProvider } from './context/ThemeContext';
+import { AlertProvider } from './context/AlertContext';
 import { ProtectedRoute } from './components/ProtectedRoute';
 import { Layout } from './components/Layout';
-import { Landing } from './routes/Landing';
 import { Login } from './routes/Login';
 import { ChangePassword } from './routes/ChangePassword';
 import { Home } from './routes/Home';
@@ -18,15 +18,18 @@ import { Orders } from './routes/Orders';
 import { Reports } from './routes/Reports';
 import { ApiPortal } from './routes/ApiPortal';
 import { AiAgents } from './routes/AiAgents';
+import { BotFlow } from './routes/BotFlow';
+import { CallCampaigns } from './routes/CallCampaigns';
 
 export function App() {
   return (
     <ThemeProvider>
-      <BrowserRouter>
-        <AuthProvider>
+      <AlertProvider>
+        <BrowserRouter>
+          <AuthProvider>
           <Routes>
-            <Route path="/" element={<Landing />} />
-            <Route path="/landing" element={<Landing />} />
+            <Route path="/" element={<Login />} />
+            <Route path="/landing" element={<Login />} />
             <Route path="/login" element={<Login />} />
 
           <Route element={<ProtectedRoute />}>
@@ -66,6 +69,7 @@ export function App() {
 
               <Route element={<ProtectedRoute roles={['OWNER', 'ADMIN', 'SUPERVISOR']} />}>
                 <Route path="/campaigns" element={<Campaigns />} />
+                <Route path="/llamadas" element={<CallCampaigns />} />
               </Route>
 
               <Route element={<ProtectedRoute roles={['OWNER', 'ADMIN']} />}>
@@ -81,12 +85,14 @@ export function App() {
 
               <Route element={<ProtectedRoute roles={['OWNER', 'ADMIN', 'SUPERVISOR', 'AGENT']} />}>
                 <Route path="/ai-agents" element={<AiAgents />} />
+                <Route path="/bot" element={<BotFlow />} />
               </Route>
             </Route>
           </Route>
         </Routes>
-      </AuthProvider>
-    </BrowserRouter>
-  </ThemeProvider>
+          </AuthProvider>
+        </BrowserRouter>
+      </AlertProvider>
+    </ThemeProvider>
   );
 }

@@ -1,0 +1,36 @@
+# HTTPS automático (Let's Encrypt) para producción, usando Caddy como proxy inverso delante del
+# servicio `web`. Es un complemento opcional de docker-compose.yml, no lo reemplaza.
+#
+# Uso:
+#   1. Apuntá el DNS de tu dominio (registro A) a la IP de este servidor.
+#   2. En tu .env, agregá: DOMAIN=tuempresa.com
+#   3. Cambiá COOKIE_SECURE=true en tu .env (las cookies de sesión solo viajan por HTTPS).
+#   4. Levantá los dos archivos juntos:
+#        docker compose -f docker-compose.yml -f docker-compose.https.yml up -d --build
+#      Caddy pide y renueva el certificado solo; no hace falta certbot ni configurar nada más.
+#
+# El servicio `web` deja de exponer el puerto 80 al host (queda accesible solo desde la red
+# interna de Docker, vía Caddy) — por eso este archivo también sobreescribe sus `ports`.
+
+services:
+  web:
+    ports: []
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    environment:
+      DOMAIN: ${DOMAIN:?Set DOMAIN (tu dominio, ej. niro.tuempresa.com) en .env}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - niro_caddy_data:/data
+      - niro_caddy_config:/config
+    depends_on: [web]
+    ports:
+      - '80:80'
+      - '443:443'
+    networks: [niro]
+
+volumes:
+  niro_caddy_data:
+  niro_caddy_config:

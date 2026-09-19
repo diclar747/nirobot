@@ -78,13 +78,18 @@ router.patch('/:id', requireCsrf, async (req, res, next) => {
     });
     if (!existing) throw new HttpError(404, 'Contacto no encontrado');
 
-    const { name, phone, email, tags, avatarUrl } = req.body;
+    const { name, phone, email, tags, avatarUrl, callConsentStatus, callConsentAt, callConsentSource, callOptedOutAt, callOptOutSource } = req.body;
     const data = {};
     if (typeof name !== 'undefined') data.name = name;
     if (typeof phone !== 'undefined') data.phone = phone;
     if (typeof email !== 'undefined') data.email = email;
     if (Array.isArray(tags)) data.tags = tags;
     if (typeof avatarUrl !== 'undefined') data.avatarUrl = avatarUrl;
+    if (typeof callConsentStatus !== 'undefined') data.callConsentStatus = callConsentStatus;
+    if (typeof callConsentAt !== 'undefined') data.callConsentAt = callConsentAt ? new Date(callConsentAt) : null;
+    if (typeof callConsentSource !== 'undefined') data.callConsentSource = callConsentSource;
+    if (typeof callOptedOutAt !== 'undefined') data.callOptedOutAt = callOptedOutAt ? new Date(callOptedOutAt) : null;
+    if (typeof callOptOutSource !== 'undefined') data.callOptOutSource = callOptOutSource;
 
     const contact = await prisma.contact.update({
       where: { id: existing.id },

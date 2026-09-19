@@ -4,6 +4,7 @@ dist-widget/
 .env
 *.log
 apps/api/storage/
+.local/
 apps/api/prisma/generated-campaign-client/
 apps/api/prisma/generated-api-client/
 apps/web/public/widget.js

@@ -12,12 +12,40 @@ const menuOptionSchema = z.object({
   departmentId: z.string().min(1)
 });
 
+const botNodeSchema = z.object({
+  id: z.string().min(1).max(80),
+  type: z.enum(['start', 'message', 'keyword', 'condition', 'ai', 'crm', 'agent', 'end']),
+  title: z.string().min(1).max(120),
+  description: z.string().max(500).optional().default(''),
+  position: z.object({ x: z.number().finite().min(0).max(5000), y: z.number().finite().min(0).max(5000) }),
+  data: z.record(z.any()).optional().default({})
+});
+
+const botEdgeSchema = z.object({
+  id: z.string().min(1).max(100),
+  from: z.string().min(1).max(80),
+  to: z.string().min(1).max(80),
+  label: z.string().max(40).optional().default('')
+});
+
+const botFlowSchema = z.object({
+  version: z.number().int().min(1).max(10).default(1),
+  name: z.string().min(1).max(120),
+  enabled: z.boolean().default(false),
+  published: z.boolean().default(false),
+  nodes: z.array(botNodeSchema).max(80),
+  edges: z.array(botEdgeSchema).max(160)
+});
+
+const botFlowTestSchema = z.object({ message: z.string().min(1).max(2000), flow: botFlowSchema.optional() });
+
 const updateOrgSettingsSchema = z
   .object({
     welcomeMessage: z.string().min(1).max(2000).optional(),
     systemPrompt: z.string().max(8000).optional(),
     aiEnabled: z.boolean().optional(),
-    menuOptions: z.array(menuOptionSchema).max(10).optional()
+    menuOptions: z.array(menuOptionSchema).max(10).optional(),
+    botFlow: botFlowSchema.optional()
   })
   .refine((data) => Object.keys(data).length > 0, { message: 'No hay cambios para aplicar' });
 
@@ -51,6 +79,8 @@ module.exports = {
   ORG_ROLES,
   updateOrgProfileSchema,
   updateOrgSettingsSchema,
+  botFlowSchema,
+  botFlowTestSchema,
   createUserSchema,
   updateUserSchema,
   departmentSchema,

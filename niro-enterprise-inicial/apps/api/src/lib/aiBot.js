@@ -8,6 +8,7 @@
 
 const { prisma } = require('./prisma');
 const niroAi = require('./niroAi');
+const { KINDS, recordAiUsage } = require('./aiUsage');
 
 const HISTORY_LIMIT = 14;
 const MAX_REPLY_CHARS = 1200;
@@ -48,11 +49,11 @@ function buildSystemPrompt(settings, organizationName) {
   return parts.join(' ');
 }
 
-// El historial usa la transcripción del audio cuando el mensaje era una nota de voz, así la IA
-// entiende los audios igual que un texto.
+// El historial usa únicamente el contenido original del mensaje. Los adjuntos multimedia no
+// se transcriben ni se convierten en texto automáticamente dentro del chat.
 function messageToTurn(message) {
   if (message.direction === 'NOTE') return null;
-  const text = (message.transcription || message.content || '').trim();
+  const text = (message.content || '').trim();
   if (!text) return null;
   return { role: message.direction === 'INBOUND' ? 'user' : 'assistant', content: text.slice(0, 2000) };
 }
@@ -81,6 +82,7 @@ async function generateReply(conversationId, settings, organizationName) {
     const messages = await buildMessages(conversationId, settings, organizationName);
     if (messages.length < 2) return null;
     const { content, cost } = await niroAi.chatCompletion(messages);
+    if (settings && settings.organizationId) await recordAiUsage(settings.organizationId, KINDS.CHAT, cost);
     if (!content) return null;
     return { content: content.slice(0, MAX_REPLY_CHARS), cost };
   } catch (err) {

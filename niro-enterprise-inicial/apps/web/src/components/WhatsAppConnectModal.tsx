@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Modal } from './Modal';
 import { apiGet, apiPost, ApiError } from '../lib/api';
 import { getSocket } from '../lib/socket';
@@ -9,13 +9,20 @@ interface StatusPayload {
   status: WhatsAppStatus;
   qr: string | null;
   phone: string | null;
+  lastError?: string | null;
 }
+
+const STATUS_POLL_INTERVAL_MS = 1000;
+const QR_STATUS_POLL_INTERVAL_MS = 4000;
+const CONNECTION_TIMEOUT_MS = 30000;
 
 export function WhatsAppConnectModal({ onClose }: { onClose: () => void }) {
   const [state, setState] = useState<StatusPayload>({ status: 'disconnected', qr: null, phone: null });
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [slowReconnect, setSlowReconnect] = useState(false);
+  const pollTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     apiGet<StatusPayload>('/api/org/whatsapp/status')
@@ -31,8 +38,48 @@ export function WhatsAppConnectModal({ onClose }: { onClose: () => void }) {
     };
   }, []);
 
+  // Socket.IO is the fast path, but it can reconnect after the API or the browser
+  // restarts. Polling while a QR is being negotiated makes the modal recover the
+  // QR even when the status event was emitted before the listener was ready.
+  useEffect(() => {
+    if (loading || !['connecting', 'qr'].includes(state.status)) return;
+
+    let cancelled = false;
+    const startedAt = Date.now();
+
+    const poll = async () => {
+      try {
+        const next = await apiGet<StatusPayload>('/api/org/whatsapp/status');
+        if (cancelled) return;
+        setState(next);
+        if (next.status === 'connected') setSlowReconnect(false);
+
+        if (next.status === 'connecting' && Date.now() - startedAt >= CONNECTION_TIMEOUT_MS) {
+          setSlowReconnect(true);
+          setError('El servidor todavía está reconectando WhatsApp. La sesión del teléfono no se borra ni se solicita otro QR automáticamente.');
+        }
+
+        if (next.status === 'connecting' || next.status === 'qr') {
+          pollTimer.current = setTimeout(poll, next.status === 'qr' ? QR_STATUS_POLL_INTERVAL_MS : STATUS_POLL_INTERVAL_MS);
+        }
+      } catch {
+        if (!cancelled) {
+          pollTimer.current = setTimeout(poll, STATUS_POLL_INTERVAL_MS);
+        }
+      }
+    };
+
+    poll();
+    return () => {
+      cancelled = true;
+      if (pollTimer.current) clearTimeout(pollTimer.current);
+      pollTimer.current = null;
+    };
+  }, [loading, state.status]);
+
   async function handleConnect() {
     setError(null);
+    setSlowReconnect(false);
     setBusy(true);
     try {
       const res = await apiPost<StatusPayload>('/api/org/whatsapp/connect');
@@ -88,8 +135,9 @@ export function WhatsAppConnectModal({ onClose }: { onClose: () => void }) {
         {!loading && state.status === 'connecting' && !state.qr && (
           <div style={{ padding: '30px 0' }}>
             <div style={{ fontSize: 32, marginBottom: 12 }}>🔄</div>
-            <h4 style={{ margin: '0 0 8px 0', fontSize: 16 }}>Iniciando conexión...</h4>
-            <p style={{ fontSize: 13, color: 'var(--text-muted)', margin: 0 }}>Generando el código QR, un momento.</p>
+            <h4 style={{ margin: '0 0 8px 0', fontSize: 16 }}>{slowReconnect || state.lastError ? 'Reconectando WhatsApp...' : 'Iniciando conexión...'}</h4>
+            <p style={{ fontSize: 13, color: 'var(--text-muted)', margin: '0 0 16px' }}>{slowReconnect || state.lastError ? 'El teléfono puede seguir vinculado. El servidor está intentando recuperar el canal sin cerrar la sesión.' : 'Generando el código QR, un momento.'}</p>
+            {(slowReconnect || state.lastError) && <button type="button" className="btn secondary" onClick={handleConnect} disabled={busy}>{busy ? 'Intentando…' : 'Solicitar un QR nuevo'}</button>}
           </div>
         )}
 

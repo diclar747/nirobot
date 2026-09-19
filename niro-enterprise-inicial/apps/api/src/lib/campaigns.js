@@ -9,6 +9,28 @@ const { sanitizeAttachment } = require('./attachments');
 // shared store (e.g. a DB row lock) so two instances don't both drive the same campaign.
 const activeTimers = new Map();
 
+function personalizeCampaignMessage(template, contact) {
+  const fullName = contact && typeof contact.name === 'string' && contact.name.trim() ? contact.name.trim() : 'cliente';
+  const firstName = fullName.split(/\s+/)[0] || 'cliente';
+  const phone = contact && contact.phone ? contact.phone : '—';
+  const email = contact && contact.email ? contact.email : '—';
+  const values = {
+    nombre: firstName,
+    name: firstName,
+    nombre_completo: fullName,
+    'nombre completo': fullName,
+    telefono: phone,
+    'teléfono': phone,
+    phone,
+    email
+  };
+
+  return String(template || '').replace(/\{\{\s*([^}]+?)\s*\}\}/gi, (match, key) => {
+    const value = values[String(key).trim().toLowerCase()];
+    return value === undefined ? match : value;
+  });
+}
+
 function sanitizeCampaign(campaign, counts) {
   return {
     id: campaign.id,
@@ -111,6 +133,50 @@ async function resumeScheduledCampaigns() {
   return scheduled.length;
 }
 
+async function waitForWhatsappConnected(organizationId, options = {}) {
+  const whatsapp = require('./whatsapp');
+  // Read at call time (not as module-level constants) so tests can shrink these via env vars
+  // without needing to reset the module cache.
+  const timeoutMs = options.timeoutMs ?? Number(process.env.CAMPAIGN_RESUME_TIMEOUT_MS || 30000);
+  const intervalMs = options.intervalMs ?? Number(process.env.CAMPAIGN_RESUME_INTERVAL_MS || 1500);
+  const deadline = Date.now() + timeoutMs;
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    if (whatsapp.getStatus(organizationId).status === 'connected') return true;
+    if (Date.now() >= deadline) return false;
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
+}
+
+// A campaign left in SENDING when the process died (crash, deploy, restart) has no timer left —
+// its setTimeout chain lived only in memory. On boot, every such campaign gets nudged again so it
+// keeps going instead of sitting there forever with recipients stuck as PENDING. Each campaign
+// waits (in the background, without blocking server startup) for its organization's WhatsApp
+// session to reconnect before resuming, so it doesn't burn through recipients marking them FAILED
+// during the few seconds Baileys takes to relink. If a session doesn't come back in time (e.g. it
+// needs a fresh QR scan), the campaign is simply left as-is — pausing and starting it again from
+// the UI remains the manual fallback.
+async function resumeSendingCampaigns() {
+  const stuck = await prisma.campaign.findMany({
+    where: { status: 'SENDING' },
+    select: { id: true, organizationId: true }
+  });
+  for (const campaign of stuck) {
+    waitForWhatsappConnected(campaign.organizationId)
+      .then((connected) => {
+        if (!connected) {
+          console.warn(
+            `[campaigns] no se pudo reanudar la campaña ${campaign.id}: WhatsApp de la organización ${campaign.organizationId} no reconectó a tiempo`
+          );
+          return;
+        }
+        return processNext(campaign.organizationId, campaign.id);
+      })
+      .catch((err) => console.error('[campaigns] resumeSendingCampaigns failed for', campaign.id, err));
+  }
+  return stuck.length;
+}
+
 function pauseCampaign(campaignId) {
   const timer = activeTimers.get(campaignId);
   if (timer) {
@@ -128,7 +194,7 @@ async function readAttachmentBuffer(attachment) {
   return fsp.readFile(resolvePath(attachment.storageKey));
 }
 
-async function recordCampaignMessage(organizationId, campaign, contactId, waMessageId) {
+async function recordCampaignMessage(organizationId, campaign, contactId, waMessageId, renderedMessage) {
   if (!waMessageId) return;
   let conversation = await prisma.conversation.findFirst({
     where: { organizationId, contactId, channel: 'whatsapp', status: { not: 'CLOSED' } },
@@ -143,7 +209,7 @@ async function recordCampaignMessage(organizationId, campaign, contactId, waMess
     data: {
       conversationId: conversation.id,
       direction: 'OUTBOUND',
-      content: campaign.message,
+      content: renderedMessage || campaign.message,
       contentType: campaign.attachment ? 'campaign-media' : 'campaign',
       deliveryStatus: 'sent',
       waMessageId,
@@ -175,6 +241,7 @@ async function processNext(organizationId, campaignId) {
 
   try {
     if (!next.contact.phone) throw new Error('El contacto no tiene número de teléfono');
+    const renderedMessage = personalizeCampaignMessage(campaign.message, next.contact);
     let waMessageId;
     if (campaign.attachment) {
       const buffer = await readAttachmentBuffer(campaign.attachment);
@@ -182,16 +249,16 @@ async function processNext(organizationId, campaignId) {
         buffer,
         mimetype: campaign.attachment.mimeType,
         fileName: campaign.attachment.fileName,
-        caption: campaign.message
+        caption: renderedMessage
       });
     } else {
-      waMessageId = await whatsapp.sendText(organizationId, next.contact.phone, campaign.message);
+      waMessageId = await whatsapp.sendText(organizationId, next.contact.phone, renderedMessage);
     }
     await prisma.campaignRecipient.update({
       where: { id: next.id },
       data: { status: 'SENT', waMessageId: waMessageId || null, sentAt: new Date() }
     });
-    await recordCampaignMessage(organizationId, campaign, next.contact.id, waMessageId);
+    await recordCampaignMessage(organizationId, campaign, next.contact.id, waMessageId, renderedMessage);
   } catch (err) {
     await prisma.campaignRecipient.update({
       where: { id: next.id },
@@ -275,5 +342,7 @@ module.exports = {
   handleDeliveryUpdate,
   emitCampaignUpdate,
   scheduleCampaign,
-  resumeScheduledCampaigns
+  resumeScheduledCampaigns,
+  resumeSendingCampaigns,
+  personalizeCampaignMessage
 };

@@ -5,6 +5,7 @@ import { contactLabel, formatPhone, formatTime, initials, isUsablePhone, phoneDi
 import { CRM_STAGES, deriveStage, statusForStage, tagsForStage, type CrmStage } from '../lib/crmStage';
 import { Modal } from '../components/Modal';
 import { AgentsDropPanel, setConversationDragData } from '../components/AgentsDropPanel';
+import { useAlerts } from '../context/AlertContext';
 import {
   type AgentPresence,
   type AgentPresenceStatus,
@@ -27,6 +28,32 @@ const EXTENDED_EMOJIS = [
   '👀', '💬', '📞', '📍', '💰', '🏷️', '📋', '🛍️'
 ];
 const COMPOSER_EMOJIS = ['😀', '😂', '😍', '👍', '🙏', '🎉', '❤️', '😢', '😮', '🔥', '✅', '❌'];
+const DIRECT_CALL_ACTIVE_STATUSES = new Set(['STARTING', 'RINGING', 'CONNECTED']);
+
+type DirectCall = {
+  id: string;
+  callId: string;
+  phoneNumber: string;
+  accountId: string;
+  status: 'STARTING' | 'RINGING' | 'CONNECTED' | 'COMPLETED' | 'NO_ANSWER' | 'FAILED' | 'CANCELLED';
+  startedAt: string;
+  connectedAt: string | null;
+  finishedAt: string | null;
+  endedReason: string | null;
+};
+
+function directCallStatusLabel(status: DirectCall['status']) {
+  const labels: Record<DirectCall['status'], string> = {
+    STARTING: 'Iniciando llamada…',
+    RINGING: 'Llamando…',
+    CONNECTED: 'Llamada conectada',
+    COMPLETED: 'Llamada finalizada',
+    NO_ANSWER: 'Sin respuesta',
+    FAILED: 'Llamada fallida',
+    CANCELLED: 'Llamada cancelada'
+  };
+  return labels[status];
+}
 
 function Avatar({ contact, size = 42 }: { contact: Contact; size?: number }) {
   const label = contactLabel(contact);
@@ -61,13 +88,17 @@ export function Inbox() {
   const [loadingList, setLoadingList] = useState(true);
   const [tab, setTab] = useState<ConvFilterTab>('all');
   const [search, setSearch] = useState('');
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  // Abre directo la conversación indicada por ?conversation=<id> — así llega el clic en una
+  // notificación push o cualquier otro enlace directo al Inbox.
+  const [selectedId, setSelectedId] = useState<string | null>(
+    () => new URLSearchParams(window.location.search).get('conversation')
+  );
   const [showNew, setShowNew] = useState(false);
   const [showTransferModal, setShowTransferModal] = useState(false);
   const [showOrderModal, setShowOrderModal] = useState(false);
   const [forwardMessage, setForwardMessage] = useState<Message | null>(null);
   const [editingContact, setEditingContact] = useState<Contact | null>(null);
-  const [floatingToast, setFloatingToast] = useState<string | null>(null);
+  const { notify } = useAlerts();
   const [starredIds, setStarredIds] = useState<Set<string>>(() => {
     try {
       const stored = localStorage.getItem('niro_starred_messages');
@@ -83,10 +114,7 @@ export function Inbox() {
   const [incomingTransfer, setIncomingTransfer] = useState<{ conversation: Conversation; fromAgent: string; note: string | null } | null>(null);
   const [respondingTransfer, setRespondingTransfer] = useState(false);
 
-  function showToast(msg: string) {
-    setFloatingToast(msg);
-    setTimeout(() => setFloatingToast(null), 3000);
-  }
+  const showToast = useCallback((msg: string) => notify(msg, { tone: 'info' }), [notify]);
 
   function toggleStarMessage(msgId: string) {
     setStarredIds((prev) => {
@@ -182,10 +210,10 @@ export function Inbox() {
 
   const gridTemplate = leftCollapsed
     ? rightCollapsed
-      ? '1fr'
+      ? '1fr 56px'
       : '1fr 340px'
     : rightCollapsed
-    ? '320px 1fr'
+    ? '320px 1fr 56px'
     : '320px 1fr 340px';
 
   return (
@@ -351,15 +379,19 @@ export function Inbox() {
       {/* =========================================================
           COLUMN 3: CONTACT INFO & QUICK ACTIONS
           ========================================================= */}
-      {selected && !rightCollapsed && (
-        <ContactInfoPanel
-          conversation={selected}
-          onConversationChange={upsertConversation}
-          onOpenTransfer={() => setShowTransferModal(true)}
-          onOpenOrder={() => setShowOrderModal(true)}
-          onEditContact={() => setEditingContact(selected.contact)}
-          onClose={() => setRightCollapsed(true)}
-        />
+      {selected && (
+        rightCollapsed ? (
+          <ContactInfoRail conversation={selected} onExpand={() => setRightCollapsed(false)} />
+        ) : (
+          <ContactInfoPanel
+            conversation={selected}
+            onConversationChange={upsertConversation}
+            onOpenTransfer={() => setShowTransferModal(true)}
+            onOpenOrder={() => setShowOrderModal(true)}
+            onEditContact={() => setEditingContact(selected.contact)}
+            onClose={() => setRightCollapsed(true)}
+          />
+        )
       )}
 
       {/* Incoming transfer banner */}
@@ -454,13 +486,6 @@ export function Inbox() {
         />
       )}
 
-      {/* Floating Toast Notification */}
-      {floatingToast && (
-        <div className="crm-floating-toast">
-          <span>ℹ️</span>
-          <span>{floatingToast}</span>
-        </div>
-      )}
     </div>
   );
 }
@@ -593,6 +618,7 @@ function ActiveChatWindow({
   onOpenForward: (message: Message) => void;
   showToast: (msg: string) => void;
 }) {
+  const { confirm, notify } = useAlerts();
   const [messages, setMessages] = useState<Message[]>([]);
   const [loading, setLoading] = useState(true);
   const [content, setContent] = useState('');
@@ -609,12 +635,84 @@ function ActiveChatWindow({
   const [showContactShareModal, setShowContactShareModal] = useState(false);
   const [showCameraModal, setShowCameraModal] = useState(false);
   const [recording, setRecording] = useState(false);
+  const [recordingSeconds, setRecordingSeconds] = useState(0);
   const [respondingTransfer, setRespondingTransfer] = useState(false);
+  const [directCall, setDirectCall] = useState<DirectCall | null>(null);
+  const [directCallBusy, setDirectCallBusy] = useState(false);
+  const [directCallError, setDirectCallError] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const recordedChunksRef = useRef<Blob[]>([]);
   const currentStage = deriveStage(conversation);
+
+  useEffect(() => {
+    if (!recording) {
+      setRecordingSeconds(0);
+      return;
+    }
+    const timer = window.setInterval(() => setRecordingSeconds((seconds) => seconds + 1), 1000);
+    return () => window.clearInterval(timer);
+  }, [recording]);
+
+  useEffect(() => {
+    setDirectCall(null);
+    setDirectCallError(null);
+    setDirectCallBusy(false);
+  }, [conversation.id]);
+
+  useEffect(() => {
+    if (!directCall || !DIRECT_CALL_ACTIVE_STATUSES.has(directCall.status)) return;
+    let cancelled = false;
+    const poll = window.setInterval(async () => {
+      try {
+        const result = await apiGet<{ call: DirectCall }>(`/api/org/wa-calls/direct/${directCall.id}`);
+        if (!cancelled) setDirectCall(result.call);
+      } catch {
+        // The server keeps direct calls in memory for a short period; a transient
+        // polling error should not interrupt the call already in progress.
+      }
+    }, 1000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(poll);
+    };
+  }, [directCall?.id, directCall?.status]);
+
+  async function handleDirectCall() {
+    if (!cleanPhone || directCallBusy) return;
+    const name = contactLabel(conversation.contact);
+    const accepted = await confirm({ title: 'Iniciar llamada de WhatsApp', message: `¿Querés llamar a ${name}?`, confirmLabel: 'Iniciar llamada', tone: 'warning' });
+    if (!accepted) return;
+    setDirectCallBusy(true);
+    setDirectCallError(null);
+    try {
+      const result = await apiPost<{ call: DirectCall }>('/api/org/wa-calls/direct', { conversationId: conversation.id });
+      setDirectCall(result.call);
+      showToast(`📞 ${directCallStatusLabel(result.call.status)} a ${name}`);
+    } catch (err) {
+      const message = err instanceof ApiError ? err.message : 'No se pudo iniciar la llamada';
+      setDirectCallError(message);
+      showToast(`⚠️ ${message}`);
+    } finally {
+      setDirectCallBusy(false);
+    }
+  }
+
+  async function handleDirectCallHangup() {
+    if (!directCall || directCallBusy) return;
+    setDirectCallBusy(true);
+    try {
+      const result = await apiPost<{ call: DirectCall }>(`/api/org/wa-calls/direct/${directCall.id}/hangup`, {});
+      setDirectCall(result.call);
+      showToast('📴 Llamada finalizada');
+    } catch (err) {
+      const message = err instanceof ApiError ? err.message : 'No se pudo finalizar la llamada';
+      setDirectCallError(message);
+    } finally {
+      setDirectCallBusy(false);
+    }
+  }
 
   // Close menus on outside click
   useEffect(() => {
@@ -661,6 +759,9 @@ function ActiveChatWindow({
     const onMessageUpdated = ({ conversationId, message }: { conversationId: string; message: Message }) => {
       if (conversationId !== conversation.id) return;
       setMessages((prev) => prev.map((m) => (m.id === message.id ? message : m)));
+      if (message.direction === 'OUTBOUND' && message.deliveryStatus === 'failed') {
+        notify('No se pudo enviar el audio. Verificá la conexión de WhatsApp y que FFmpeg esté instalado.', { tone: 'error', title: 'Audio no enviado' });
+      }
     };
     const onMessageDeleted = ({ conversationId, messageId }: { conversationId: string; messageId: string }) => {
       if (conversationId !== conversation.id) return;
@@ -720,7 +821,8 @@ function ActiveChatWindow({
 
   async function handleDeleteMessage(message: Message) {
     setMenuOpenFor(null);
-    if (!window.confirm('¿Eliminar este mensaje? Si el chat es de WhatsApp, también se borrará para el cliente.')) return;
+    const accepted = await confirm({ title: 'Eliminar mensaje', message: 'Si el chat es de WhatsApp, también se borrará para el cliente.', confirmLabel: 'Eliminar mensaje', tone: 'danger' });
+    if (!accepted) return;
     try {
       await apiDelete(`/api/org/conversations/${conversation.id}/messages/${message.id}`);
       setMessages((prev) => prev.filter((m) => m.id !== message.id));
@@ -737,9 +839,12 @@ function ActiveChatWindow({
       formData.append('file', file, fileName);
       formData.append('type', mode);
       if (ptt) formData.append('ptt', 'true');
-      await apiUpload(`/api/org/conversations/${conversation.id}/attachments`, formData);
+      const result = await apiUpload<{ message: Message }>(`/api/org/conversations/${conversation.id}/attachments`, formData);
+      if (result?.message) setMessages((prev) => (prev.some((m) => m.id === result.message.id) ? prev : [...prev, result.message]));
+      if (ptt) notify('Nota de voz grabada. Enviando a WhatsApp…', { tone: 'success' });
     } catch (err) {
       console.error(err);
+      notify(err instanceof ApiError ? err.message : 'No se pudo subir el audio', { tone: 'error', title: 'Audio no enviado' });
     } finally {
       setUploading(false);
     }
@@ -753,29 +858,55 @@ function ActiveChatWindow({
   }
 
   async function handleToggleRecording() {
-    if (recording) {
-      mediaRecorderRef.current?.stop();
-      setRecording(false);
+    if (mode === 'note') {
+      notify('Cambiá a conversación para enviar una nota de voz al contacto.', { tone: 'info', title: 'Nota interna activa' });
       return;
     }
+    if (recording) {
+      mediaRecorderRef.current?.stop();
+      return;
+    }
+    let activeStream: MediaStream | null = null;
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const recorder = new MediaRecorder(stream);
+      if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
+        throw new Error('Este navegador no admite grabación de audio');
+      }
+      const stream = activeStream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
+      const supportedTypes = ['audio/ogg;codecs=opus', 'audio/webm;codecs=opus', 'audio/webm', 'audio/mp4'];
+      const preferredType = typeof MediaRecorder.isTypeSupported === 'function'
+        ? supportedTypes.find((type) => MediaRecorder.isTypeSupported(type))
+        : undefined;
+      const recorder = preferredType ? new MediaRecorder(stream, { mimeType: preferredType }) : new MediaRecorder(stream);
       recordedChunksRef.current = [];
       recorder.ondataavailable = (e) => {
         if (e.data.size > 0) recordedChunksRef.current.push(e.data);
       };
       recorder.onstop = () => {
         stream.getTracks().forEach((t) => t.stop());
-        const blob = new Blob(recordedChunksRef.current, { type: recorder.mimeType || 'audio/webm' });
-        uploadFile(blob, `nota-de-voz-${Date.now()}.webm`, true);
+        setRecording(false);
+        const mimeType = recorder.mimeType || preferredType || 'audio/webm';
+        const extension = mimeType.includes('ogg') ? 'ogg' : mimeType.includes('mp4') ? 'm4a' : 'webm';
+        const blob = new Blob(recordedChunksRef.current, { type: mimeType });
+        if (blob.size === 0) {
+          notify('La grabación quedó vacía. Probá nuevamente.', { tone: 'error', title: 'Nota de voz vacía' });
+          return;
+        }
+        uploadFile(blob, `nota-de-voz-${Date.now()}.${extension}`, true);
+        mediaRecorderRef.current = null;
+      };
+      recorder.onerror = () => {
+        stream.getTracks().forEach((t) => t.stop());
+        setRecording(false);
+        mediaRecorderRef.current = null;
+        notify('La grabación se interrumpió. Revisá el micrófono e intentá de nuevo.', { tone: 'error', title: 'Error de grabación' });
       };
       mediaRecorderRef.current = recorder;
-      recorder.start();
+      recorder.start(250);
       setRecording(true);
     } catch (err) {
+      activeStream?.getTracks().forEach((track) => track.stop());
       console.error(err);
-      alert('No se pudo acceder al micrófono. Revisá los permisos del navegador.');
+      notify(err instanceof Error && err.message.includes('no admite') ? err.message : 'No se pudo acceder al micrófono. Revisá los permisos del navegador.', { tone: 'error', title: 'Micrófono no disponible' });
     }
   }
 
@@ -865,6 +996,17 @@ function ActiveChatWindow({
           <button
             type="button"
             className="composer-action-btn"
+            title={conversation.channel !== 'whatsapp' ? 'Disponible solo para chats de WhatsApp' : directCall && DIRECT_CALL_ACTIVE_STATUSES.has(directCall.status) ? 'Finalizar llamada' : 'Llamar a este contacto'}
+            aria-label={directCall && DIRECT_CALL_ACTIVE_STATUSES.has(directCall.status) ? 'Finalizar llamada' : 'Llamar a este contacto'}
+            onClick={directCall && DIRECT_CALL_ACTIVE_STATUSES.has(directCall.status) ? handleDirectCallHangup : handleDirectCall}
+            disabled={conversation.channel !== 'whatsapp' || !cleanPhone || directCallBusy}
+            style={directCall && DIRECT_CALL_ACTIVE_STATUSES.has(directCall.status) ? { background: 'rgba(239, 68, 68, 0.12)', color: '#dc2626' } : undefined}
+          >
+            {directCallBusy ? '⏳' : directCall && DIRECT_CALL_ACTIVE_STATUSES.has(directCall.status) ? '📴' : '📞'}
+          </button>
+          <button
+            type="button"
+            className="composer-action-btn"
             title="Transferir chat a otro agente"
             onClick={onOpenTransfer}
           >
@@ -889,6 +1031,26 @@ function ActiveChatWindow({
           </button>
         </div>
       </div>
+
+      {(directCall || directCallError) && (
+        <div
+          role="status"
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: 10,
+            padding: '7px 16px',
+            background: directCallError ? 'rgba(239, 68, 68, 0.08)' : 'rgba(37, 211, 102, 0.09)',
+            borderBottom: '1px solid var(--border-color)',
+            color: directCallError ? '#b91c1c' : 'var(--text-main)',
+            fontSize: 12
+          }}
+        >
+          <span>{directCallError || (directCall ? `📞 ${directCallStatusLabel(directCall.status)}` : '')}</span>
+          {directCallError && <button type="button" className="composer-action-btn" onClick={() => setDirectCallError(null)} aria-label="Cerrar error">×</button>}
+        </div>
+      )}
 
       {/* Transfer Notification Banner (Accept / Reject) */}
       {lastTransferNote && (
@@ -1086,7 +1248,6 @@ function ActiveChatWindow({
                   </div>
                 )}
                 <AttachmentContent message={m} conversationId={conversation.id} onOpenImage={onOpenImage} />
-                <AiReadPanel message={m} conversationId={conversation.id} />
                 <MessageBody message={m} />
               </div>
 
@@ -1114,7 +1275,14 @@ function ActiveChatWindow({
               <div className="chat-bubble-meta" style={m.direction === 'OUTBOUND' ? { alignSelf: 'flex-end' } : {}}>
                 {isStarred && <span title="Mensaje destacado" style={{ color: '#f59e0b', fontSize: 11 }}>⭐</span>}
                 {m.direction === 'NOTE' ? 'Nota interna' : m.direction === 'INBOUND' ? 'Cliente' : m.sender?.name || 'Agente'} · {formatTime(m.createdAt)}
-                {m.direction === 'OUTBOUND' && <span style={{ color: '#38bdf8', marginLeft: 2 }}>✓✓</span>}
+                {m.direction === 'OUTBOUND' && (
+                  <span
+                    title={m.deliveryStatus === 'failed' ? 'No enviado' : m.deliveryStatus === 'pending' ? 'Enviando…' : 'Enviado'}
+                    style={{ color: m.deliveryStatus === 'failed' ? '#ef4444' : m.deliveryStatus === 'pending' ? '#f59e0b' : '#38bdf8', marginLeft: 4, fontWeight: 800 }}
+                  >
+                    {m.deliveryStatus === 'failed' ? '!' : m.deliveryStatus === 'pending' ? '◷' : '✓✓'}
+                  </span>
+                )}
               </div>
             </div>
           );
@@ -1228,7 +1396,8 @@ function ActiveChatWindow({
           type="button"
           className={`composer-action-btn ${recording ? 'recording' : ''}`}
           onClick={handleToggleRecording}
-          title={recording ? 'Detener y enviar nota de voz' : 'Grabar nota de voz'}
+          disabled={uploading || mode === 'note'}
+          title={recording ? `Detener y enviar nota de voz (${recordingSeconds}s)` : 'Grabar nota de voz'}
         >
           {recording ? '⏹️' : '🎙️'}
         </button>
@@ -1257,7 +1426,7 @@ function ActiveChatWindow({
             mode === 'note'
               ? 'Escribir nota interna para el equipo...'
               : recording
-                ? 'Grabando nota de voz...'
+                ? `Grabando nota de voz… ${String(Math.floor(recordingSeconds / 60)).padStart(2, '0')}:${String(recordingSeconds % 60).padStart(2, '0')}`
                 : 'Escribe un mensaje...'
           }
           value={content}
@@ -1644,66 +1813,60 @@ function AttachmentContent({
   );
 }
 
-/**
- * Botón "Leer con IA" bajo un audio o una imagen que todavía no fue procesado, y el resultado
- * (transcripción o texto detectado) una vez que ya lo fue. Se pide a mano, no automático, para
- * no gastar créditos de IA en cada adjunto sin que el agente lo necesite.
- */
-function AiReadPanel({ message, conversationId }: { message: Message; conversationId: string }) {
-  const [transcription, setTranscription] = useState(message.transcription);
-  const [loading, setLoading] = useState<'text' | 'invoice' | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => setTranscription(message.transcription), [message.transcription]);
-
-  if (!message.attachment) return null;
-  const isAudio = message.attachment.mimeType.startsWith('audio/');
-  const isImage = message.attachment.mimeType.startsWith('image/');
-  if (!isAudio && !isImage) return null;
-
-  async function runAiRead(mode?: 'invoice') {
-    setLoading(mode || 'text');
-    setError(null);
-    try {
-      const res = await apiPost<{ message: Message }>(
-        `/api/org/conversations/${conversationId}/messages/${message.id}/ai-read`,
-        mode ? { mode } : {}
-      );
-      setTranscription(res.message.transcription);
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'No se pudo leer con IA');
-    } finally {
-      setLoading(null);
-    }
-  }
-
-  if (transcription) {
-    return (
-      <div className="crm-ai-transcript">
-        <span className="crm-ai-transcript-label">{isAudio ? '🎤 Transcripción' : '🔎 Texto detectado'}</span>
-        <p>{transcription}</p>
-      </div>
-    );
-  }
-
-  return (
-    <div className="crm-ai-read-actions">
-      <button type="button" className="crm-ai-read-btn" disabled={!!loading} onClick={() => runAiRead()}>
-        {loading === 'text' ? 'Leyendo…' : isAudio ? '🎤 Transcribir con IA' : '🔎 Leer texto con IA'}
-      </button>
-      {isImage && (
-        <button type="button" className="crm-ai-read-btn" disabled={!!loading} onClick={() => runAiRead('invoice')}>
-          {loading === 'invoice' ? 'Leyendo…' : '🧾 Leer como factura'}
-        </button>
-      )}
-      {error && <span className="crm-ai-read-error">{error}</span>}
-    </div>
-  );
-}
-
 /* =========================================================
    CONTACT INFO PANEL (Column 3)
    ========================================================= */
+function ContactInfoRail({
+  conversation,
+  onExpand
+}: {
+  conversation: Conversation;
+  onExpand: () => void;
+}) {
+  const label = contactLabel(conversation.contact);
+
+  const iconItems = [
+    { icon: '👤', label: 'Información del contacto' },
+    { icon: '🏷️', label: 'Etapa y etiquetas CRM' },
+    { icon: '👥', label: 'Agentes' },
+    { icon: '⚡', label: 'Acciones rápidas' },
+    { icon: '📝', label: 'Notas del cliente' }
+  ];
+
+  return (
+    <aside className="crm-info-rail" aria-label="Información del contacto minimizada">
+      <button
+        type="button"
+        className="crm-info-rail-toggle"
+        onClick={onExpand}
+        title="Mostrar información del contacto"
+        aria-label="Mostrar información del contacto"
+      >
+        ◀
+      </button>
+
+      <div className="crm-info-rail-avatar" title={label}>
+        <Avatar contact={conversation.contact} size={32} />
+      </div>
+
+      <div className="crm-info-rail-divider" />
+
+      {iconItems.map((item) => (
+        <button
+          key={item.label}
+          type="button"
+          className="crm-info-rail-icon"
+          onClick={onExpand}
+          title={`Mostrar ${item.label.toLowerCase()}`}
+          aria-label={`Mostrar ${item.label}`}
+        >
+          <span aria-hidden="true">{item.icon}</span>
+        </button>
+      ))}
+    </aside>
+  );
+}
+
 function ContactInfoPanel({
   conversation,
   onConversationChange,
@@ -1795,16 +1958,28 @@ function ContactInfoPanel({
         <h3 style={{ margin: 0, fontSize: 15, fontWeight: 800, color: 'var(--text-main)' }}>
           Información del contacto
         </h3>
-        {onClose && (
+        <div className="crm-info-header-actions">
+          {onClose && (
+            <button
+              type="button"
+              className="crm-info-collapse-btn"
+              onClick={onClose}
+              title="Minimizar información del contacto"
+              aria-label="Minimizar información del contacto"
+            >
+              ▶
+            </button>
+          )}
           <button
             type="button"
+            className="crm-info-close-btn"
             onClick={onClose}
-            style={{ background: 'none', border: 'none', fontSize: 14, color: 'var(--text-dim)', cursor: 'pointer' }}
-            title="Ocultar panel"
+            title="Cerrar información del contacto"
+            aria-label="Cerrar información del contacto"
           >
             ✕
           </button>
-        )}
+        </div>
       </div>
 
       {/* Profile Card */}
@@ -1978,6 +2153,7 @@ function ForwardMessageModal({
   onClose: () => void;
   onForwarded: (targetConversationId: string) => void;
 }) {
+  const { notify } = useAlerts();
   const [targetId, setTargetId] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
   const [forwarding, setForwarding] = useState(false);
@@ -2000,7 +2176,7 @@ function ForwardMessageModal({
       onForwarded(targetId);
     } catch (err) {
       console.error(err);
-      alert('Error al reenviar el mensaje');
+      notify('No se pudo reenviar el mensaje.', { tone: 'error', title: 'Error al reenviar' });
     } finally {
       setForwarding(false);
     }
@@ -2075,6 +2251,7 @@ function EditContactModal({
   onClose: () => void;
   onSaved: (updatedContact: Contact) => void;
 }) {
+  const { notify } = useAlerts();
   const [name, setName] = useState(contact.name || '');
   const [phone, setPhone] = useState(contact.phone || '');
   const [email, setEmail] = useState(contact.email || '');
@@ -2092,7 +2269,7 @@ function EditContactModal({
       onSaved(res.contact);
     } catch (err) {
       console.error(err);
-      alert('Error al actualizar el contacto');
+      notify('No se pudo actualizar el contacto.', { tone: 'error', title: 'Error al actualizar' });
     } finally {
       setSaving(false);
     }

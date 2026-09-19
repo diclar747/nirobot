@@ -1,5 +1,6 @@
 const express = require('express');
 const rateLimit = require('express-rate-limit');
+const crypto = require('crypto');
 const { prisma } = require('../lib/prisma');
 const { hashPassword, verifyPassword } = require('../lib/passwords');
 const {
@@ -15,8 +16,10 @@ const {
 } = require('../lib/tokens');
 const { audit } = require('../lib/audit');
 const { requireAuth, requireCsrf } = require('../middleware/auth');
-const { loginSchema, changePasswordSchema } = require('../validation/auth.validation');
+const { loginSchema, changePasswordSchema, whatsappQrCompleteSchema } = require('../validation/auth.validation');
 const { HttpError } = require('../lib/errors');
+const whatsapp = require('../lib/whatsapp');
+const whatsappQr = require('../lib/whatsappQr');
 
 const router = express.Router();
 
@@ -26,6 +29,128 @@ const loginLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false
 });
+
+const qrLoginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  // El acceso QR puede reintentarse por pestañas, reinicios y renovación de
+  // códigos. El flujo sigue ligado a una cookie de navegador y no debe
+  // bloquearse después de unos pocos reintentos legítimos.
+  limit: 60,
+  standardHeaders: true,
+  legacyHeaders: false,
+  handler: (_req, res) => res.status(429).json({
+    error: 'Demasiados intentos de QR. Esperá un momento y generá un código nuevo.'
+  })
+});
+
+// El estado QR se consulta periódicamente mientras el usuario escanea. Usa
+// un límite separado para que el polling normal no bloquee un flujo válido.
+const qrStatusLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 600,
+  standardHeaders: true,
+  legacyHeaders: false
+});
+
+const qrLoginFlows = new Map();
+const qrStartLocks = new Map();
+const QR_FLOW_TTL_MS = 10 * 60 * 1000;
+const QR_FLOW_COOKIE = 'niro_qr_flow';
+
+function newFlowId() {
+  return `qr${crypto.randomUUID().replace(/-/g, '')}`;
+}
+
+function normalizePhone(value) {
+  return String(value || '').replace(/[^0-9]/g, '');
+}
+
+// El número de WhatsApp es la única señal que permite recuperar una
+// organización ya existente. Nunca se debe elegir "la única organización" de
+// la base, porque el siguiente QR podría terminar viendo conversaciones de
+// otra empresa.
+async function findOrganizationByWhatsAppPhone(phone) {
+  const normalizedPhone = normalizePhone(phone);
+  if (!normalizedPhone) return null;
+
+  const accounts = await prisma.callAccount.findMany({
+    select: {
+      phoneNumber: true,
+      organization: {
+        select: {
+          id: true,
+          name: true,
+          slug: true,
+          active: true,
+          users: {
+            where: { role: 'OWNER', active: true },
+            select: { id: true }
+          }
+        }
+      }
+    },
+    orderBy: { createdAt: 'asc' }
+  });
+
+  return accounts.find((account) => (
+    account.organization?.active
+    && normalizePhone(account.phoneNumber) === normalizedPhone
+  ))?.organization || null;
+}
+
+function qrPayload(flowId, status, extra = {}) {
+  return {
+    flowId,
+    status: status.status,
+    qr: status.qr || null,
+    phone: status.phone || null,
+    lastError: status.lastError || null,
+    ...extra
+  };
+}
+
+function setQrFlowCookie(res, flowId, binding) {
+  res.cookie(QR_FLOW_COOKIE, `${flowId}.${binding}`, {
+    httpOnly: true,
+    secure: process.env.COOKIE_SECURE === 'true',
+    sameSite: 'lax',
+    path: '/api/auth/whatsapp',
+    maxAge: QR_FLOW_TTL_MS
+  });
+}
+
+function clearQrFlowCookie(res) {
+  res.clearCookie(QR_FLOW_COOKIE, { path: '/api/auth/whatsapp' });
+}
+
+function assertQrBrowser(req, flowId, flow) {
+  const cookie = String(req.cookies?.[QR_FLOW_COOKIE] || '');
+  const [cookieFlowId, binding] = cookie.split('.');
+  if (!binding || cookieFlowId !== flowId || hashToken(binding) !== flow.bindingHash) {
+    throw new HttpError(403, 'Este código QR pertenece a otro navegador. Generá uno nuevo desde este dispositivo.');
+  }
+}
+
+function qrStartKey(req) {
+  const browserHeader = String(req.get('x-niro-qr-browser') || '').trim();
+  if (browserHeader) return `browser:${browserHeader.slice(0, 160)}`;
+  const cookie = String(req.cookies?.[QR_FLOW_COOKIE] || '');
+  if (cookie) return `cookie:${cookie}`;
+  return `request:${req.ip || 'unknown'}:${String(req.get('user-agent') || '').slice(0, 160)}`;
+}
+
+function scheduleQrFlowCleanup(flowId) {
+  const timer = setTimeout(async () => {
+    const flow = qrLoginFlows.get(flowId);
+    if (!flow) return;
+    qrLoginFlows.delete(flowId);
+    await whatsappQr.cancel(flowId).catch(() => {});
+    if (flow.pendingOrganization) {
+      await prisma.organization.deleteMany({ where: { id: flow.organizationId, active: false } }).catch(() => {});
+    }
+  }, QR_FLOW_TTL_MS);
+  timer.unref?.();
+}
 
 function sanitizeUser(user) {
   return {
@@ -59,6 +184,269 @@ async function issueSession(res, user, req) {
 
   setAuthCookies(res, { accessToken, refreshToken, csrfToken });
 }
+
+async function createQrFlow(req) {
+  // Las pestañas del mismo navegador comparten cookies. Si una pestaña ya
+  // tiene un QR vigente, reutilizarlo evita que otra pestaña reemplace la
+  // cookie de vinculación y deje al primer flujo sin autorización.
+  const browserCookie = String(req.cookies?.[QR_FLOW_COOKIE] || '');
+  const [browserFlowId, browserBinding] = browserCookie.split('.');
+  const browserFlow = browserFlowId ? qrLoginFlows.get(browserFlowId) : null;
+  if (
+    browserFlow
+    && browserBinding
+    && browserFlow.expiresAt >= Date.now()
+    && hashToken(browserBinding) === browserFlow.bindingHash
+  ) {
+    const currentStatus = whatsappQr.getStatus(browserFlowId);
+    if (currentStatus.status !== 'disconnected') {
+      const currentOrganization = await prisma.organization.findUnique({
+        where: { id: browserFlow.organizationId },
+        select: { name: true }
+      });
+      const matchedOrganization = currentStatus.phone
+        ? await findOrganizationByWhatsAppPhone(currentStatus.phone)
+        : null;
+      return {
+        flowId: browserFlowId,
+        binding: browserBinding,
+        payload: qrPayload(browserFlowId, currentStatus, {
+          setupRequired: matchedOrganization ? false : browserFlow.setupRequired,
+          organizationName: matchedOrganization?.name || currentOrganization?.name || null
+        })
+      };
+    }
+  }
+
+  // Cada inicio QR crea un espacio aislado. Recién después de leer el número
+  // se decide si ese espacio se incorpora a una organización existente o si se
+  // convierte en una nueva empresa. Esto evita heredar chats por accidente.
+  const flowId = newFlowId();
+  const binding = crypto.randomBytes(32).toString('base64url');
+  const organization = await prisma.organization.create({
+    data: {
+      id: flowId,
+      name: 'Nueva empresa Niro',
+      slug: `niro-${flowId.toLowerCase()}`,
+      active: false,
+      settings: { create: {} }
+    },
+    include: { users: { where: { role: 'OWNER', active: true }, select: { id: true } } }
+  });
+  // The QR login is deliberately independent from the persistent organization
+  // socket. This is the WhatsApp Web behavior: every browser gets a new QR and
+  // cannot inherit a connected session from another browser.
+  const status = await whatsappQr.start(flowId);
+  // El administrador entra directamente con el QR, como en WhatsApp Web.
+  // Los datos iniciales se generan automáticamente y luego pueden editarse
+  // desde configuración, por lo que no se bloquea la redirección al panel.
+  const setupRequired = false;
+  qrLoginFlows.set(flowId, {
+    organizationId: organization.id,
+    pendingOrganization: true,
+    setupRequired,
+    bindingHash: hashToken(binding),
+    expiresAt: Date.now() + QR_FLOW_TTL_MS
+  });
+  scheduleQrFlowCleanup(flowId);
+
+  return {
+    flowId,
+    binding,
+    payload: qrPayload(flowId, status, {
+      setupRequired,
+      organizationName: organization.name
+    })
+  };
+}
+
+router.post('/whatsapp/start', qrLoginLimiter, async (req, res, next) => {
+  const key = qrStartKey(req);
+  let pending = qrStartLocks.get(key);
+  try {
+    if (!pending) {
+      pending = createQrFlow(req);
+      qrStartLocks.set(key, pending);
+    }
+    const created = await pending;
+    setQrFlowCookie(res, created.flowId, created.binding);
+    res.json(created.payload);
+  } catch (err) {
+    next(err);
+  } finally {
+    if (qrStartLocks.get(key) === pending) qrStartLocks.delete(key);
+  }
+});
+
+router.get('/whatsapp/status/:flowId', qrStatusLimiter, async (req, res, next) => {
+  try {
+    const flow = qrLoginFlows.get(req.params.flowId);
+    if (!flow || flow.expiresAt < Date.now()) throw new HttpError(404, 'La sesión QR expiró');
+    assertQrBrowser(req, req.params.flowId, flow);
+    const status = whatsappQr.getStatus(req.params.flowId);
+    const matchedOrganization = status.phone
+      ? await findOrganizationByWhatsAppPhone(status.phone)
+      : null;
+    res.json(qrPayload(req.params.flowId, status, {
+      setupRequired: false,
+      organizationName: matchedOrganization?.name || null
+    }));
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.post('/whatsapp/complete', qrLoginLimiter, async (req, res, next) => {
+  let completedFlowId = null;
+  try {
+    const data = whatsappQrCompleteSchema.parse(req.body);
+    completedFlowId = data.flowId;
+    console.log('[auth-qr] complete solicitado', { flowId: data.flowId });
+    const flow = qrLoginFlows.get(data.flowId);
+    if (!flow || flow.expiresAt < Date.now()) throw new HttpError(404, 'La sesión QR expiró');
+    assertQrBrowser(req, data.flowId, flow);
+
+    const status = whatsappQr.getStatus(data.flowId);
+    if (status.status !== 'connected' || !status.phone) {
+      throw new HttpError(409, 'Escaneá el código QR desde WhatsApp para continuar');
+    }
+
+    const phoneNumber = String(status.phone).replace(/[^0-9]/g, '');
+    const pendingOrganizationId = flow.organizationId;
+    const matchedOrganization = await findOrganizationByWhatsAppPhone(phoneNumber);
+    const targetOrganization = matchedOrganization
+      || await prisma.organization.findUnique({ where: { id: pendingOrganizationId } });
+    if (!targetOrganization) throw new HttpError(404, 'No se encontró la organización de este QR');
+
+    // Si el número ya pertenece a otra organización, el QR temporal se mueve
+    // a esa organización solamente. El contenido no se copia ni se comparte.
+    if (matchedOrganization && matchedOrganization.id !== pendingOrganizationId) {
+      flow.organizationId = matchedOrganization.id;
+      flow.pendingOrganization = false;
+      flow.setupRequired = false;
+      await prisma.organization.deleteMany({
+        where: { id: pendingOrganizationId, active: false }
+      });
+    }
+
+    const organizationId = targetOrganization.id;
+    console.log('[auth-qr] QR conectado', {
+      flowId: data.flowId,
+      phone: phoneNumber,
+      pendingOrganization: flow.pendingOrganization,
+      organizationId,
+      matchedOrganizationId: matchedOrganization?.id || null
+    });
+    const defaultCompanyName = `Niro ${phoneNumber}`;
+    const defaultAdminName = `Administrador ${phoneNumber}`;
+    const companyName = String(data.companyName || defaultCompanyName).trim() || defaultCompanyName;
+    const adminName = String(data.adminName || defaultAdminName).trim() || defaultAdminName;
+    let owner = await prisma.user.findFirst({
+      where: { organizationId, role: 'OWNER', active: true },
+      include: { organization: true }
+    });
+
+    if (!owner) {
+      const generatedEmail = `admin.${phoneNumber}.${data.flowId.slice(-8)}@niro.local`;
+      const generatedPassword = crypto.randomBytes(32).toString('base64url');
+      const passwordHash = await hashPassword(generatedPassword);
+      await prisma.$transaction(async (tx) => {
+        await tx.organization.update({
+          where: { id: organizationId },
+          data: {
+            name: companyName,
+            active: true,
+            slug: `niro-${phoneNumber}-${data.flowId.slice(-6).toLowerCase()}`
+          }
+        });
+        await tx.user.create({
+          data: {
+            organizationId,
+            name: adminName,
+            email: generatedEmail,
+            passwordHash,
+            role: 'OWNER',
+            active: true,
+            mustChangePassword: false
+          }
+        });
+      });
+      owner = await prisma.user.findFirst({
+        where: { organizationId, role: 'OWNER', active: true },
+        include: { organization: true }
+      });
+    }
+
+    if (!owner) throw new HttpError(500, 'No se pudo crear el administrador de la organización');
+
+    const account = await prisma.callAccount.findFirst({ where: { organizationId }, orderBy: { createdAt: 'asc' } });
+    const whatsappStatus = whatsapp.getStatus(organizationId);
+    const shouldAttachQrSession = flow.pendingOrganization || whatsappStatus.status === 'disconnected';
+    console.log('[auth-qr] estado de la sesión principal', {
+      flowId: data.flowId,
+      status: whatsappStatus.status,
+      attachQrSession: shouldAttachQrSession
+    });
+
+    if (shouldAttachQrSession) {
+      console.log('[auth-qr] tomando sesión QR', { flowId: data.flowId });
+      await whatsappQr.takeSession(data.flowId, whatsapp.getSessionReference(organizationId));
+      await whatsapp.connect(organizationId);
+    } else {
+      console.log('[auth-qr] cerrando flujo temporal', { flowId: data.flowId });
+      await whatsappQr.cancel(data.flowId);
+    }
+
+    if (account) {
+      await prisma.callAccount.update({
+        where: { id: account.id },
+        data: {
+          // Cada QR autentica su propio navegador. Solo el QR que reconstruye
+          // la sesión principal puede cambiar la línea usada por WhatsApp del
+          // sistema; un navegador adicional no debe modificarla.
+          phoneNumber: shouldAttachQrSession ? phoneNumber : account.phoneNumber,
+          status: shouldAttachQrSession ? 'CONNECTED' : account.status,
+          sessionReference: whatsapp.getSessionReference(organizationId),
+          lastError: shouldAttachQrSession ? null : account.lastError
+        }
+      });
+    } else {
+      await prisma.callAccount.create({
+        data: {
+          organizationId,
+          name: 'WhatsApp principal',
+          phoneNumber,
+          status: 'CONNECTED',
+          sessionReference: whatsapp.getSessionReference(organizationId),
+          createdByUserId: owner.id
+        }
+      });
+    }
+
+    console.log('[auth-qr] emitiendo sesión web', { flowId: data.flowId, userId: owner.id });
+    await issueSession(res, owner, req);
+    clearQrFlowCookie(res);
+    await audit(prisma, {
+      organizationId: owner.organizationId,
+      actorUserId: owner.id,
+      action: 'auth.whatsapp_qr.success',
+      entityType: 'User',
+      entityId: owner.id,
+      metadata: { phoneNumber }
+    });
+    qrLoginFlows.delete(data.flowId);
+    console.log('[auth-qr] complete exitoso', { flowId: data.flowId, userId: owner.id });
+    res.json({ user: sanitizeUser(owner), phone: phoneNumber });
+  } catch (err) {
+    console.error('[auth-qr] complete falló', {
+      flowId: completedFlowId,
+      name: err?.name,
+      message: err?.message,
+      stack: err?.stack
+    });
+    next(err);
+  }
+});
 
 router.post('/login', loginLimiter, async (req, res, next) => {
   try {

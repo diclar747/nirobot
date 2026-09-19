@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { apiDelete, apiGet, apiPost, ApiError } from '../lib/api';
 import { useAuth } from '../context/AuthContext';
+import { useAlerts } from '../context/AlertContext';
 import { PageHeader, PageShell, Panel, StatCard, StatGrid, Pill } from '../components/PageKit';
 import { IconSettings } from '../components/icons';
 import '../styles/api-portal.css';
@@ -32,6 +33,7 @@ function copyText(value: string) {
 
 export function ApiPortal() {
   const { user } = useAuth();
+  const { confirm } = useAlerts();
   const [keys, setKeys] = useState<ApiKeyRecord[]>([]);
   const [sessions, setSessions] = useState<Session[]>([]);
   const [name, setName] = useState('Integración principal');
@@ -89,7 +91,13 @@ export function ApiPortal() {
   }
 
   async function revokeKey(key: ApiKeyRecord) {
-    if (!window.confirm(`¿Revocar la clave “${key.name}”? Las integraciones que la usen dejarán de funcionar.`)) return;
+    const accepted = await confirm({
+      title: 'Revocar API key',
+      message: `¿Querés revocar la clave “${key.name}”? Las integraciones que la usen dejarán de funcionar.`,
+      confirmLabel: 'Revocar clave',
+      tone: 'danger'
+    });
+    if (!accepted) return;
     setError(null);
     try {
       await apiDelete(`/api/org/api-keys/${key.id}`);

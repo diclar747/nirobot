@@ -27,10 +27,18 @@ services:
       SEED_SUPERADMIN_EMAIL: ${SEED_SUPERADMIN_EMAIL:-}
       SEED_SUPERADMIN_PASSWORD: ${SEED_SUPERADMIN_PASSWORD:-}
       STORAGE_ROOT: /app/storage/uploads
+      WHATSAPP_SESSION_ROOT: /app/storage/whatsapp-sessions
       NIRO_AI_BASE_URL: ${NIRO_AI_BASE_URL:-https://niro.cnid.com.py}
       NIRO_AI_API_KEY: ${NIRO_AI_API_KEY:-}
+      VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY:-}
+      VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY:-}
+      VAPID_SUBJECT: ${VAPID_SUBJECT:-}
+      WHATSAPP_CALL_PROVIDER: ${WHATSAPP_CALL_PROVIDER:-mock}
     volumes:
       - niro_uploads:/app/storage/uploads
+      # Credenciales de sesión de WhatsApp (Baileys). Sin este volumen, cada `docker compose up
+      # --build` las borra y hay que volver a escanear el QR de todas las organizaciones.
+      - niro_whatsapp_sessions:/app/storage/whatsapp-sessions
     depends_on:
       db:
         condition: service_healthy
@@ -49,6 +57,7 @@ services:
 volumes:
   niro_pgdata:
   niro_uploads:
+  niro_whatsapp_sessions:
 
 networks:
   niro:

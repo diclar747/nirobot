@@ -20,6 +20,11 @@ export interface OrgUser {
   active: boolean;
   mustChangePassword: boolean;
   createdAt: string;
+  whatsapp?: {
+    name: string | null;
+    phone: string | null;
+    avatarUrl: string | null;
+  } | null;
 }
 
 export interface Department {
@@ -47,11 +52,39 @@ export interface MenuOption {
   departmentId: string;
 }
 
+export type BotNodeType = 'start' | 'message' | 'keyword' | 'condition' | 'ai' | 'crm' | 'agent' | 'end';
+
+export interface BotFlowNode {
+  id: string;
+  type: BotNodeType;
+  title: string;
+  description: string;
+  position: { x: number; y: number };
+  data: Record<string, unknown>;
+}
+
+export interface BotFlowEdge {
+  id: string;
+  from: string;
+  to: string;
+  label: string;
+}
+
+export interface BotFlow {
+  version: number;
+  name: string;
+  enabled: boolean;
+  published: boolean;
+  nodes: BotFlowNode[];
+  edges: BotFlowEdge[];
+}
+
 export interface OrgSettings {
   welcomeMessage: string;
   systemPrompt: string;
   aiEnabled: boolean;
   menuOptions: MenuOption[];
+  botFlow?: BotFlow | null;
 }
 
 export interface OwnOrganization {
@@ -79,6 +112,9 @@ export interface Contact {
   externalId?: string | null;
   avatarUrl?: string | null;
   tags: string[];
+  callConsentStatus?: string | null;
+  callConsentAt?: string | null;
+  callOptedOutAt?: string | null;
   createdAt?: string;
 }
 
@@ -309,6 +345,114 @@ export interface WhatsAppSession {
   hasQr: boolean;
 }
 
+export type CallCampaignStatus = 'DRAFT' | 'SCHEDULED' | 'RUNNING' | 'PAUSED' | 'COMPLETED' | 'CANCELLED';
+export type CallRecipientStatus = 'PENDING' | 'QUEUED' | 'STARTING' | 'RINGING' | 'CONNECTED' | 'PLAYING' | 'COMPLETED' | 'NO_ANSWER' | 'FAILED' | 'CANCELLED' | 'RETRY_PENDING';
+
+export interface CallProviderInfo {
+  mode: string;
+  available: boolean;
+  label: string;
+  production: boolean;
+  reason?: string;
+}
+
+export interface CallAccount {
+  id: string;
+  name: string;
+  phoneNumber: string | null;
+  status: string;
+  lastError: string | null;
+  qr?: string | null;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface CallAudio {
+  id: string;
+  name: string;
+  description: string | null;
+  mimeType: string;
+  size: number;
+  durationSeconds: number | null;
+  processingStatus: string;
+  source?: 'UPLOAD' | 'AI' | string;
+  provider?: string | null;
+  voice?: string | null;
+  language?: string | null;
+  fileUrl: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface CallTtsInfo {
+  configured: boolean;
+  provider: string | null;
+  label: string;
+  reason: string | null;
+  voices: string[];
+}
+
+export interface CallCampaignCounts {
+  total: number;
+  pending: number;
+  queued: number;
+  inProgress: number;
+  connected: number;
+  completed: number;
+  noAnswer: number;
+  failed: number;
+  cancelled: number;
+  retryPending: number;
+  attempts: number;
+  surveyPending: number;
+  surveyResponses: number;
+}
+
+export interface CallCampaign {
+  id: string;
+  name: string;
+  description: string | null;
+  campaignType: string;
+  status: CallCampaignStatus;
+  scheduledAt: string | null;
+  startedAt: string | null;
+  completedAt: string | null;
+  timezone: string;
+  maxConcurrent: number;
+  pauseBetweenSeconds: number;
+  maxAttempts: number;
+  answerTimeoutSeconds: number;
+  retryDelaySeconds: number;
+  allowedFrom: string | null;
+  allowedTo: string | null;
+  surveyEnabled: boolean;
+  surveyQuestion: string | null;
+  surveyResponseMethod: string;
+  surveyExpiresAt: string | null;
+  account: CallAccount | null;
+  audio: CallAudio | null;
+  createdBy: { id: string; name: string } | null;
+  counts: CallCampaignCounts;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CallDashboardStats {
+  scheduled: number;
+  queued: number;
+  inProgress: number;
+  connected: number;
+  completed: number;
+  noAnswer: number;
+  failed: number;
+  pendingSurvey: number;
+  surveyResponses: number;
+  totalCalls: number;
+  totalMinutes: number;
+  attendedCalls: number;
+  directCalls: number;
+}
+
 export type AiAgentCategory = 'CHAT' | 'CODING' | 'RESEARCH';
 
 export interface AiAgent {
@@ -329,4 +473,17 @@ export interface AiStatus {
 export interface AiChatTurn {
   role: 'user' | 'assistant' | 'system';
   content: string;
+}
+
+export interface AiUsageByKind {
+  kind: string;
+  label: string;
+  calls: number;
+  cost: number | null;
+}
+
+export interface AiUsageSummary {
+  days: number;
+  totalCalls: number;
+  byKind: AiUsageByKind[];
 }

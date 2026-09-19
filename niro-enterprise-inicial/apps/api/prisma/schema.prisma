@@ -52,6 +52,29 @@ enum CampaignRecipientStatus {
   FAILED
 }
 
+enum CallCampaignStatus {
+  DRAFT
+  SCHEDULED
+  RUNNING
+  PAUSED
+  COMPLETED
+  CANCELLED
+}
+
+enum CallRecipientStatus {
+  PENDING
+  QUEUED
+  STARTING
+  RINGING
+  CONNECTED
+  PLAYING
+  COMPLETED
+  NO_ANSWER
+  FAILED
+  CANCELLED
+  RETRY_PENDING
+}
+
 model Organization {
   id            String                @id @default(cuid())
   name          String
@@ -69,7 +92,14 @@ model Organization {
   attachments   Attachment[]
   settings      OrganizationSettings?
   campaigns     Campaign[]
+  callAccounts  CallAccount[]
+  callAudios    CallAudio[]
+  callCampaigns CallCampaign[]
+  callDirectRecords CallDirectRecord[]
+  callEvents    CallEvent[]
+  callAuditLogs CallAuditLog[]
   apiKeys       ApiKey[]
+  aiUsageLogs   AiUsageLog[]
 }
 
 model OrganizationSettings {
@@ -79,6 +109,7 @@ model OrganizationSettings {
   welcomeMessage String       @default("¡Hola! ¿En qué podemos ayudarte?")
   aiEnabled      Boolean      @default(false)
   menuOptions    Json         @default("[]")
+  botFlow        Json         @default("{}")
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 }
 
@@ -99,7 +130,12 @@ model User {
   refreshTokens      RefreshToken[]
   assignedOrders     Order[]            @relation("AssignedOrders")
   campaigns          Campaign[]
+  callCampaigns      CallCampaign[]       @relation("CallCampaignCreator")
+  callAudios         CallAudio[]          @relation("CallAudioCreator")
+  callAccounts       CallAccount[]        @relation("CallAccountCreator")
+  callDirectRecords  CallDirectRecord[]   @relation("CallDirectRecordCreator")
   apiKeys            ApiKey[]
+  pushSubscriptions  PushSubscription[]
 }
 
 model Department {
@@ -139,9 +175,18 @@ model Contact {
   conversations      Conversation[]
   orders             Order[]
   campaignRecipients CampaignRecipient[]
+  callCampaignRecipients CallCampaignRecipient[]
+  callSurveyResponses CallSurveyResponse[]
+  directCallRecords CallDirectRecord[]
+  callConsentStatus String? @default("UNKNOWN")
+  callConsentAt DateTime?
+  callConsentSource String?
+  callOptedOutAt DateTime?
+  callOptOutSource String?
 
   @@index([organizationId, phone])
   @@index([tags], type: Gin)
+  @@index([organizationId, callConsentStatus, callOptedOutAt])
 }
 
 model Conversation {
@@ -164,6 +209,7 @@ model Conversation {
   assignedTo     User?                @relation("AssignedAgent", fields: [assignedToId], references: [id], onDelete: SetNull)
   messages       Message[]
   orders         Order[]
+  directCallRecords CallDirectRecord[]
 
   @@index([organizationId, status, updatedAt])
   @@index([tags], type: Gin)
@@ -261,6 +307,248 @@ model CampaignRecipient {
   @@index([waMessageId])
 }
 
+model CallAccount {
+  id              String   @id @default(cuid())
+  organizationId  String
+  name            String
+  phoneNumber     String?
+  status          String   @default("DISCONNECTED")
+  sessionReference String?
+  lastError       String?
+  createdByUserId String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  createdBy       User?    @relation("CallAccountCreator", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  campaigns       CallCampaign[]
+  attempts        CallAttempt[]
+  directCallRecords CallDirectRecord[]
+
+  @@index([organizationId, status, updatedAt])
+}
+
+model CallAudio {
+  id              String   @id @default(cuid())
+  organizationId  String
+  name            String
+  description     String?
+  storageKey      String
+  mimeType        String
+  size            Int
+  durationSeconds Int?
+  processingStatus String  @default("READY")
+  source          String  @default("UPLOAD")
+  provider        String?
+  voice           String?
+  language        String?
+  createdByUserId String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  createdBy       User?    @relation("CallAudioCreator", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  campaigns       CallCampaign[]
+  attempts        CallAttempt[]
+
+  @@index([organizationId, processingStatus, createdAt])
+}
+
+model CallCampaign {
+  id                    String            @id @default(cuid())
+  organizationId        String
+  name                  String
+  description           String?
+  campaignType          String            @default("COMMERCIAL")
+  accountId             String
+  audioId               String
+  status                CallCampaignStatus @default(DRAFT)
+  scheduledAt           DateTime?
+  startedAt             DateTime?
+  completedAt           DateTime?
+  timezone              String            @default("America/Asuncion")
+  maxConcurrent         Int               @default(1)
+  pauseBetweenSeconds   Int               @default(10)
+  maxAttempts           Int               @default(1)
+  answerTimeoutSeconds  Int               @default(30)
+  retryDelaySeconds     Int               @default(300)
+  allowedFrom           String?
+  allowedTo             String?
+  surveyEnabled         Boolean           @default(false)
+  surveyQuestion        String?
+  surveyResponseMethod   String            @default("WHATSAPP")
+  surveyExpiresAt       DateTime?
+  createdByUserId       String?
+  createdAt              DateTime          @default(now())
+  updatedAt              DateTime          @updatedAt
+  organization          Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  account               CallAccount       @relation(fields: [accountId], references: [id], onDelete: Restrict)
+  audio                 CallAudio         @relation(fields: [audioId], references: [id], onDelete: Restrict)
+  createdBy             User?             @relation("CallCampaignCreator", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  recipients            CallCampaignRecipient[]
+  attempts              CallAttempt[]
+  survey                CallSurvey?
+  surveyResponses       CallSurveyResponse[]
+  events                CallEvent[]
+  auditLogs             CallAuditLog[]
+
+  @@index([organizationId, status, createdAt])
+  @@index([accountId, status])
+}
+
+model CallCampaignRecipient {
+  id              String             @id @default(cuid())
+  campaignId      String
+  contactId       String
+  phoneNumber     String
+  status          CallRecipientStatus @default(PENDING)
+  attemptCount    Int                @default(0)
+  lastAttemptAt   DateTime?
+  nextAttemptAt   DateTime?
+  finalResult     String?
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+  campaign        CallCampaign       @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  contact         Contact            @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  attempts        CallAttempt[]
+
+  @@unique([campaignId, contactId])
+  @@index([campaignId, status, nextAttemptAt])
+  @@index([contactId])
+}
+
+model CallAttempt {
+  id                 String             @id @default(cuid())
+  campaignId         String
+  campaignContactId  String
+  accountId          String
+  audioId            String?
+  attemptNumber      Int
+  status             CallRecipientStatus @default(STARTING)
+  callId             String?
+  startedAt          DateTime           @default(now())
+  answeredAt         DateTime?
+  finishedAt         DateTime?
+  durationSeconds    Int?
+  errorCode          String?
+  errorMessage       String?
+  providerEventData  Json?
+  createdAt          DateTime           @default(now())
+  campaign           CallCampaign       @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  campaignContact    CallCampaignRecipient @relation(fields: [campaignContactId], references: [id], onDelete: Cascade)
+  account            CallAccount        @relation(fields: [accountId], references: [id], onDelete: Restrict)
+  audio              CallAudio?         @relation(fields: [audioId], references: [id], onDelete: SetNull)
+  surveyResponses    CallSurveyResponse[]
+  events             CallEvent[]
+
+  @@index([campaignId, createdAt])
+  @@index([campaignContactId, attemptNumber])
+  @@index([callId])
+}
+
+model CallDirectRecord {
+  id                String              @id @default(cuid())
+  organizationId    String
+  accountId         String
+  contactId         String?
+  conversationId    String?
+  createdByUserId   String?
+  phoneNumber       String
+  status            CallRecipientStatus @default(STARTING)
+  callId            String?
+  startedAt         DateTime            @default(now())
+  answeredAt        DateTime?
+  finishedAt        DateTime?
+  durationSeconds   Int?
+  endedReason       String?
+  errorCode         String?
+  errorMessage      String?
+  providerEventData Json?
+  createdAt         DateTime            @default(now())
+  organization      Organization        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  account           CallAccount         @relation(fields: [accountId], references: [id], onDelete: Restrict)
+  contact           Contact?            @relation(fields: [contactId], references: [id], onDelete: SetNull)
+  conversation      Conversation?      @relation(fields: [conversationId], references: [id], onDelete: SetNull)
+  createdBy         User?               @relation("CallDirectRecordCreator", fields: [createdByUserId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId, createdAt])
+  @@index([organizationId, status, createdAt])
+  @@index([contactId, createdAt])
+  @@index([callId])
+}
+
+model CallSurvey {
+  id             String   @id @default(cuid())
+  campaignId     String   @unique
+  question       String
+  responseMethod String   @default("WHATSAPP")
+  expiresAt      DateTime?
+  createdAt      DateTime @default(now())
+  campaign       CallCampaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  options        CallSurveyOption[]
+  responses      CallSurveyResponse[]
+}
+
+model CallSurveyOption {
+  id        String   @id @default(cuid())
+  surveyId  String
+  optionKey String
+  optionLabel String
+  survey    CallSurvey @relation(fields: [surveyId], references: [id], onDelete: Cascade)
+
+  @@unique([surveyId, optionKey])
+}
+
+model CallSurveyResponse {
+  id              String   @id @default(cuid())
+  surveyId        String
+  campaignId      String
+  contactId       String
+  attemptId       String?
+  responseValue   String
+  responseChannel String
+  status          String   @default("RESPONDED")
+  respondedAt     DateTime @default(now())
+  survey          CallSurvey @relation(fields: [surveyId], references: [id], onDelete: Cascade)
+  campaign        CallCampaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  contact         Contact @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  attempt         CallAttempt? @relation(fields: [attemptId], references: [id], onDelete: SetNull)
+
+  @@index([campaignId, respondedAt])
+  @@index([contactId, respondedAt])
+}
+
+model CallEvent {
+  id          String   @id @default(cuid())
+  organizationId String
+  campaignId  String
+  attemptId   String?
+  eventType   String
+  eventPayload Json?
+  createdAt   DateTime @default(now())
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  campaign    CallCampaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  attempt     CallAttempt? @relation(fields: [attemptId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId, createdAt])
+  @@index([campaignId, createdAt])
+}
+
+model CallAuditLog {
+  id             String   @id @default(cuid())
+  organizationId String
+  campaignId     String?
+  userId         String?
+  action         String
+  entityType     String
+  entityId       String?
+  details        Json?
+  createdAt      DateTime @default(now())
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  campaign       CallCampaign? @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, createdAt])
+  @@index([campaignId, createdAt])
+}
+
 model ApiKey {
   id              String       @id @default(cuid())
   organizationId  String
@@ -277,6 +565,22 @@ model ApiKey {
   messages        Message[]
 
   @@index([organizationId, revokedAt, createdAt])
+}
+
+// Un registro por llamada exitosa a la API de Niro IA (chat del bot, agentes propios,
+// transcripción de audio, OCR/visión, análisis de documentos). `cost` es lo que devuelve esa
+// API en el momento — sin garantía de unidad estable entre categorías (algunas respuestas traen
+// decimales pequeños, otras enteros grandes); se guarda tal cual para no inventar una conversión,
+// y la interfaz lo muestra desglosado por tipo en lugar de sumarlo a ciegas.
+model AiUsageLog {
+  id             String       @id @default(cuid())
+  organizationId String
+  kind           String
+  cost           Decimal?     @db.Decimal(14, 4)
+  createdAt      DateTime     @default(now())
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, kind, createdAt])
 }
 
 enum OrderStatus {
@@ -340,6 +644,22 @@ model RefreshToken {
   userAgent      String?
   ip             String?
   user           User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+// Una suscripción Web Push (VAPID) por dispositivo/navegador que un usuario autorizó. Un mismo
+// usuario puede tener varias (celular, PC del trabajo, etc.); se identifican por `endpoint`,
+// que el navegador genera único por combinación de sitio + dispositivo.
+model PushSubscription {
+  id        String   @id @default(cuid())
+  userId    String
+  endpoint  String   @unique
+  p256dh    String
+  auth      String
+  userAgent String?
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
 }

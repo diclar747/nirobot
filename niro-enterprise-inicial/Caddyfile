@@ -1,0 +1,7 @@
+# Configuración de Caddy para docker-compose.https.yml — HTTPS automático vía Let's Encrypt.
+# Caddy lee $DOMAIN del entorno (definido en docker-compose.https.yml) y proxea todo hacia el
+# contenedor `web`, que a su vez ya proxea /api y /socket.io hacia `api` (ver apps/web/nginx.conf).
+
+{$DOMAIN} {
+	reverse_proxy web:80
+}

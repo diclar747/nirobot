@@ -36,6 +36,36 @@ Desde **Campañas** se puede crear una campaña directa o programada, elegir la 
 
 La sincronización de contactos del teléfono se habilita desde el botón **Sincronizar teléfono** cuando WhatsApp está conectado. Baileys debe recibir la libreta durante la sincronización de historial; para instalaciones con historiales muy grandes se puede desactivar con `WHATSAPP_SYNC_FULL_HISTORY=false` y dejar la importación para una sesión configurada específicamente para sincronizar.
 
+Si el proceso se reinicia (deploy, crash) a mitad de un envío, la campaña que quedó en estado "enviando" se retoma sola al arrancar de nuevo: espera a que WhatsApp reconecte (hasta 30 segundos) y sigue con el próximo destinatario pendiente. Si WhatsApp no reconecta a tiempo (por ejemplo, necesita un QR nuevo), la campaña queda como estaba — pausarla y volver a iniciarla desde **Campañas** es el reintento manual.
+
+### Campañas de llamadas de WhatsApp
+
+El módulo de llamadas está disponible en **Llamadas WhatsApp** y agrega cuentas, biblioteca de audios MP3/WAV, campañas 1:1 directas o programadas, consentimiento/opt-out, control de ritmo, estados por destinatario, reintentos, pausa/reanudación, encuestas posteriores por WhatsApp, historial, CSV y reportes. La guía completa de instalación y operación está en `apps/api/docs/WHATSAPP_CALLS.md`.
+
+Para pruebas locales sin realizar llamadas se puede usar `WHATSAPP_CALL_PROVIDER=mock`. La dependencia `baileys-caller` ya queda incluida para el proveedor real; las llamadas reales requieren Node.js 20+, `ffmpeg`, `WHATSAPP_CALL_PROVIDER=baileys-caller` y una cuenta autorizada de prueba. No se habilitan automáticamente.
+
+## Notificaciones push
+El equipo puede recibir notificaciones del navegador (Web Push, sin depender de que la pestaña esté abierta) cuando llega un mensaje nuevo o les transfieren una conversación. Se activan con la campanita 🔔 de la barra superior — cada persona decide si las quiere en cada dispositivo/navegador donde inicia sesión.
+
+Reglas de aviso: si la conversación ya tiene un agente asignado, se le avisa solo a esa persona; si no tiene a nadie asignado, se avisa a quienes administran la organización (Propietario, Administrador, Supervisor) para que alguien la tome. A quien ya tiene la aplicación abierta (con un socket conectado) no se le manda push — ya lo está viendo en tiempo real.
+
+Configuración (en `apps/api/.env`, o en el `.env` raíz si usás Docker Compose):
+
+```
+VAPID_PUBLIC_KEY=...
+VAPID_PRIVATE_KEY=...
+VAPID_SUBJECT=mailto:tu-correo@tuempresa.com
+```
+
+Generá tu propio par de claves una vez (son gratis, no dependen de ningún servicio externo) y guardalas:
+
+```bash
+cd apps/api
+node -e "console.log(require('web-push').generateVAPIDKeys())"
+```
+
+Sin estas variables, la campanita queda oculta sola — no hace falta nada más para que el resto del sistema funcione igual.
+
 ## API de WhatsApp para integraciones
 Desde **API & Desarrolladores** cada usuario de una organización puede crear una credencial, copiarla una sola vez, revocarla y probar envíos en tiempo real. Las claves se almacenan como SHA-256; la clave completa nunca vuelve a aparecer y cada solicitud queda asociada a su organización y a su auditoría.
 
@@ -71,7 +101,9 @@ Qué hace cada parte:
 - **Lectura de imágenes y facturas (OCR):** desde cualquier imagen de una conversación se puede pedir "Leer texto con IA" (transcribe todo el texto) o "Leer como factura" (devuelve emisor, RUC, timbrado, ítems, IVA 5 %/10 % y total en JSON, pensado para facturas de Paraguay).
 - **Agentes IA:** módulo propio (`/ai-agents`) para crear agentes con su propio system prompt y probarlos en un chat de prueba. Crear agentes está limitado a OWNER/ADMIN/SUPERVISOR; cualquier rol puede listarlos y conversar con ellos.
 
-Si Niro IA devuelve un error (sin saldo, proveedor caído, etc.) la conversación sigue funcionando con normalidad: el mensaje del cliente siempre se guarda, y solo la respuesta automática queda pendiente. El costo de cada llamada (créditos de la wallet de la organización en Niro IA) no se muestra en la interfaz todavía; se puede consultar desde `/wallet` en la plataforma de Niro IA.
+Si Niro IA devuelve un error (sin saldo, proveedor caído, etc.) la conversación sigue funcionando con normalidad: el mensaje del cliente siempre se guarda, y solo la respuesta automática queda pendiente.
+
+**Uso y costo:** cada llamada exitosa a Niro IA (bot, agentes, transcripción, OCR, documentos) queda registrada con su costo — visible en **Agentes IA → Uso de IA**, desglosado por tipo. El costo se muestra tal cual lo devuelve la API de Niro IA, sin sumarlo entre tipos, porque no hay garantía de que la unidad sea comparable entre categorías (algunas respuestas traen decimales chicos, otras enteros grandes). Para el detalle en tu moneda real, `/wallet` en la plataforma de Niro IA sigue siendo la fuente de verdad.
 
 ## Desarrollo local
 Con PostgreSQL disponible y `apps/api/.env` configurado:
@@ -120,10 +152,17 @@ TEST_DATABASE_URL="postgresql://niro:<password>@localhost:4432/niro_test?schema=
 
 (Ajustá host/puerto/credenciales según tu `.env`. No se deben apuntar estos tests a la base de producción.)
 
-## Próximos módulos a desarrollar
-1. Notificaciones push reales (el bot ya invita a escribir "NOTIFICACIONES", pero todavía no hay backend detrás).
-2. Soporte de múltiples líneas de WhatsApp simultáneas por organización y selección de `lineId` en la API.
-3. Cola durable para envíos API/campañas, webhooks externos y reportes históricos avanzados.
-4. Mostrar en la interfaz el costo en créditos de cada respuesta de IA (hoy solo se ve desde `/wallet` en Niro IA).
+## Antes de publicar en producción
+Checklist concreto — ningún paso es opcional para exponer el servicio a Internet con datos reales:
 
-No publiques el servicio sin configurar secretos, HTTPS, límites de acceso, backups y revisión de seguridad.
+1. **Secretos propios.** Cambiá `JWT_SECRET`, `POSTGRES_PASSWORD` y `SEED_SUPERADMIN_PASSWORD` en tu `.env` — no uses los valores de ejemplo del repo. `JWT_SECRET` fuerte: `node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"`.
+2. **HTTPS + `COOKIE_SECURE=true`.** Las cookies de sesión no viajan por HTTP en producción. La forma más simple con este repo: `docker compose -f docker-compose.yml -f docker-compose.https.yml up -d --build` (agrega un proxy Caddy que saca y renueva el certificado solo — ver ese archivo). Si ya tenés tu propio proxy/dominio, sirve igual, solo asegurate de que termine en HTTPS y de setear `COOKIE_SECURE=true`.
+3. **Backups automáticos.** `scripts/backup-db.sh` respalda la base de datos, los adjuntos subidos y las sesiones de WhatsApp en un solo paso. Programalo con cron (el propio script trae el ejemplo en su cabecera) y probá al menos una vez que un respaldo se pueda restaurar.
+4. **API de Niro IA y notificaciones push son opcionales** pero recomendadas: sin `NIRO_AI_API_KEY` el asistente queda apagado, sin `VAPID_PUBLIC_KEY`/`VAPID_PRIVATE_KEY` las notificaciones push quedan ocultas. Ninguna de las dos rompe el resto del sistema si falta.
+5. **Revisión de dependencias.** `npm audit` en `apps/api` señala una vulnerabilidad conocida en una dependencia de desarrollo de Prisma (no del cliente en tiempo de ejecución) — no bloquea el uso, pero conviene revisar `npm audit fix` antes de publicar y de ahí en más de forma periódica.
+6. **Acceso a la base de datos.** El puerto de Postgres no debería quedar expuesto a Internet — en el `docker-compose.yml` base no se publica ningún puerto para `db`, mantenelo así salvo que necesites conectarte de afuera, y en ese caso restringilo por IP/VPN.
+
+## Próximos módulos a desarrollar
+1. Múltiples líneas de WhatsApp simultáneas por organización y selección de `lineId` en la API (hoy cada organización usa una sola sesión; el campo "línea de envío" de las campañas todavía no elige entre varias).
+2. Cola durable para envíos API/campañas y webhooks externos, pensada para correr varios servidores de API a la vez (hoy es un solo timer en memoria por servidor — funciona bien para un despliegue de un servidor, y las campañas que quedan a mitad de un envío se reanudan solas al reiniciar, ver "Campañas de WhatsApp").
+3. Envío de la contraseña temporal por email a los usuarios nuevos (hoy se muestra una vez en pantalla para copiar y entregar a mano).

@@ -135,6 +135,31 @@ describe('Campañas de WhatsApp', () => {
     sendTextSpy.mockRestore();
   });
 
+  test('personaliza el mensaje por destinatario y conserva el texto renderizado en el historial', async () => {
+    const { agent, csrfToken, ana, organization } = await setup();
+    expect(campaigns.personalizeCampaignMessage('Hola {{nombre}}, tu teléfono es {{telefono}}.', ana)).toBe('Hola Ana, tu teléfono es 595980000101.');
+    expect(campaigns.personalizeCampaignMessage('Hola {{nombre}}, tu teléfono es {{telefono}}.', { name: 'Bruno Test', phone: '595980000102' })).toBe('Hola Bruno, tu teléfono es 595980000102.');
+    const response = await agent.post('/api/org/campaigns').set('X-CSRF-Token', csrfToken).send({
+      name: 'Personalización QA',
+      message: 'Hola {{nombre}}, tu teléfono es {{telefono}}.',
+      contactIds: [ana.id],
+      messagesPerHour: 100
+    });
+    const campaignId = response.body.campaign.id;
+    const sendTextSpy = jest.spyOn(whatsapp, 'sendText').mockResolvedValue('wa-personalized-ana');
+
+    await campaigns.startCampaign(organization.id, campaignId);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    expect(sendTextSpy).toHaveBeenCalledWith(organization.id, ana.phone, 'Hola Ana, tu teléfono es 595980000101.');
+    const messages = await prisma.message.findMany({ where: { campaignId }, orderBy: { createdAt: 'asc' } });
+    expect(messages.map((message) => message.content)).toEqual(['Hola Ana, tu teléfono es 595980000101.']);
+
+    campaigns.clearAllTimers();
+    sendTextSpy.mockRestore();
+  });
+
   test('genera una API key de una sola lectura, envía por Bearer y revoca el acceso', async () => {
     const { agent, csrfToken, ana } = await setup();
     const created = await agent.post('/api/org/api-keys').set('X-CSRF-Token', csrfToken).send({ name: 'ERP QA' });

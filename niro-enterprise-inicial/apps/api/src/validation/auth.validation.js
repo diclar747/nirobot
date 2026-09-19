@@ -10,4 +10,10 @@ const changePasswordSchema = z.object({
   newPassword: z.string().min(10, 'La nueva contraseña debe tener al menos 10 caracteres')
 });
 
-module.exports = { loginSchema, changePasswordSchema };
+const whatsappQrCompleteSchema = z.object({
+  flowId: z.string().min(12).max(120),
+  companyName: z.string().trim().min(2).max(100).optional(),
+  adminName: z.string().trim().min(2).max(100).optional()
+});
+
+module.exports = { loginSchema, changePasswordSchema, whatsappQrCompleteSchema };

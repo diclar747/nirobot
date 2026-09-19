@@ -1,16 +1,22 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useTheme, type AppTheme } from '../context/ThemeContext';
 import { Logo } from './Logo';
 import { NiroMascot } from './NiroMascot';
 import { WhatsAppConnectModal } from './WhatsAppConnectModal';
+import { NotificationBell } from './NotificationBell';
 import { apiGet } from '../lib/api';
 import { getSocket } from '../lib/socket';
 import '../styles/app-theme.css';
 import '../styles/ui-fixes.css';
 
 type WhatsAppStatus = 'disconnected' | 'connecting' | 'qr' | 'connected';
+
+interface WhatsAppStatusPayload {
+  status: WhatsAppStatus;
+  avatarUrl?: string | null;
+}
 
 function initials(name: string) {
   return name
@@ -28,9 +34,13 @@ export function Layout() {
   const [showWhatsAppModal, setShowWhatsAppModal] = useState(false);
   const [globalSearch, setGlobalSearch] = useState('');
   const [waStatus, setWaStatus] = useState<WhatsAppStatus>('disconnected');
+  const [whatsappAvatarUrl, setWhatsappAvatarUrl] = useState<string | null>(null);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => localStorage.getItem('niro_sidebar_collapsed') === 'true');
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [unreadConversationsCount, setUnreadConversationsCount] = useState(0);
+  const appShellRef = useRef<HTMLDivElement>(null);
+  const whatsappLogoutRef = useRef(false);
+  const [isFullscreen, setIsFullscreen] = useState(false);
 
   function toggleSidebar() {
     setSidebarCollapsed((prev) => {
@@ -48,8 +58,24 @@ export function Layout() {
 
   useEffect(() => {
     if (!user || user.role === 'SUPERADMIN') return;
-    apiGet<{ status: WhatsAppStatus }>('/api/org/whatsapp/status')
-      .then((res) => setWaStatus(res.status))
+    whatsappLogoutRef.current = false;
+
+    const forcePortalLogout = () => {
+      if (whatsappLogoutRef.current) return;
+      whatsappLogoutRef.current = true;
+      void logout().finally(() => navigate('/login', {
+        replace: true,
+        state: { whatsappLoggedOut: true }
+      }));
+    };
+
+    setWhatsappAvatarUrl(null);
+    apiGet<WhatsAppStatusPayload>('/api/org/whatsapp/status')
+      .then((res) => {
+        setWaStatus(res.status);
+        setWhatsappAvatarUrl(res.avatarUrl || null);
+        if (res.status === 'disconnected') forcePortalLogout();
+      })
       .catch(() => {});
 
     const refreshOpenCount = () => {
@@ -60,7 +86,11 @@ export function Layout() {
     refreshOpenCount();
 
     const socket = getSocket();
-    const onStatus = (payload: { status: WhatsAppStatus }) => setWaStatus(payload.status);
+    const onStatus = (payload: WhatsAppStatusPayload & { lastError?: string | null }) => {
+      setWaStatus(payload.status);
+      setWhatsappAvatarUrl(payload.avatarUrl || null);
+      if (payload.status === 'disconnected') forcePortalLogout();
+    };
 
     socket.on('whatsapp:status', onStatus);
     socket.on('message:new', refreshOpenCount);
@@ -73,7 +103,7 @@ export function Layout() {
       socket.off('conversation:new', refreshOpenCount);
       socket.off('conversation:updated', refreshOpenCount);
     };
-  }, [user]);
+  }, [logout, navigate, user]);
 
   // Global Ctrl+K search listener
   useEffect(() => {
@@ -88,11 +118,49 @@ export function Layout() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
+  useEffect(() => {
+    const syncFullscreenState = () => {
+      setIsFullscreen(document.fullscreenElement === appShellRef.current);
+    };
+
+    document.addEventListener('fullscreenchange', syncFullscreenState);
+    return () => document.removeEventListener('fullscreenchange', syncFullscreenState);
+  }, []);
+
+  // Clic en una notificación push: el service worker enfoca la pestaña y manda esto para que la
+  // app navegue a la conversación correspondiente.
+  useEffect(() => {
+    if (!('serviceWorker' in navigator)) return;
+    const onMessage = (event: MessageEvent) => {
+      if (event.data?.type === 'niro-push-navigate' && typeof event.data.url === 'string') {
+        navigate(event.data.url);
+      }
+    };
+    navigator.serviceWorker.addEventListener('message', onMessage);
+    return () => navigator.serviceWorker.removeEventListener('message', onMessage);
+  }, [navigate]);
+
   if (!user) return null;
 
   async function handleLogout() {
     await logout();
     navigate('/login', { replace: true });
+  }
+
+  async function toggleFullscreen() {
+    const appShell = appShellRef.current;
+    if (!appShell) return;
+
+    try {
+      if (document.fullscreenElement) {
+        await document.exitFullscreen();
+      } else if (appShell.requestFullscreen) {
+        await appShell.requestFullscreen();
+      }
+    } catch {
+      // Algunos navegadores pueden rechazar la solicitud si no proviene de una
+      // interacción directa. El botón sigue disponible para volver a intentarlo.
+    }
   }
 
   const isSuperadmin = user.role === 'SUPERADMIN';
@@ -101,7 +169,7 @@ export function Layout() {
   const canSeeReports = ['OWNER', 'ADMIN', 'SUPERVISOR'].includes(user.role);
 
   return (
-    <div className={`modern-app-shell ${sidebarCollapsed ? 'sidebar-collapsed' : ''}`}>
+    <div ref={appShellRef} className={`modern-app-shell ${sidebarCollapsed ? 'sidebar-collapsed' : ''}`}>
       {/* SIDEBAR */}
       <aside className={`modern-sidebar ${sidebarCollapsed ? 'collapsed' : ''}`}>
         <button
@@ -197,6 +265,20 @@ export function Layout() {
             )}
 
             {!isSuperadmin && (
+              <NavLink to="/bot" className={({ isActive }) => `sidebar-nav-item ${isActive ? 'active' : ''}`}>
+                <div className="sidebar-nav-item-content">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <circle cx="5" cy="12" r="2" />
+                    <circle cx="19" cy="6" r="2" />
+                    <circle cx="19" cy="18" r="2" />
+                    <path d="M7 12h5a4 4 0 0 0 4-4V8M12 12a4 4 0 0 1 4 4v0" />
+                  </svg>
+                  <span>Flujos de Bot</span>
+                </div>
+              </NavLink>
+            )}
+
+            {!isSuperadmin && (
               <NavLink to="/orders" className={({ isActive }) => `sidebar-nav-item ${isActive ? 'active' : ''}`}>
                 <div className="sidebar-nav-item-content">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -243,6 +325,17 @@ export function Layout() {
                     <path d="M22 2 15 22 11 13 2 9 22 2Z" />
                   </svg>
                   <span>Campañas</span>
+                </div>
+              </NavLink>
+            )}
+
+            {!isSuperadmin && canSeeReports && (
+              <NavLink to="/llamadas" className={({ isActive }) => `sidebar-nav-item ${isActive ? 'active' : ''}`}>
+                <div className="sidebar-nav-item-content">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6A19.79 19.79 0 0 1 2.12 4.18 2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.12.9.33 1.78.62 2.63a2 2 0 0 1-.45 2.11L8 9.73a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.85.29 1.73.5 2.63.62A2 2 0 0 1 22 16.92z" />
+                  </svg>
+                  <span>Llamadas WhatsApp</span>
                 </div>
               </NavLink>
             )}
@@ -334,6 +427,34 @@ export function Layout() {
           </div>
 
           <div className="topbar-actions">
+            <button
+              type="button"
+              className={`topbar-icon-btn fullscreen-toggle ${isFullscreen ? 'is-active' : ''}`}
+              onClick={toggleFullscreen}
+              aria-label={isFullscreen ? 'Salir de pantalla completa' : 'Activar pantalla completa'}
+              aria-pressed={isFullscreen}
+              title={isFullscreen ? 'Salir de pantalla completa (Esc)' : 'Activar pantalla completa'}
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="18" height="18" aria-hidden="true">
+                {isFullscreen ? (
+                  <>
+                    <polyline points="9 14 4 14 4 19" />
+                    <polyline points="15 10 20 10 20 5" />
+                    <line x1="4" y1="14" x2="10" y2="20" />
+                    <line x1="14" y1="4" x2="20" y2="10" />
+                  </>
+                ) : (
+                  <>
+                    <polyline points="8 3 3 3 3 8" />
+                    <polyline points="16 3 21 3 21 8" />
+                    <polyline points="8 21 3 21 3 16" />
+                    <polyline points="16 21 21 21 21 16" />
+                  </>
+                )}
+              </svg>
+            </button>
+            <NotificationBell />
+
             {/* Theme Toggle Button (Sun / Moon) */}
             <button
               type="button"
@@ -368,7 +489,7 @@ export function Layout() {
                 onClick={() => setShowUserMenu((prev) => !prev)}
               >
                 <div className="topbar-user-avatar">
-                  {initials(user.name)}
+                  {whatsappAvatarUrl ? <img src={whatsappAvatarUrl} alt={`Perfil de WhatsApp de ${user.name}`} /> : initials(user.name)}
                 </div>
                 <div className="topbar-user-info">
                   <div className="topbar-user-name">{user.name}</div>
@@ -400,7 +521,7 @@ export function Layout() {
                     className="dropdown-item"
                     onClick={() => { setShowUserMenu(false); setShowWhatsAppModal(true); }}
                   >
-                    💬 Estado WhatsApp ({waStatus === 'connected' ? 'Conectado' : waStatus === 'connecting' || waStatus === 'qr' ? 'Conectando' : 'Desconectado'})
+                    💬 Estado WhatsApp ({waStatus === 'connected' ? 'Conectado' : waStatus === 'connecting' || waStatus === 'qr' ? 'Reconectando' : 'Desconectado'})
                   </button>
                   <div className="dropdown-divider" />
                   <button

@@ -1,4 +1,5 @@
 const CSRF_COOKIE = 'niro_csrf';
+let refreshPromise: Promise<boolean> | null = null;
 
 function readCookie(name: string): string | null {
   const match = document.cookie.match(new RegExp(`(?:^|; )${name}=([^;]*)`));
@@ -18,7 +19,19 @@ export class ApiError extends Error {
 
 const MUTATING_METHODS = new Set(['POST', 'PATCH', 'PUT', 'DELETE']);
 
-export async function api<T = unknown>(path: string, options: RequestInit = {}): Promise<T> {
+async function refreshAccessSession(): Promise<boolean> {
+  if (!refreshPromise) {
+    refreshPromise = fetch('/api/auth/refresh', {
+      method: 'POST',
+      credentials: 'include'
+    }).then((response) => response.ok).catch(() => false).finally(() => {
+      refreshPromise = null;
+    });
+  }
+  return refreshPromise;
+}
+
+export async function api<T = unknown>(path: string, options: RequestInit = {}, allowRefresh = true): Promise<T> {
   const method = (options.method || 'GET').toUpperCase();
   const headers = new Headers(options.headers);
 
@@ -32,6 +45,15 @@ export async function api<T = unknown>(path: string, options: RequestInit = {}):
   }
 
   const res = await fetch(path, { ...options, method, headers, credentials: 'include' });
+
+  // Access tokens are intentionally short-lived. Refresh once and retry the
+  // original request so an open dashboard does not look logged out after a
+  // period of inactivity or an API restart. Auth endpoints are excluded to
+  // avoid retry loops while logging in, refreshing, or logging out.
+  if (res.status === 401 && allowRefresh && !path.startsWith('/api/auth/')) {
+    const refreshed = await refreshAccessSession();
+    if (refreshed) return api<T>(path, options, false);
+  }
 
   if (res.status === 204) return undefined as T;
 

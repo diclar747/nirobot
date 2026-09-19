@@ -3,6 +3,16 @@ const { prisma } = require('../lib/prisma');
 
 const router = express.Router();
 
+router.get('/', (_req, res) => {
+  res.json({
+    ok: true,
+    service: 'niro-api',
+    status: 'online',
+    health: '/health',
+    api: '/api'
+  });
+});
+
 router.get('/health', async (_req, res) => {
   try {
     await prisma.$queryRaw`SELECT 1`;

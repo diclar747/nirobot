@@ -4,12 +4,14 @@
 
 const niroAi = require('./niroAi');
 const { prisma } = require('./prisma');
+const { KINDS, recordAiUsage } = require('./aiUsage');
 
 /** Transcribe un audio entrante y lo guarda en Message.transcription. Nunca lanza. */
-async function transcribeMessageAudio(messageId, buffer, fileName, mimeType) {
+async function transcribeMessageAudio(organizationId, messageId, buffer, fileName, mimeType) {
   if (!niroAi.isConfigured()) return null;
   try {
-    const { text } = await niroAi.transcribeAudio(buffer, fileName, mimeType);
+    const { text, cost } = await niroAi.transcribeAudio(buffer, fileName, mimeType);
+    await recordAiUsage(organizationId, KINDS.TRANSCRIPTION, cost);
     if (!text) return null;
     await prisma.message.update({ where: { id: messageId }, data: { transcription: text } });
     return text;
@@ -20,10 +22,11 @@ async function transcribeMessageAudio(messageId, buffer, fileName, mimeType) {
 }
 
 /** OCR de una imagen/factura entrante. Igual que arriba: nunca lanza. */
-async function extractMessageImage(messageId, buffer, fileName, mimeType, mode) {
+async function extractMessageImage(organizationId, messageId, buffer, fileName, mimeType, mode) {
   if (!niroAi.isConfigured()) return null;
   try {
-    const { text, data } = await niroAi.visionExtract(buffer, fileName, mimeType, { mode });
+    const { text, data, cost } = await niroAi.visionExtract(buffer, fileName, mimeType, { mode });
+    await recordAiUsage(organizationId, KINDS.VISION, cost);
     if (!text) return null;
     await prisma.message.update({ where: { id: messageId }, data: { transcription: text } });
     return { text, data };

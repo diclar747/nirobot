@@ -31,7 +31,7 @@ router.post('/sync-contacts', requireCsrf, requireRole('OWNER', 'ADMIN', 'SUPERV
 
 router.post('/connect', requireCsrf, requireRole('OWNER', 'ADMIN'), async (req, res, next) => {
   try {
-    const status = await whatsapp.connect(req.auth.organizationId);
+    const status = await whatsapp.connect(req.auth.organizationId, { fresh: true });
     res.json(status);
   } catch (err) {
     next(err);

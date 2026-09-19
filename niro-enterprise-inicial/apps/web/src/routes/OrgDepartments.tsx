@@ -3,11 +3,13 @@ import { apiDelete, apiGet, apiPatch, apiPost, ApiError } from '../lib/api';
 import type { Department, OrgUser } from '../types';
 import { Modal } from '../components/Modal';
 import { useAuth } from '../context/AuthContext';
+import { useAlerts } from '../context/AlertContext';
 import { EmptyState, LoadingRows, PageHeader, PageShell, Panel, Pill, StatCard, StatGrid } from '../components/PageKit';
 import { IconLayers, IconUsers } from '../components/icons';
 
 export function OrgDepartments() {
   const { user: me } = useAuth();
+  const { confirm } = useAlerts();
   const [departments, setDepartments] = useState<Department[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -34,7 +36,13 @@ export function OrgDepartments() {
   }, []);
 
   async function remove(dept: Department) {
-    if (!confirm(`¿Eliminar el departamento "${dept.name}"?`)) return;
+    const accepted = await confirm({
+      title: 'Eliminar departamento',
+      message: `¿Querés eliminar el departamento "${dept.name}"? Esta acción no se puede deshacer.`,
+      confirmLabel: 'Eliminar',
+      tone: 'danger'
+    });
+    if (!accepted) return;
     try {
       await apiDelete(`/api/org/departments/${dept.id}`);
       load();

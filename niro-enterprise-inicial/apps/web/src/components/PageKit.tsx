@@ -85,7 +85,7 @@ export function Pill({ tone = 'neutral', children, dot }: { tone?: Tone; childre
   );
 }
 
-export function PersonCell({ name, detail }: { name: string; detail?: ReactNode }) {
+export function PersonCell({ name, detail, avatarUrl }: { name: string; detail?: ReactNode; avatarUrl?: string | null }) {
   const letters = name
     .split(/\s+/)
     .filter(Boolean)
@@ -94,7 +94,9 @@ export function PersonCell({ name, detail }: { name: string; detail?: ReactNode 
     .join('');
   return (
     <div className="page-person">
-      <span className="page-person-avatar">{letters || '?'}</span>
+      <span className={`page-person-avatar${avatarUrl ? ' has-image' : ''}`}>
+        {avatarUrl ? <img src={avatarUrl} alt="" referrerPolicy="no-referrer" /> : letters || '?'}
+      </span>
       <div className="page-person-text">
         <div className="page-person-name">{name}</div>
         {detail && <div className="page-person-detail">{detail}</div>}

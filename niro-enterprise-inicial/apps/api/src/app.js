@@ -15,8 +15,11 @@ const widgetRoutes = require('./routes/widget.routes');
 const whatsappRoutes = require('./routes/whatsapp.routes');
 const campaignsRoutes = require('./routes/campaigns.routes');
 const aiRoutes = require('./routes/ai.routes');
+const botFlowRoutes = require('./routes/bot-flow.routes');
+const pushRoutes = require('./routes/push.routes');
 const developerRoutes = require('./routes/developer.routes');
 const apiRoutes = require('./routes/api.routes');
+const callRoutes = require('./routes/call.routes');
 const { errorHandler } = require('./middleware/errorHandler');
 
 const allowedOrigins = (process.env.WEB_ORIGIN || 'http://localhost:3000').split(',').map((s) => s.trim());
@@ -50,7 +53,10 @@ app.use('/api/org/reports', reportsRoutes);
 app.use('/api/org/whatsapp', whatsappRoutes);
 app.use('/api/org/campaigns', campaignsRoutes);
 app.use('/api/org/ai', aiRoutes);
+app.use('/api/org/bot-flow', botFlowRoutes);
+app.use('/api/org/push', pushRoutes);
 app.use('/api/org', developerRoutes);
+app.use('/api/org/wa-calls', callRoutes);
 app.use('/api/v1', apiRoutes);
 app.use(WIDGET_PATH_PREFIX, widgetRoutes);
 

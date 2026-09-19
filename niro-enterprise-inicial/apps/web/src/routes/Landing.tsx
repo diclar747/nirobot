@@ -1,10 +1,12 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import { useAlerts } from '../context/AlertContext';
 import '../styles/landing.css';
 
 export function Landing() {
   const { user } = useAuth();
+  const { notify } = useAlerts();
   const navigate = useNavigate();
 
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -28,7 +30,7 @@ export function Landing() {
     setTimeout(() => {
       setDemoSubmitted(false);
       setDemoModalOpen(false);
-      alert('¡Gracias! Un especialista de Niro se comunicará contigo por WhatsApp en breve.');
+      notify('Un especialista de Niro se comunicará contigo por WhatsApp en breve.', { tone: 'success', title: 'Solicitud recibida' });
     }, 1200);
   };
 
@@ -989,7 +991,7 @@ export function Landing() {
               <li><a href="#app-movil" onClick={(e) => { e.preventDefault(); scrollToSection('app-movil'); }}>App Móvil</a></li>
               <li><a href="#planes" onClick={(e) => { e.preventDefault(); scrollToSection('planes'); }}>Planes</a></li>
               <li><a href="#clientes" onClick={(e) => { e.preventDefault(); scrollToSection('clientes'); }}>Clientes</a></li>
-              <li><a href="#blog" onClick={(e) => { e.preventDefault(); alert('Blog próximamente'); }}>Blog</a></li>
+              <li><a href="#blog" onClick={(e) => { e.preventDefault(); notify('El blog estará disponible próximamente.', { tone: 'info', title: 'Blog' }); }}>Blog</a></li>
               <li><a href="#contacto" onClick={(e) => { e.preventDefault(); setContactModalOpen(true); }}>Contacto</a></li>
             </ul>
 
@@ -1028,8 +1030,8 @@ export function Landing() {
           <div className="footer-bottom">
             <div>© 2025 Niro. Todos los derechos reservados.</div>
             <div className="footer-legal-links">
-              <a href="#terminos" onClick={(e) => { e.preventDefault(); alert('Términos y condiciones'); }}>Términos</a>
-              <a href="#privacidad" onClick={(e) => { e.preventDefault(); alert('Política de privacidad'); }}>Privacidad</a>
+              <a href="#terminos" onClick={(e) => { e.preventDefault(); notify('Los términos y condiciones estarán disponibles próximamente.', { tone: 'info', title: 'Términos y condiciones' }); }}>Términos</a>
+              <a href="#privacidad" onClick={(e) => { e.preventDefault(); notify('La política de privacidad estará disponible próximamente.', { tone: 'info', title: 'Política de privacidad' }); }}>Privacidad</a>
               <a href="#soporte" onClick={(e) => { e.preventDefault(); setContactModalOpen(true); }}>Soporte</a>
             </div>
           </div>

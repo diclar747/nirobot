@@ -10,6 +10,7 @@ const ALLOWED_TYPES = {
   'image/webp': '.webp',
   'audio/mpeg': '.mp3',
   'audio/ogg': '.ogg',
+  'audio/webm': '.webm',
   'audio/wav': '.wav',
   'audio/x-wav': '.wav',
   'audio/mp4': '.m4a',
@@ -26,11 +27,15 @@ const ALLOWED_TYPES = {
 const MAX_SIZE = 15 * 1024 * 1024;
 
 function isAllowedMimeType(mimeType) {
-  return Object.prototype.hasOwnProperty.call(ALLOWED_TYPES, mimeType);
+  return Object.prototype.hasOwnProperty.call(ALLOWED_TYPES, normalizeMimeType(mimeType));
 }
 
 function extensionFor(mimeType) {
-  return ALLOWED_TYPES[mimeType] || '';
+  return ALLOWED_TYPES[normalizeMimeType(mimeType)] || '';
+}
+
+function normalizeMimeType(mimeType) {
+  return String(mimeType || '').split(';')[0].trim().toLowerCase();
 }
 
 function safeDownloadName(name) {
@@ -57,4 +62,4 @@ function sendAttachmentFile(res, attachment) {
   });
 }
 
-module.exports = { ALLOWED_TYPES, MAX_SIZE, isAllowedMimeType, extensionFor, safeDownloadName, sanitizeAttachment, sendAttachmentFile };
+module.exports = { ALLOWED_TYPES, MAX_SIZE, isAllowedMimeType, extensionFor, normalizeMimeType, safeDownloadName, sanitizeAttachment, sendAttachmentFile };

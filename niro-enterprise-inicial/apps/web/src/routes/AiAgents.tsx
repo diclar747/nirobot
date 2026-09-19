@@ -3,7 +3,7 @@ import { apiGet, apiPost, ApiError } from '../lib/api';
 import { useAuth } from '../context/AuthContext';
 import { Modal } from '../components/Modal';
 import { EmptyState, LoadingRows, PageHeader, PageShell, Panel, Pill, StatCard, StatGrid } from '../components/PageKit';
-import type { AiAgent, AiAgentCategory, AiChatTurn, AiStatus } from '../types';
+import type { AiAgent, AiAgentCategory, AiChatTurn, AiStatus, AiUsageSummary } from '../types';
 
 const CATEGORY_LABEL: Record<AiAgentCategory, string> = {
   CHAT: 'Chat general',
@@ -97,6 +97,8 @@ export function AiAgents() {
         <StatCard label="Agentes propios" value={loading ? '—' : agents.length} hint="Creados en esta organización" tone="violet" icon={<AgentIcon />} />
       </StatGrid>
 
+      <UsagePanel />
+
       <Panel flush title="Tus agentes">
         {loading ? (
           <LoadingRows rows={3} />
@@ -147,6 +149,68 @@ export function AiAgents() {
 
       {chatAgent && <AgentChatModal agent={chatAgent} onClose={() => setChatAgent(null)} />}
     </PageShell>
+  );
+}
+
+function UsagePanel() {
+  const [summary, setSummary] = useState<AiUsageSummary | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [days, setDays] = useState(30);
+
+  useEffect(() => {
+    setLoading(true);
+    apiGet<AiUsageSummary>(`/api/org/ai/usage/summary?days=${days}`)
+      .then(setSummary)
+      .catch(() => setSummary(null))
+      .finally(() => setLoading(false));
+  }, [days]);
+
+  return (
+    <Panel
+      flush
+      title="Uso de IA"
+      actions={
+        <select className="input" style={{ width: 'auto' }} value={days} onChange={(e) => setDays(Number(e.target.value))}>
+          <option value={7}>Últimos 7 días</option>
+          <option value={30}>Últimos 30 días</option>
+          <option value={90}>Últimos 90 días</option>
+        </select>
+      }
+    >
+      {loading ? (
+        <LoadingRows rows={2} />
+      ) : !summary || summary.totalCalls === 0 ? (
+        <EmptyState icon={<AgentIcon />} title="Todavía no hay uso registrado" text="Cada llamada a la IA (bot, agentes, transcripción, OCR) va a aparecer acá." />
+      ) : (
+        <div style={{ padding: 16 }}>
+          <p className="page-muted" style={{ fontSize: 12, marginTop: 0, marginBottom: 12 }}>
+            {summary.totalCalls} llamadas en los últimos {summary.days} días. El costo se muestra tal cual lo devuelve la
+            API de Niro IA, desglosado por tipo — no se suma entre tipos porque la unidad no es necesariamente la misma
+            en cada uno. Para el detalle en tu moneda, consultá <code>/wallet</code> en la plataforma de Niro IA.
+          </p>
+          <div className="page-table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Tipo</th>
+                  <th className="num">Llamadas</th>
+                  <th className="num">Costo (Niro IA)</th>
+                </tr>
+              </thead>
+              <tbody>
+                {summary.byKind.map((k) => (
+                  <tr key={k.kind}>
+                    <td>{k.label}</td>
+                    <td className="num">{k.calls}</td>
+                    <td className="num">{k.cost === null ? '—' : k.cost.toLocaleString('es-PY', { maximumFractionDigits: 4 })}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+    </Panel>
   );
 }
 

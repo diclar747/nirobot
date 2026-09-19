@@ -163,6 +163,14 @@ function emitToUser(userId, event, payload) {
   io.to(`user:${userId}`).emit(event, payload);
 }
 
+// True si ese usuario tiene al menos una pestaña con socket abierto ahora mismo — se usa para no
+// mandarle una notificación push cuando ya está viendo la app en tiempo real.
+function isUserOnline(organizationId, userId) {
+  const orgMap = orgPresence.get(organizationId);
+  const entry = orgMap && orgMap.get(userId);
+  return !!(entry && entry.socketIds.size > 0);
+}
+
 function setAgentPresenceStatus(organizationId, userId, status) {
   const orgMap = getOrgPresenceMap(organizationId);
   const entry = orgMap.get(userId);
@@ -179,6 +187,7 @@ module.exports = {
   emitToConversation,
   emitToUser,
   getOrgPresenceList,
+  isUserOnline,
   setAgentPresenceStatus,
   broadcastPresence
 };

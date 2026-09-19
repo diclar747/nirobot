@@ -23,6 +23,21 @@ const ROLE_TONE: Record<UserRole, Tone> = {
   AGENT: 'success'
 };
 
+function formatWhatsAppPhone(value: string | null | undefined) {
+  const digits = String(value || '').replace(/\D/g, '');
+  if (!digits) return '';
+  if (digits.startsWith('595') && digits.length === 12) {
+    return `+595 ${digits.slice(3, 6)} ${digits.slice(6, 9)} ${digits.slice(9)}`;
+  }
+  return `+${digits}`;
+}
+
+function userDisplayName(user: OrgUser) {
+  if (user.whatsapp?.name) return user.whatsapp.name;
+  if (user.whatsapp) return user.name.replace(/\s+\d{6,}\s*$/, '') || 'Administrador';
+  return user.name;
+}
+
 export function OrgUsers() {
   const { user: me } = useAuth();
   const [users, setUsers] = useState<OrgUser[]>([]);
@@ -109,7 +124,11 @@ export function OrgUsers() {
                 {users.map((u) => (
                   <tr key={u.id}>
                     <td>
-                      <PersonCell name={u.name} detail={u.email} />
+                      <PersonCell
+                        name={userDisplayName(u)}
+                        detail={u.whatsapp ? formatWhatsAppPhone(u.whatsapp.phone) || 'WhatsApp conectado' : u.email}
+                        avatarUrl={u.whatsapp?.avatarUrl}
+                      />
                     </td>
                     <td>
                       <Pill tone={ROLE_TONE[u.role]}>{ROLE_LABEL[u.role]}</Pill>

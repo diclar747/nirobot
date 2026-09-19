@@ -5,7 +5,9 @@ const { prisma } = require('../lib/prisma');
 const { audit } = require('../lib/audit');
 const { emitToOrg } = require('../lib/realtime');
 const { renderWelcome, matchMenuOption } = require('../lib/bot');
+const { runBotFlow, conversationUpdateData } = require('../lib/botFlow');
 const aiBot = require('../lib/aiBot');
+const push = require('../lib/push');
 const { CONVERSATION_INCLUDE, MESSAGE_INCLUDE, sanitizeConversation, sanitizeMessage, broadcastMessage, sendBotMessage } = require('../lib/conversations');
 const { startSchema, messageSchema, tokenSchema } = require('../validation/widget.validation');
 const { HttpError } = require('../lib/errors');
@@ -81,7 +83,14 @@ router.post('/:slug/start', async (req, res, next) => {
       metadata: { channel: 'web' }
     });
 
-    if (organization.settings?.aiEnabled) {
+    const flowResult = runBotFlow(organization.settings?.botFlow, { content: '', contact, conversation, isNewConversation: true });
+    if (flowResult) {
+      const flowData = conversationUpdateData(conversation, flowResult);
+      if (Object.keys(flowData).length > 0) {
+        conversation = await prisma.conversation.update({ where: { id: conversation.id }, data: flowData, include: CONVERSATION_INCLUDE });
+      }
+      for (const reply of flowResult.replies) await sendBotMessage(conversation.id, organization.id, reply);
+    } else if (organization.settings?.aiEnabled) {
       await sendBotMessage(conversation.id, organization.id, renderWelcome(organization.settings));
       conversation = await prisma.conversation.update({
         where: { id: conversation.id },
@@ -136,14 +145,35 @@ router.post('/:slug/messages', async (req, res, next) => {
 
     const payload = broadcastMessage(conversation.organizationId, conversation.id, message);
     emitToOrg(conversation.organizationId, 'conversation:updated', { conversation: sanitizeConversation(updated) });
+    push.notifyNewInboundMessage({
+      organizationId: conversation.organizationId,
+      conversation: updated,
+      contactLabel: conversation.contact.name || conversation.contact.phone || conversation.contact.email || 'Visitante',
+      preview: data.content,
+      channel: 'web'
+    });
 
     if (!conversation.departmentId) {
       const settings = await prisma.organizationSettings.findUnique({
         where: { organizationId: conversation.organizationId },
         include: { organization: { select: { name: true } } }
       });
-      const option = settings?.aiEnabled ? matchMenuOption(settings, data.content) : null;
-      if (option) {
+      const flowResult = runBotFlow(settings?.botFlow, { content: data.content, contact: updated.contact, conversation: updated, isNewConversation: false });
+      if (flowResult) {
+        const flowData = conversationUpdateData(updated, flowResult);
+        const routed = Object.keys(flowData).length > 0
+          ? await prisma.conversation.update({ where: { id: conversation.id }, data: flowData, include: CONVERSATION_INCLUDE })
+          : updated;
+        for (const reply of flowResult.replies) await sendBotMessage(conversation.id, conversation.organizationId, reply);
+        if (flowResult.useAi && aiBot.shouldReply(routed, settings)) {
+          const aiSettings = flowResult.aiPrompt ? { ...settings, systemPrompt: `${settings.systemPrompt || ''} ${flowResult.aiPrompt}`.trim() } : settings;
+          const reply = await aiBot.generateReply(conversation.id, aiSettings, settings.organization?.name || null);
+          if (reply && reply.content) await sendBotMessage(conversation.id, conversation.organizationId, reply.content);
+        }
+        emitToOrg(conversation.organizationId, 'conversation:updated', { conversation: sanitizeConversation(routed) });
+      } else {
+        const option = settings?.aiEnabled ? matchMenuOption(settings, data.content) : null;
+        if (option) {
         const routed = await prisma.conversation.update({
           where: { id: conversation.id },
           data: { departmentId: option.departmentId },
@@ -151,9 +181,10 @@ router.post('/:slug/messages', async (req, res, next) => {
         });
         await sendBotMessage(conversation.id, conversation.organizationId, `Te derivamos a ${option.label}. En un momento te atienden.`);
         emitToOrg(conversation.organizationId, 'conversation:updated', { conversation: sanitizeConversation(routed) });
-      } else if (aiBot.shouldReply(updated, settings)) {
+        } else if (aiBot.shouldReply(updated, settings)) {
         const reply = await aiBot.generateReply(conversation.id, settings, settings.organization?.name || null);
         if (reply && reply.content) await sendBotMessage(conversation.id, conversation.organizationId, reply.content);
+        }
       }
     }
 
@@ -200,6 +231,13 @@ router.post('/:slug/attachments', upload.single('file'), async (req, res, next) 
 
     const payload = broadcastMessage(conversation.organizationId, conversation.id, message);
     emitToOrg(conversation.organizationId, 'conversation:updated', { conversation: sanitizeConversation(updated) });
+    push.notifyNewInboundMessage({
+      organizationId: conversation.organizationId,
+      conversation: updated,
+      contactLabel: conversation.contact.name || conversation.contact.phone || conversation.contact.email || 'Visitante',
+      preview: '📎 Adjunto',
+      channel: 'web'
+    });
 
     res.status(201).json({ message: payload });
   } catch (err) {

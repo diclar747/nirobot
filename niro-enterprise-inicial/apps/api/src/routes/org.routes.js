@@ -2,6 +2,7 @@ const express = require('express');
 const { prisma } = require('../lib/prisma');
 const { hashPassword, generateTemporaryPassword } = require('../lib/passwords');
 const { audit } = require('../lib/audit');
+const whatsapp = require('../lib/whatsapp');
 const { requireAuth, requireRole, requireCsrf } = require('../middleware/auth');
 const {
   updateOrgProfileSchema,
@@ -23,7 +24,7 @@ function requireOrgContext(req, _res, next) {
 
 router.use(requireAuth, requireOrgContext);
 
-function sanitizeOrgUser(user) {
+function sanitizeOrgUser(user, whatsappProfile = null) {
   return {
     id: user.id,
     name: user.name,
@@ -31,7 +32,8 @@ function sanitizeOrgUser(user) {
     role: user.role,
     active: user.active,
     mustChangePassword: user.mustChangePassword,
-    createdAt: user.createdAt
+    createdAt: user.createdAt,
+    whatsapp: whatsappProfile
   };
 }
 
@@ -40,7 +42,8 @@ function sanitizeSettings(settings) {
     welcomeMessage: settings.welcomeMessage,
     systemPrompt: settings.systemPrompt,
     aiEnabled: settings.aiEnabled,
-    menuOptions: settings.menuOptions
+    menuOptions: settings.menuOptions,
+    botFlow: settings.botFlow || null
   };
 }
 
@@ -124,11 +127,26 @@ router.patch('/settings', requireRole('OWNER', 'ADMIN'), requireCsrf, async (req
 
 router.get('/users', requireRole('OWNER', 'ADMIN', 'SUPERVISOR'), async (req, res, next) => {
   try {
-    const users = await prisma.user.findMany({
-      where: { organizationId: req.auth.organizationId },
-      orderBy: { createdAt: 'asc' }
+    const [users, callAccount] = await Promise.all([
+      prisma.user.findMany({
+        where: { organizationId: req.auth.organizationId },
+        orderBy: { createdAt: 'asc' }
+      }),
+      prisma.callAccount.findFirst({
+        where: { organizationId: req.auth.organizationId },
+        orderBy: { createdAt: 'asc' },
+        select: { phoneNumber: true }
+      })
+    ]);
+    const status = whatsapp.getStatus(req.auth.organizationId);
+    const whatsappProfile = {
+      name: status.profileName || null,
+      phone: status.phone || callAccount?.phoneNumber || null,
+      avatarUrl: status.avatarUrl || null
+    };
+    res.json({
+      users: users.map((user) => sanitizeOrgUser(user, user.role === 'OWNER' ? whatsappProfile : null))
     });
-    res.json({ users: users.map(sanitizeOrgUser) });
   } catch (err) {
     next(err);
   }

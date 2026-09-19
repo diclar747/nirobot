@@ -1,208 +1,220 @@
-import { FormEvent, useState } from 'react';
-import { useLocation, useNavigate, Link } from 'react-router-dom';
+import { FormEvent, useCallback, useEffect, useRef, useState } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { ApiError } from '../lib/api';
+import { ApiError, api, apiGet, apiPost } from '../lib/api';
 import { Logo } from '../components/Logo';
+import { NiroMascot } from '../components/NiroMascot';
+import '../styles/qr-login.css';
+import type { CurrentUser } from '../types';
+
+type LoginMode = 'qr' | 'agent';
+type QrStatus = 'disconnected' | 'connecting' | 'qr' | 'connected';
+
+interface QrPayload {
+  flowId: string;
+  status: QrStatus;
+  qr: string | null;
+  phone: string | null;
+  lastError?: string | null;
+  setupRequired: boolean;
+  organizationName?: string | null;
+}
+
+function destination() {
+  // El acceso QR y el acceso de agentes siempre aterrizan en el panel
+  // principal. Así una sesión recién iniciada no vuelve a una ruta protegida
+  // anterior ni queda nuevamente en /login.
+  return '/dashboard';
+}
+
+function qrBrowserKey() {
+  const storageKey = 'niro.qr.browser.key';
+  try {
+    const existing = window.localStorage.getItem(storageKey);
+    if (existing) return existing;
+    const created = `browser-${crypto.randomUUID()}`;
+    window.localStorage.setItem(storageKey, created);
+    return created;
+  } catch {
+    return '';
+  }
+}
 
 export function Login() {
-  const { login } = useAuth();
+  const { login, setUser } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
+  const [mode, setMode] = useState<LoginMode>('qr');
+  const [qr, setQr] = useState<QrPayload | null>(null);
+  const [qrLoading, setQrLoading] = useState(true);
+  const [qrError, setQrError] = useState<string | null>(null);
+  const [companyName, setCompanyName] = useState('');
+  const [adminName, setAdminName] = useState('');
+  const [completing, setCompleting] = useState(false);
+  const completingRef = useRef(false);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
-  const [rememberMe, setRememberMe] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [agentError, setAgentError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const sessionNotice = Boolean((location.state as { whatsappLoggedOut?: boolean } | null)?.whatsappLoggedOut);
 
-  async function handleSubmit(e: FormEvent) {
+  const completeQrLogin = useCallback(async (flowId: string) => {
+    if (completingRef.current) return;
+    completingRef.current = true;
+    setCompleting(true);
+    setQrError(null);
+    try {
+      const result = await apiPost<{ user: CurrentUser; phone: string }>('/api/auth/whatsapp/complete', {
+        flowId,
+        companyName: companyName.trim() || undefined,
+        adminName: adminName.trim() || undefined
+      });
+      setUser(result.user);
+      navigate(destination(), { replace: true });
+    } catch (err) {
+      completingRef.current = false;
+      setCompleting(false);
+      setQrError(err instanceof ApiError ? err.message : 'No se pudo completar el acceso con WhatsApp');
+    }
+  }, [adminName, companyName, location, navigate, setUser]);
+
+  const startQr = useCallback(async () => {
+    setQrLoading(true);
+    setQrError(null);
+    completingRef.current = false;
+    setCompleting(false);
+    try {
+      const result = await api<QrPayload>('/api/auth/whatsapp/start', {
+        method: 'POST',
+        headers: { 'X-Niro-QR-Browser': qrBrowserKey() },
+        body: '{}'
+      });
+      setQr(result);
+    } catch (err) {
+      setQrError(err instanceof ApiError ? err.message : 'No se pudo iniciar el acceso QR');
+    } finally {
+      setQrLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    startQr();
+  }, [startQr]);
+
+  useEffect(() => {
+    if (!qr?.flowId || qr.status === 'connected') return;
+    let active = true;
+    const poll = async () => {
+      try {
+        const next = await apiGet<QrPayload>(`/api/auth/whatsapp/status/${qr.flowId}`);
+        if (active) setQr(next);
+      } catch (err) {
+        if (active && err instanceof ApiError && err.status === 404) {
+          // El flujo QR vive en memoria del proceso. Si la API se reinicia,
+          // renovar automáticamente evita dejar al usuario en una pantalla
+          // de error y mantiene la experiencia tipo WhatsApp Web.
+          setQr(null);
+          void startQr();
+        }
+      }
+    };
+    const timer = window.setInterval(poll, 1500);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, [qr?.flowId, qr?.status, startQr]);
+
+  useEffect(() => {
+    if (!qr || qr.status !== 'connected' || qr.setupRequired || completingRef.current) return;
+    completeQrLogin(qr.flowId);
+  }, [completeQrLogin, qr]);
+
+  async function handleAgentLogin(e: FormEvent) {
     e.preventDefault();
-    setError(null);
+    setAgentError(null);
     setSubmitting(true);
     try {
       await login(email, password);
-      const rawFrom = (location.state as { from?: Location })?.from?.pathname;
-      const from = rawFrom && rawFrom !== '/' && rawFrom !== '/landing' && rawFrom !== '/login' ? rawFrom : '/inbox';
-      navigate(from, { replace: true });
+      navigate(destination(), { replace: true });
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'No se pudo iniciar sesión');
+      setAgentError(err instanceof ApiError ? err.message : 'No se pudo iniciar sesión');
     } finally {
       setSubmitting(false);
     }
   }
 
+  const showSetup = qr?.status === 'connected' && qr.setupRequired;
+  const statusText = qr?.status === 'qr'
+    ? 'Escaneá el código con tu teléfono'
+    : qr?.status === 'connected'
+      ? showSetup ? 'WhatsApp conectado' : 'Verificando tu cuenta'
+      : 'Preparando conexión segura';
+
   return (
-    <div className="auth-shell-modern">
-      <div className="auth-modern-container">
-        {/* Left / Main Login Form Card */}
-        <div className="auth-form-column">
-          <div className="auth-top-row">
-            <Link to="/" className="auth-back-link">
-              ← Volver a inicio
-            </Link>
-            <div className="auth-lang-selector">
-              🌐 Español ▾
-            </div>
+    <div className="qr-login-shell">
+      <div className="qr-login-bg-orb qr-login-bg-orb-one" />
+      <div className="qr-login-bg-orb qr-login-bg-orb-two" />
+      <header className="qr-login-topbar">
+        <div className="qr-login-brand"><Logo size={42} /><div><strong>NIRO</strong><span>AI WhatsApp CRM</span></div></div>
+        <div className="qr-login-topbar-meta"><span className="qr-login-live-dot" /> Niro Web <b>·</b> Acceso privado</div>
+      </header>
+
+      <main className="qr-login-layout">
+        <section className="qr-login-hero">
+          <span className="qr-login-kicker">NIRO WEB · EXPERIENCIA SEGURA</span>
+          <h1>Tu WhatsApp, <em>solo en este navegador.</em></h1>
+          <p className="qr-login-hero-copy">Iniciá como en WhatsApp Web: escaneá un código QR y entrá a tu entorno de trabajo. Cada navegador obtiene su propia sesión.</p>
+          <div className="qr-login-feature-list">
+            <div><span>01</span><strong>Escaneá tu QR</strong><small>Desde WhatsApp → Dispositivos vinculados.</small></div>
+            <div><span>02</span><strong>Confirmá tu entorno</strong><small>El acceso queda guardado únicamente aquí.</small></div>
+            <div><span>03</span><strong>Trabajá con tu equipo</strong><small>Los agentes ingresan con sus propias credenciales.</small></div>
+          </div>
+          <div className="qr-login-hero-visual">
+            <div className="qr-login-visual-ring qr-login-visual-ring-one" />
+            <div className="qr-login-visual-ring qr-login-visual-ring-two" />
+            <div className="qr-login-robot"><NiroMascot size={230} /></div>
+            <div className="qr-login-visual-card qr-login-visual-card-top"><span>●</span><div><strong>Sesión protegida</strong><small>Vinculada a este navegador</small></div></div>
+            <div className="qr-login-visual-card qr-login-visual-card-bottom"><span>✦</span><div><strong>Niro siempre contigo</strong><small>Conversá · Automatizá · Crecé</small></div></div>
+          </div>
+        </section>
+
+        <section className="qr-login-card" aria-label="Acceso a Niro Web">
+          {sessionNotice && <div className="qr-login-session-notice" role="status"><span>↻</span><div><strong>La sesión de WhatsApp se cerró</strong><small>Se cerró desde el teléfono. Escaneá un nuevo QR para volver a entrar a Niro.</small></div></div>}
+          <div className="qr-login-card-head">
+            <div><span className="qr-login-step">PASO 1 DE 2</span><h2>{mode === 'qr' ? 'Conectá tu WhatsApp' : 'Ingresá como agente'}</h2></div>
+            <span className="qr-login-secure"><span className="qr-login-lock">⌁</span> Seguro</span>
           </div>
 
-          <div className="auth-header-box">
-            <div className="auth-logo-center">
-              <Logo size={42} />
-              <h1 className="auth-brand-name">NIRO</h1>
-            </div>
-            <h2 className="auth-title">Bienvenido de nuevo</h2>
-            <p className="auth-subtitle">Ingresa a tu cuenta para continuar</p>
-          </div>
-
-          {error && <div className="alert error">{error}</div>}
-
-          <form onSubmit={handleSubmit} className="auth-form-elements">
-            <div className="field">
-              <label htmlFor="email">Correo electrónico</label>
-              <div className="input-with-icon">
-                <svg className="field-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
-                  <circle cx="12" cy="7" r="4" />
-                </svg>
-                <input
-                  id="email"
-                  type="email"
-                  className="input input-indented"
-                  placeholder="usuario@empresa.com"
-                  required
-                  autoFocus
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                />
+          {mode === 'qr' ? (
+            <>
+              <div className="qr-login-card-intro"><span className="qr-whatsapp-mark">◉</span><div><strong>Escaneá para iniciar</strong><small>Como WhatsApp Web, sin compartir contraseñas.</small></div></div>
+              <div className="qr-login-panel">
+                {qrLoading && <div className="qr-login-placeholder"><span className="qr-spinner" /><strong>Preparando tu acceso seguro…</strong><small>Creando una sesión exclusiva para este navegador</small></div>}
+                {!qrLoading && qr?.status === 'qr' && qr.qr && <div className="qr-login-code-wrap"><div className="qr-login-code"><img src={qr.qr} alt="Código QR para iniciar sesión en Niro Web" /></div><strong>{statusText}</strong><span>WhatsApp → Dispositivos vinculados → Vincular un dispositivo</span></div>}
+                {!qrLoading && qr?.status === 'connecting' && <div className="qr-login-placeholder"><span className="qr-spinner" /><strong>{statusText}…</strong><small>Estamos preparando un QR nuevo para este navegador</small></div>}
+                {!qrLoading && qr?.status === 'connected' && <div className="qr-login-connected"><span>✓</span><strong>{statusText}</strong><small>+{qr.phone || 'número verificado'}</small></div>}
+                {!qrLoading && qr?.status === 'disconnected' && <div className="qr-login-placeholder"><span className="qr-login-offline">!</span><strong>No se pudo mantener el QR</strong><small>Generá un código nuevo para continuar.</small></div>}
               </div>
-            </div>
 
-            <div className="field">
-              <label htmlFor="password">Contraseña</label>
-              <div className="input-with-icon">
-                <svg className="field-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
-                  <path d="M7 11V7a5 5 0 0 1 10 0v4" />
-                </svg>
-                <input
-                  id="password"
-                  type={showPassword ? 'text' : 'password'}
-                  className="input input-indented"
-                  placeholder="••••••••••••"
-                  required
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                />
-                <button
-                  type="button"
-                  className="show-pwd-btn"
-                  onClick={() => setShowPassword(!showPassword)}
-                  tabIndex={-1}
-                >
-                  {showPassword ? '👁️' : '👁️‍🗨️'}
-                </button>
-              </div>
-            </div>
+              <div className="qr-login-browser-note"><span>⌁</span><div><strong>Sesión exclusiva de este navegador</strong><small>Si abrís Niro en otra computadora o navegador, tendrás que escanear otro QR. El teléfono conectado no habilita accesos automáticamente.</small></div></div>
+              {showSetup && <div className="qr-login-setup"><div><strong>Terminemos de configurar Niro</strong><span>Solo se solicita la primera vez para crear tu empresa y tu perfil administrador.</span></div><input className="input" placeholder="Nombre de la empresa" value={companyName} onChange={(e) => setCompanyName(e.target.value)} /><input className="input" placeholder="Tu nombre" value={adminName} onChange={(e) => setAdminName(e.target.value)} /><button className="btn qr-login-primary" disabled={completing || !companyName.trim() || !adminName.trim()} onClick={() => qr && completeQrLogin(qr.flowId)}>{completing ? 'Creando entorno…' : 'Entrar a Niro'}</button></div>}
+              {qrError && <div className="qr-login-error">{qrError}</div>}
+              <div className="qr-login-actions"><button type="button" className="btn secondary" onClick={startQr} disabled={qrLoading || completing}>↻ Generar otro QR</button><button type="button" className="qr-login-agent-link" onClick={() => { setMode('agent'); setAgentError(null); }}>Ingresar como agente →</button></div>
+            </>
+          ) : (
+            <>
+              <div className="qr-login-card-intro qr-login-card-intro-agent"><span className="qr-login-agent-icon">♙</span><div><strong>Acceso del equipo</strong><small>Usá el usuario y contraseña entregados por el administrador.</small></div></div>
+              {agentError && <div className="qr-login-error">{agentError}</div>}
+              <form onSubmit={handleAgentLogin} className="qr-login-agent-form"><label className="field"><span>Usuario o correo electrónico</span><input className="input" type="email" required autoFocus value={email} onChange={(e) => setEmail(e.target.value)} placeholder="usuario@empresa.com" /></label><label className="field"><span>Contraseña</span><div className="qr-password-field"><input className="input" type={showPassword ? 'text' : 'password'} required value={password} onChange={(e) => setPassword(e.target.value)} placeholder="••••••••" /><button type="button" onClick={() => setShowPassword((current) => !current)}>{showPassword ? 'Ocultar' : 'Mostrar'}</button></div></label><button className="btn qr-login-primary" type="submit" disabled={submitting}>{submitting ? 'Ingresando…' : 'Ingresar al sistema'}</button></form><button type="button" className="qr-login-back" onClick={() => setMode('qr')}>← Volver al acceso QR del administrador</button>
+            </>
+          )}
 
-            <div className="auth-options-row">
-              <label className="remember-label">
-                <input
-                  type="checkbox"
-                  checked={rememberMe}
-                  onChange={(e) => setRememberMe(e.target.checked)}
-                />
-                <span>Recordarme</span>
-              </label>
-              <a href="#recuperar" onClick={(e) => { e.preventDefault(); alert('Por favor contacta al administrador de tu organización para restablecer tu acceso.'); }} className="forgot-link">
-                ¿Olvidaste tu contraseña?
-              </a>
-            </div>
-
-            <button className="btn btn-auth-submit" type="submit" disabled={submitting}>
-              {submitting ? 'Iniciando sesión…' : 'Iniciar sesión'}
-            </button>
-          </form>
-
-          <div className="auth-divider">
-            <span>O continúa con</span>
-          </div>
-
-          <div className="auth-social-buttons">
-            <button
-              type="button"
-              className="social-auth-btn"
-              onClick={() => alert('Autenticación con Google disponible para cuentas empresariales configuradas.')}
-            >
-              <svg width="18" height="18" viewBox="0 0 24 24">
-                <path fill="#EA4335" d="M12 5c1.6 0 3 .6 4.1 1.7l3.1-3.1C17.3 1.8 14.8 1 12 1 7.5 1 3.7 3.6 1.9 7.3l3.7 2.9C6.5 7.3 9 5 12 5z" />
-                <path fill="#4285F4" d="M23.5 12.3c0-.8-.1-1.6-.2-2.3H12v4.5h6.5c-.3 1.5-1.1 2.8-2.4 3.7l3.7 2.9c2.2-2 3.7-5 3.7-8.8z" />
-                <path fill="#FBBC05" d="M5.6 14.8c-.2-.7-.4-1.5-.4-2.3 0-.8.2-1.6.4-2.3L1.9 7.3C.7 9.7 0 12 0 12s.7 2.3 1.9 4.7l3.7-1.9z" />
-                <path fill="#34A853" d="M12 23c3.2 0 6-1.1 8-3l-3.7-2.9c-1.1.7-2.5 1.2-4.3 1.2-3 0-5.5-2.3-6.4-5.2L1.9 16c1.8 3.7 5.6 7 10.1 7z" />
-              </svg>
-              <span>Google</span>
-            </button>
-
-            <button
-              type="button"
-              className="social-auth-btn"
-              onClick={() => alert('Autenticación con Microsoft disponible para cuentas empresariales configuradas.')}
-            >
-              <svg width="18" height="18" viewBox="0 0 24 24">
-                <path fill="#F25022" d="M1 1h10v10H1z" />
-                <path fill="#7FBA00" d="M13 1h10v10H13z" />
-                <path fill="#00A4EF" d="M1 13h10v10H1z" />
-                <path fill="#FFB900" d="M13 13h10v10H13z" />
-              </svg>
-              <span>Microsoft</span>
-            </button>
-          </div>
-
-          <div className="auth-footer-help">
-            ¿No tienes una cuenta? <Link to="/#planes">Contáctanos</Link>
-          </div>
-        </div>
-
-        {/* Right Modern Branding Banner (from 1.png) */}
-        <div className="auth-brand-column">
-          <div className="auth-brand-content">
-            <h2 className="auth-banner-title">
-              Empresas más humanas con tecnología inteligente
-            </h2>
-
-            <div className="auth-feature-list">
-              <div className="auth-feature-item">
-                <div className="auth-feature-icon">💬</div>
-                <span>Chat inteligente</span>
-              </div>
-              <div className="auth-feature-item">
-                <div className="auth-feature-icon">👥</div>
-                <span>Gestión de equipos</span>
-              </div>
-              <div className="auth-feature-item">
-                <div className="auth-feature-icon">📦</div>
-                <span>Pedidos y logística</span>
-              </div>
-              <div className="auth-feature-item">
-                <div className="auth-feature-icon">🎯</div>
-                <span>Clientes más satisfechos</span>
-              </div>
-            </div>
-
-            <div className="auth-robot-preview">
-              <img
-                src="/images/1.png"
-                alt="Niro Enterprise Asistente Inteligente"
-                className="auth-robot-image"
-              />
-            </div>
-
-            <div className="auth-quote-slogan">
-              “La tecnología también puede ser cercana”
-              <strong>NIRO ♡</strong>
-            </div>
-          </div>
-        </div>
-      </div>
+          <div className="qr-login-card-footer"><span>🔒 Tus datos permanecen protegidos</span><span>Los agentes no necesitan QR</span></div>
+        </section>
+      </main>
+      <footer className="qr-login-footer"><span>© Niro Enterprise</span><span>Tu empresa, más cerca de las personas.</span><span>Conexión cifrada · Sesión por navegador</span></footer>
     </div>
   );
 }
