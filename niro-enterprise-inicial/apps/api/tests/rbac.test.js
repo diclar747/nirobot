@@ -59,8 +59,9 @@ describe('Permisos por rol dentro de una organización', () => {
     expect(selfRes.status).toBe(400);
   });
 
-  test('respeta el límite de usuarios del plan (maxUsers)', async () => {
+  test('cuentas "sin cargo" respetan el tope manual de usuarios del superadmin (maxUsers)', async () => {
     const org = await createOrganization(prisma, { slug: 'acme', maxUsers: 1 });
+    await prisma.organization.update({ where: { id: org.id }, data: { billingExempt: true } });
     const owner = await createUser(prisma, { organizationId: org.id, email: 'owner@acme.test', role: 'OWNER' });
     const { agent, csrfToken } = await loginAgent(app, owner.email);
 

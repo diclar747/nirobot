@@ -15,8 +15,10 @@ export interface BillingAccess {
   planName: string;
   planDays: number;
 }
-export interface BillingPaymentRow { id: string; amount: number; status: string; paymentUrl: string | null; paymentMethod: string | null; paidAt: string | null; createdAt: string }
-export interface BillingStatus { access: BillingAccess; payments: BillingPaymentRow[]; online: boolean }
+export interface BillingPaymentRow { planName?: string | null; id: string; amount: number; status: string; paymentUrl: string | null; paymentMethod: string | null; paidAt: string | null; createdAt: string }
+export interface SeatInfo { state: string; planId: string | null; planName: string | null; seats: number; maxAgents: number; agentsUsed: number; activeUsers: number; full: boolean }
+export interface PlanInfo { id: string; name: string; description: string | null; priceGs: number; maxAgents: number; features: string[]; popular: boolean }
+export interface BillingStatus { access: BillingAccess; payments: BillingPaymentRow[]; online: boolean; seats?: SeatInfo | null }
 interface Notice { id: string; title: string; body: string; level: 'info' | 'warning' | 'success'; read: boolean }
 
 export function formatGs(value: number) { return `${new Intl.NumberFormat('es-PY').format(value)} Gs`; }

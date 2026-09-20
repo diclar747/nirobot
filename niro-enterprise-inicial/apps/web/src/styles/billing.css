@@ -29,3 +29,14 @@
 .billing-pill { padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 800; background: rgba(148,163,184,.2); }
 .billing-pill.paid { background: var(--success-soft); color: var(--success); } .billing-pill.pending { background: rgba(245,158,11,.18); color: #b45309; } .billing-pill.failed { background: var(--danger-soft); color: var(--danger); }
 .billing-logout { display: block; margin: 16px auto 0; border: 0; background: transparent; color: var(--text-dim); cursor: pointer; font-size: 12.5px; text-decoration: underline; }
+
+.billing-card:has(.billing-plans) { width: min(760px, 100%); }
+.billing-plans { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; margin: 4px 0 16px; }
+.billing-plan { position: relative; display: flex; flex-direction: column; gap: 5px; padding: 16px 14px; border: 2px solid var(--border-color); border-radius: 14px; background: var(--bg-surface); color: var(--text-main); cursor: pointer; text-align: left; transition: border-color .15s, transform .15s, background .15s; }
+.billing-plan:hover { border-color: var(--primary-glow); transform: translateY(-2px); }
+.billing-plan.selected { border-color: #10b981; background: var(--success-soft); }
+.billing-plan b { font-size: 15px; } .billing-plan strong { font-size: 20px; } .billing-plan strong small { margin-left: 3px; color: var(--text-dim); font-size: 12px; font-weight: 600; }
+.billing-plan-agents { font-size: 13px; font-weight: 700; } .billing-plan-desc { color: var(--text-muted); font-size: 12px; line-height: 1.4; }
+.billing-plan-flag { position: absolute; top: -9px; right: 10px; padding: 2px 9px; border-radius: 999px; background: #8b5cf6; color: #fff; font-size: 10.5px; font-style: normal; font-weight: 800; }
+.billing-plan-flag.current { background: #0284c7; }
+.billing-seats { margin: 0 0 14px; color: var(--text-muted); font-size: 13px; }

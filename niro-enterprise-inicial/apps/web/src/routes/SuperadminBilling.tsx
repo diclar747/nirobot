@@ -7,7 +7,7 @@ import { formatGs } from '../components/BillingGate';
 interface Customer {
   id: string; name: string; active: boolean; createdAt: string; phone: string | null;
   owner: { name: string; email: string } | null; users: number; contacts: number;
-  state: 'trial' | 'active' | 'expired' | 'exempt'; hasPending: boolean;
+  state: 'trial' | 'active' | 'expired' | 'exempt'; hasPending: boolean; plan: { id: string; name: string; maxAgents: number } | null;
   trialEndsAt: string; paidUntil: string | null; lastPayment: { amount: number; paidAt: string } | null;
 }
 interface Overview { summary: { total: number; active: number; trial: number; expired: number; exempt: number; pending: number; revenueTotal: number; revenueMonth: number; payments: number; priceGs: number }; customers: Customer[] }
@@ -28,6 +28,8 @@ export function SuperadminBilling() {
   const [query, setQuery] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [detail, setDetail] = useState<{ customer: Customer; data: Detail } | null>(null);
+  const [plans, setPlans] = useState<{ id: string; name: string; maxAgents: number }[]>([]);
+  const [grantPlan, setGrantPlan] = useState('');
   const [showNotice, setShowNotice] = useState<Customer | 'broadcast' | null>(null);
 
   const load = useCallback(async () => {
@@ -36,7 +38,7 @@ export function SuperadminBilling() {
       setData(overview); setNotices(list.notices);
     } catch (err) { setError(err instanceof ApiError ? err.message : 'No se pudo cargar la facturación'); }
   }, []);
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => { load(); apiGet<{ plans: { id: string; name: string; maxAgents: number }[] }>('/api/superadmin/plans').then((r) => setPlans(r.plans)).catch(() => {}); }, [load]);
 
   const rows = useMemo(() => (data?.customers || []).filter((c) => {
     if (filter === 'pending' ? !(c.hasPending && c.state !== 'active') : filter !== 'all' && c.state !== filter) return false;
@@ -81,13 +83,14 @@ export function SuperadminBilling() {
         </div>}>
         {!data ? <LoadingRows /> : rows.length === 0 ? <EmptyState title="Sin clientes en este filtro" /> : (
           <div className="page-table-wrap"><table>
-            <thead><tr><th>Cliente</th><th>Teléfono</th><th>Estado</th><th>Vence</th><th>Último pago</th><th className="num">Usuarios</th><th></th></tr></thead>
+            <thead><tr><th>Cliente</th><th>Teléfono</th><th>Plan</th><th>Estado</th><th>Vence</th><th>Último pago</th><th className="num">Usuarios</th><th></th></tr></thead>
             <tbody>{rows.map((c) => {
               const st = STATE_LABEL[c.state];
               return (
                 <tr key={c.id}>
                   <td><PersonCell name={c.name} detail={c.owner?.email || '—'} /></td>
                   <td>{c.phone ? `+${c.phone}` : '—'}</td>
+                  <td>{c.plan ? `${c.plan.name} · ${c.plan.maxAgents} ag.` : '—'}</td>
                   <td><Pill tone={st.tone} dot>{st.label}</Pill>{c.hasPending && c.state !== 'active' && <> <Pill tone="warning">Pago pendiente</Pill></>}</td>
                   <td>{c.state === 'active' ? fmtDate(c.paidUntil) : c.state === 'trial' ? fmtDate(c.trialEndsAt) : '—'}</td>
                   <td>{c.lastPayment ? `${formatGs(c.lastPayment.amount)} · ${fmtDate(c.lastPayment.paidAt)}` : '—'}</td>
@@ -113,7 +116,8 @@ export function SuperadminBilling() {
         <Modal title={detail.customer.name} onClose={() => setDetail(null)}>
           <div style={{ display: 'grid', gap: 14 }}>
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-              <button className="btn small" onClick={() => action(`/api/superadmin/billing/organizations/${detail.customer.id}/grant`, { days: 30 }, detail.customer)}>+30 días de plan</button>
+              <select className="input" style={{ width: 'auto', padding: '5px 8px' }} value={grantPlan || detail.customer.plan?.id || ''} onChange={(e) => setGrantPlan(e.target.value)} aria-label="Plan a otorgar"><option value="">Sin cambiar plan</option>{plans.map((pl) => <option key={pl.id} value={pl.id}>{pl.name} ({pl.maxAgents} agentes)</option>)}</select>
+              <button className="btn small" onClick={() => action(`/api/superadmin/billing/organizations/${detail.customer.id}/grant`, { days: 30, ...(grantPlan || detail.customer.plan?.id ? { planId: grantPlan || detail.customer.plan?.id } : {}) }, detail.customer)}>+30 días de plan</button>
               <button className="btn secondary small" onClick={() => action(`/api/superadmin/billing/organizations/${detail.customer.id}/trial`, { hours: 24 }, detail.customer)}>+24 h de prueba</button>
               <button className="btn secondary small" onClick={() => action(`/api/superadmin/billing/organizations/${detail.customer.id}/exempt`, { exempt: detail.customer.state !== 'exempt' }, detail.customer)}>{detail.customer.state === 'exempt' ? 'Quitar sin cargo' : 'Marcar sin cargo'}</button>
               <button className="btn secondary small" onClick={() => { setShowNotice(detail.customer); setDetail(null); }}>📣 Avisar</button>

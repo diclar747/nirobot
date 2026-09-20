@@ -165,6 +165,7 @@ router.get('/billing/overview', async (_req, res, next) => {
     const orgs = await prisma.organization.findMany({
       orderBy: { createdAt: 'desc' },
       include: {
+        plan: { select: { id: true, name: true, maxAgents: true } },
         _count: { select: { users: true, contacts: true } },
         users: { where: { role: 'OWNER' }, select: { name: true, email: true }, take: 1 },
         billingPayments: { where: { status: { in: ['paid', 'pending'] } }, orderBy: { createdAt: 'desc' }, take: 5 },
@@ -182,7 +183,7 @@ router.get('/billing/overview', async (_req, res, next) => {
         phone: o.callAccounts[0]?.phoneNumber || null,
         owner: o.users[0] || null,
         users: o._count.users, contacts: o._count.contacts,
-        state: bucket, hasPending,
+        state: bucket, hasPending, plan: o.plan ? { id: o.plan.id, name: o.plan.name, maxAgents: o.plan.maxAgents } : null,
         trialEndsAt: access.trialEndsAt, paidUntil: access.paidUntil,
         lastPayment: lastPaid ? { amount: lastPaid.amount, paidAt: lastPaid.paidAt } : null
       };
@@ -211,7 +212,13 @@ router.post('/billing/organizations/:id/grant', requireCsrf, async (req, res, ne
     if (!org) throw new HttpError(404, 'Organización no encontrada');
     const days = Math.min(365, Math.max(1, Number(req.body?.days) || 30));
     const base = org.paidUntil && new Date(org.paidUntil) > new Date() ? new Date(org.paidUntil) : new Date();
-    const updated = await prisma.organization.update({ where: { id: org.id }, data: { paidUntil: new Date(base.getTime() + days * 24 * 3600 * 1000) } });
+    let planId;
+    if (req.body?.planId) {
+      const plan = await prisma.plan.findUnique({ where: { id: String(req.body.planId) } });
+      if (!plan) throw new HttpError(404, 'Plan no encontrado');
+      planId = plan.id;
+    }
+    const updated = await prisma.organization.update({ where: { id: org.id }, data: { paidUntil: new Date(base.getTime() + days * 24 * 3600 * 1000), ...(planId ? { planId } : {}) } });
     await audit(prisma, { organizationId: org.id, actorUserId: req.auth.userId, action: 'billing.granted', entityType: 'Organization', entityId: org.id, metadata: { days } });
     res.json({ paidUntil: updated.paidUntil });
   } catch (err) { next(err); }
@@ -258,6 +265,83 @@ router.post('/notices', requireCsrf, async (req, res, next) => {
 
 router.delete('/notices/:id', requireCsrf, async (req, res, next) => {
   try { await prisma.platformNotice.delete({ where: { id: req.params.id } }); res.json({ ok: true }); } catch (err) { next(err); }
+});
+
+
+// ---------- Planes ----------
+function parsePlan(body, { partial = false } = {}) {
+  const data = {};
+  const has = (key) => typeof body?.[key] !== 'undefined';
+  if (!partial || has('name')) {
+    const name = String(body?.name ?? '').trim();
+    if (name.length < 2 || name.length > 40) throw new HttpError(400, 'El nombre del plan debe tener entre 2 y 40 caracteres');
+    data.name = name;
+  }
+  if (!partial || has('priceGs')) {
+    const price = Number(body?.priceGs);
+    if (!Number.isInteger(price) || price < 1000 || price > 100000000) throw new HttpError(400, 'El precio debe ser un número entero en guaraníes (mínimo 1.000)');
+    data.priceGs = price;
+  }
+  if (!partial || has('maxAgents')) {
+    const agents = Number(body?.maxAgents);
+    if (!Number.isInteger(agents) || agents < 0 || agents > 1000) throw new HttpError(400, 'Los agentes permitidos deben ser un número entero entre 0 y 1000');
+    data.maxAgents = agents;
+  }
+  if (has('description')) data.description = String(body.description ?? '').trim().slice(0, 200) || null;
+  if (has('features')) {
+    if (!Array.isArray(body.features)) throw new HttpError(400, 'Las características deben ser una lista');
+    data.features = body.features.map((f) => String(f).trim().slice(0, 80)).filter(Boolean).slice(0, 12);
+  }
+  if (has('active')) data.active = Boolean(body.active);
+  if (has('popular')) data.popular = Boolean(body.popular);
+  if (has('sortOrder')) {
+    const order = Number(body.sortOrder);
+    if (!Number.isInteger(order) || order < 0 || order > 1000) throw new HttpError(400, 'El orden debe ser un número entero');
+    data.sortOrder = order;
+  }
+  return data;
+}
+
+router.get('/plans', async (_req, res, next) => {
+  try {
+    const plans = await prisma.plan.findMany({ orderBy: [{ sortOrder: 'asc' }, { priceGs: 'asc' }], include: { _count: { select: { organizations: true } } } });
+    res.json({ plans: plans.map(({ _count, ...p }) => ({ ...p, organizations: _count.organizations })) });
+  } catch (err) { next(err); }
+});
+
+router.post('/plans', requireCsrf, async (req, res, next) => {
+  try {
+    const data = parsePlan(req.body);
+    if (typeof data.sortOrder === 'undefined') data.sortOrder = (await prisma.plan.count()) + 1;
+    const plan = await prisma.plan.create({ data });
+    await audit(prisma, { organizationId: null, actorUserId: req.auth.userId, action: 'plan.created', entityType: 'Plan', entityId: plan.id, metadata: data });
+    res.status(201).json({ plan });
+  } catch (err) { next(err); }
+});
+
+router.patch('/plans/:id', requireCsrf, async (req, res, next) => {
+  try {
+    const existing = await prisma.plan.findUnique({ where: { id: req.params.id } });
+    if (!existing) throw new HttpError(404, 'Plan no encontrado');
+    const data = parsePlan(req.body, { partial: true });
+    const plan = await prisma.plan.update({ where: { id: existing.id }, data });
+    // Si cambian los agentes permitidos, los clientes de este plan lo toman al instante (el tope se calcula al agregar usuarios).
+    await audit(prisma, { organizationId: null, actorUserId: req.auth.userId, action: 'plan.updated', entityType: 'Plan', entityId: plan.id, metadata: data });
+    res.json({ plan });
+  } catch (err) { next(err); }
+});
+
+router.delete('/plans/:id', requireCsrf, async (req, res, next) => {
+  try {
+    const plan = await prisma.plan.findUnique({ where: { id: req.params.id }, include: { _count: { select: { organizations: true } } } });
+    if (!plan) throw new HttpError(404, 'Plan no encontrado');
+    if (plan._count.organizations > 0) {
+      throw new HttpError(409, `No se puede eliminar: ${plan._count.organizations} cliente${plan._count.organizations > 1 ? 's usan' : ' usa'} este plan. Desactivalo para que no se pueda contratar, o pasá a esos clientes a otro plan.`);
+    }
+    await prisma.plan.delete({ where: { id: plan.id } });
+    await audit(prisma, { organizationId: null, actorUserId: req.auth.userId, action: 'plan.deleted', entityType: 'Plan', entityId: plan.id, metadata: { name: plan.name } });
+    res.json({ ok: true });
+  } catch (err) { next(err); }
 });
 
 module.exports = router;

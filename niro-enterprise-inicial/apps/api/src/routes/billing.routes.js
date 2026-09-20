@@ -10,7 +10,7 @@ router.use(requireAuth);
 router.use((req, _res, next) => (req.auth.organizationId ? next() : next(new HttpError(403, 'Esta acción requiere pertenecer a una organización'))));
 
 function sanitizePayment(p) {
-  return { id: p.id, amount: p.amount, currency: p.currency, status: p.status, paymentUrl: p.paymentUrl, paymentMethod: p.paymentMethod, paidAt: p.paidAt, createdAt: p.createdAt };
+  return { planName: p.planName || null, id: p.id, amount: p.amount, currency: p.currency, status: p.status, paymentUrl: p.paymentUrl, paymentMethod: p.paymentMethod, paidAt: p.paidAt, createdAt: p.createdAt };
 }
 
 async function loadOrg(req) {
@@ -24,15 +24,24 @@ router.get('/status', async (req, res, next) => {
     const org = await loadOrg(req);
     const access = billing.accessFor(org);
     const payments = await prisma.billingPayment.findMany({ where: { organizationId: org.id, status: { in: ['paid', 'pending'] } }, orderBy: { createdAt: 'desc' }, take: 12 });
-    res.json({ access: { ...access, msLeft: access.msLeft }, payments: payments.map(sanitizePayment), online: billing.winsapConfigured() });
+    res.json({ access: { ...access, msLeft: access.msLeft }, payments: payments.map(sanitizePayment), online: billing.winsapConfigured(), seats: await billing.seatInfo(org.id) });
+  } catch (err) { next(err); }
+});
+
+router.get('/plans', async (_req, res, next) => {
+  try {
+    const plans = await prisma.plan.findMany({ where: { active: true }, orderBy: [{ sortOrder: 'asc' }, { priceGs: 'asc' }] });
+    res.json({ plans: plans.map((p) => ({ id: p.id, name: p.name, description: p.description, priceGs: p.priceGs, maxAgents: p.maxAgents, features: p.features, popular: p.popular })) });
   } catch (err) { next(err); }
 });
 
 router.post('/checkout', requireRole('OWNER', 'ADMIN'), requireCsrf, async (req, res, next) => {
   try {
     const org = await loadOrg(req);
+    const plan = await prisma.plan.findFirst({ where: { id: String(req.body?.planId || ''), active: true } });
+    if (!plan) throw new HttpError(400, 'Elegí un plan disponible');
     const user = await prisma.user.findUnique({ where: { id: req.auth.userId }, select: { email: true } });
-    const payment = await billing.createCheckout(org, user?.email);
+    const payment = await billing.createCheckout(org, user?.email, plan);
     if (!payment.paymentUrl) throw new HttpError(502, 'No se pudo generar el link de pago');
     res.json({ payment: sanitizePayment(payment) });
   } catch (err) { next(err); }

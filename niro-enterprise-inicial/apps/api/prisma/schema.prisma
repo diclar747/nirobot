@@ -85,6 +85,8 @@ model Organization {
   trialEndsAt   DateTime?
   paidUntil     DateTime?
   billingExempt Boolean               @default(false)
+  planId        String?
+  plan          Plan?                 @relation(fields: [planId], references: [id], onDelete: SetNull)
   billingPayments BillingPayment[]
   platformNotices PlatformNotice[]
   createdAt     DateTime              @default(now())
@@ -790,6 +792,8 @@ model BillingPayment {
   paymentUrl      String?
   winsapPaymentId String?
   paymentMethod   String?
+  planId          String?
+  planName        String?
   paidAt          DateTime?
   raw             Json?
   createdAt       DateTime     @default(now())
@@ -823,4 +827,21 @@ model PlatformNoticeRead {
   notice   PlatformNotice @relation(fields: [noticeId], references: [id], onDelete: Cascade)
 
   @@unique([noticeId, userId])
+}
+
+
+// Planes de suscripción (editables desde el superadmin). maxAgents = agentes ADEMÁS del propietario.
+model Plan {
+  id          String         @id @default(cuid())
+  name        String
+  description String?
+  priceGs     Int
+  maxAgents   Int
+  features    String[]       @default([])
+  active      Boolean        @default(true)
+  popular     Boolean        @default(false)
+  sortOrder   Int            @default(0)
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+  organizations Organization[]
 }

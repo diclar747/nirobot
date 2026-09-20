@@ -23,6 +23,7 @@ import { CallCampaigns } from './routes/CallCampaigns';
 import { StatusPosts } from './routes/StatusPosts';
 import { Billing } from './routes/Billing';
 import { Contacts } from './routes/Contacts';
+import { SuperadminPlans } from './routes/SuperadminPlans';
 import { SuperadminBilling } from './routes/SuperadminBilling';
 
 export function App() {
@@ -46,6 +47,7 @@ export function App() {
               <Route element={<ProtectedRoute roles={['SUPERADMIN']} />}>
                 <Route path="/organizations" element={<SuperadminOrganizations />} />
                 <Route path="/clientes" element={<SuperadminBilling />} />
+                <Route path="/planes" element={<SuperadminPlans />} />
               </Route>
 
               <Route element={<ProtectedRoute roles={['OWNER', 'ADMIN', 'SUPERVISOR', 'AGENT']} />}>

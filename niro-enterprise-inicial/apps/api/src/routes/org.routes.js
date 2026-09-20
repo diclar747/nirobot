@@ -67,6 +67,7 @@ router.get('/', async (req, res, next) => {
         planTier: organization.planTier,
         maxUsers: organization.maxUsers,
         userCount: organization._count.users,
+        seats: await require('../lib/billing').seatInfo(organization.id),
         settings: organization.settings ? sanitizeSettings(organization.settings) : null
       }
     });
@@ -161,9 +162,7 @@ router.post('/users', requireRole('OWNER', 'ADMIN'), requireCsrf, async (req, re
     }
 
     const organization = await getOwnOrg(req.auth.organizationId);
-    if (organization._count.users >= organization.maxUsers) {
-      throw new HttpError(409, `Se alcanzó el límite de usuarios del plan (${organization.maxUsers})`);
-    }
+    await require('../lib/billing').assertCanAddUser(organization.id);
 
     const temporaryPassword = data.password || generateTemporaryPassword();
     const passwordHash = await hashPassword(temporaryPassword);
@@ -219,6 +218,9 @@ router.patch('/users/:id', requireRole('OWNER', 'ADMIN'), requireCsrf, async (re
       });
       if (activeOwners <= 1) throw new HttpError(400, 'Debe existir al menos un propietario activo');
     }
+
+    // Reactivar a un usuario también ocupa un puesto del plan.
+    if (data.active === true && target.active === false) await require('../lib/billing').assertCanAddUser(req.auth.organizationId);
 
     const user = await prisma.user.update({ where: { id: target.id }, data });
     await audit(prisma, {

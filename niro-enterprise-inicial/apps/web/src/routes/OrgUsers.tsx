@@ -6,6 +6,8 @@ import { Modal } from '../components/Modal';
 import { useAuth } from '../context/AuthContext';
 import { EmptyState, LoadingRows, PageHeader, PageShell, Panel, PersonCell, Pill, StatCard, StatGrid, type Tone } from '../components/PageKit';
 import { IconUsers } from '../components/icons';
+import { Link } from 'react-router-dom';
+import type { SeatInfo } from '../components/BillingGate';
 
 const ROLE_LABEL: Record<UserRole, string> = {
   SUPERADMIN: 'Superadmin',
@@ -45,6 +47,7 @@ export function OrgUsers() {
   const [error, setError] = useState<string | null>(null);
   const [showCreate, setShowCreate] = useState(false);
   const [editing, setEditing] = useState<OrgUser | null>(null);
+  const [seats, setSeats] = useState<SeatInfo | null>(null);
   const [secret, setSecret] = useState<{ email: string; temporaryPassword: string } | null>(null);
 
   const canManage = me ? ['OWNER', 'ADMIN'].includes(me.role) : false;
@@ -55,6 +58,7 @@ export function OrgUsers() {
     try {
       const data = await apiGet<{ users: OrgUser[] }>('/api/org/users');
       setUsers(data.users);
+      apiGet<{ seats?: SeatInfo | null }>('/api/org/billing/status').then((res) => setSeats(res.seats || null)).catch(() => {});
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'No se pudieron cargar los usuarios');
     } finally {
@@ -88,14 +92,24 @@ export function OrgUsers() {
         subtitle="Gestioná accesos, roles y estado de tu equipo de ventas y atención."
         actions={
           canManage && (
-            <button className="btn" onClick={() => setShowCreate(true)}>
-              + Nuevo usuario
-            </button>
+            seats?.full ? (
+              <Link className="btn secondary" to="/billing" title="Llegaste al límite de agentes de tu plan">⬆ Mejorar plan para sumar agentes</Link>
+            ) : (
+              <button className="btn" onClick={() => setShowCreate(true)}>
+                + Nuevo usuario
+              </button>
+            )
           )
         }
       />
 
       {error && <div className="alert error">{error}</div>}
+      {seats && (
+        <div className={`alert ${seats.full ? 'error' : ''}`} style={{ marginBottom: 12 }}>
+          👥 Agentes en uso: <b>{seats.agentsUsed}</b> de <b>{seats.maxAgents}</b>{seats.planName ? ` · ${seats.planName}` : ''}.
+          {seats.full ? <> Llegaste al límite. <Link to="/billing">Mejorá tu plan</Link> para sumar más.</> : ` Te quedan ${Math.max(0, seats.maxAgents - seats.agentsUsed)}.`}
+        </div>
+      )}
 
       <StatGrid>
         <StatCard label="Total usuarios" value={loading ? '—' : users.length} hint="Miembros de la organización" icon={<IconUsers />} />

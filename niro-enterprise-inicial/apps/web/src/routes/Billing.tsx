@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { apiGet, apiPost, ApiError } from '../lib/api';
 import { useAuth } from '../context/AuthContext';
-import { formatGs, formatLeft, type BillingStatus } from '../components/BillingGate';
+import { formatGs, formatLeft, type BillingStatus, type PlanInfo } from '../components/BillingGate';
 import { Logo } from '../components/Logo';
 import '../styles/billing.css';
 
@@ -24,9 +24,19 @@ export function BillingPage({ status: initial, onRefresh, expired }: { status: B
   const [checking, setChecking] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
+  const [plans, setPlans] = useState<PlanInfo[]>([]);
+  const [planId, setPlanId] = useState<string>('');
   const canPay = user ? ['OWNER', 'ADMIN'].includes(user.role) : false;
 
   useEffect(() => { setStatus(initial); }, [initial]);
+  useEffect(() => {
+    apiGet<{ plans: PlanInfo[] }>('/api/org/billing/plans').then((res) => setPlans(res.plans)).catch(() => {});
+  }, []);
+  useEffect(() => {
+    if (planId || plans.length === 0) return;
+    const current = status?.seats?.planId;
+    setPlanId((current && plans.find((p) => p.id === current)?.id) || plans.find((p) => p.popular)?.id || plans[0].id);
+  }, [plans, status, planId]);
   useEffect(() => { if (!initial) apiGet<BillingStatus>('/api/org/billing/status').then(setStatus).catch(() => {}); }, [initial]);
 
   async function verify(silent = false) {
@@ -55,7 +65,7 @@ export function BillingPage({ status: initial, onRefresh, expired }: { status: B
   async function pay() {
     setBusy(true); setError(null);
     try {
-      const res = await apiPost<{ payment: { paymentUrl: string } }>('/api/org/billing/checkout');
+      const res = await apiPost<{ payment: { paymentUrl: string } }>('/api/org/billing/checkout', { planId });
       window.location.href = res.payment.paymentUrl;
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'No se pudo iniciar el pago');
@@ -64,7 +74,8 @@ export function BillingPage({ status: initial, onRefresh, expired }: { status: B
   }
 
   const access = status?.access;
-  const price = access?.priceGs ?? 49000;
+  const chosen = plans.find((p) => p.id === planId);
+  const price = chosen?.priceGs ?? access?.priceGs ?? 49000;
   return (
     <div className={`billing-page ${expired ? 'wall' : ''}`}>
       <div className="billing-card">
@@ -94,8 +105,28 @@ export function BillingPage({ status: initial, onRefresh, expired }: { status: B
           </>
         )}
 
-        <div className="billing-price"><strong>{formatGs(price)}</strong><span>por mes · pago con tarjeta o QR</span></div>
+        {plans.length > 0 ? (
+          <div className="billing-plans" role="radiogroup" aria-label="Elegí tu plan">
+            {plans.map((plan) => {
+              const selected = plan.id === planId;
+              const isCurrent = status?.seats?.planId === plan.id && access?.state === 'active';
+              return (
+                <button type="button" role="radio" aria-checked={selected} key={plan.id} className={`billing-plan ${selected ? 'selected' : ''}`} onClick={() => setPlanId(plan.id)}>
+                  {plan.popular && <em className="billing-plan-flag">Más elegido</em>}
+                  {isCurrent && <em className="billing-plan-flag current">Tu plan</em>}
+                  <b>{plan.name}</b>
+                  <strong>{formatGs(plan.priceGs)}<small>/mes</small></strong>
+                  <span className="billing-plan-agents">👥 {plan.maxAgents === 0 ? 'Solo el propietario' : `${plan.maxAgents} agente${plan.maxAgents === 1 ? '' : 's'} + propietario`}</span>
+                  {plan.description && <span className="billing-plan-desc">{plan.description}</span>}
+                </button>
+              );
+            })}
+          </div>
+        ) : (
+          <div className="billing-price"><strong>{formatGs(price)}</strong><span>por mes · pago con tarjeta o QR</span></div>
+        )}
         <ul className="billing-benefits">{BENEFITS.map((item) => <li key={item}>✓ {item}</li>)}</ul>
+        {status?.seats && <p className="billing-seats">Tu equipo: <b>{status.seats.agentsUsed}</b> de <b>{status.seats.maxAgents}</b> agentes en uso{status.seats.planName ? ` (${status.seats.planName})` : ''}.</p>}
 
         {error && <div className="billing-alert error">{error}</div>}
         {info && <div className="billing-alert ok">{info}</div>}
@@ -103,7 +134,7 @@ export function BillingPage({ status: initial, onRefresh, expired }: { status: B
 
         {canPay ? (
           <div className="billing-actions">
-            <button type="button" className="billing-pay" onClick={pay} disabled={busy || (status ? !status.online : false)}>{busy ? 'Abriendo pasarela…' : access?.state === 'active' ? 'Renovar plan' : 'Activar plan ahora'}</button>
+            <button type="button" className="billing-pay" onClick={pay} disabled={busy || !planId || (status ? !status.online : false)}>{busy ? 'Abriendo pasarela…' : `${access?.state === 'active' ? (status?.seats?.planId === planId ? 'Renovar' : 'Cambiar a') : 'Activar'} plan ${chosen?.name || ''} · ${formatGs(price)}`}</button>
             <button type="button" className="billing-secondary" onClick={() => verify()} disabled={checking}>{checking ? 'Comprobando…' : 'Ya pagué, comprobar'}</button>
           </div>
         ) : (
@@ -117,7 +148,7 @@ export function BillingPage({ status: initial, onRefresh, expired }: { status: B
             {status.payments.map((p) => (
               <div key={p.id} className="billing-history-row">
                 <span>{new Date(p.createdAt).toLocaleString('es-PY', { dateStyle: 'medium', timeStyle: 'short' })}</span>
-                <span>{formatGs(p.amount)}</span>
+                <span>{p.planName ? `${p.planName} · ` : ''}{formatGs(p.amount)}</span>
                 <span className={`billing-pill ${p.status}`}>{STATUS_LABEL[p.status] || p.status}</span>
                 {p.status === 'pending' && p.paymentUrl && <a href={p.paymentUrl}>Continuar pago</a>}
               </div>

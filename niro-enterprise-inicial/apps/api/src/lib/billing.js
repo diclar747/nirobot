@@ -6,6 +6,8 @@ const TRIAL_HOURS = 24;
 const PLAN_DAYS = 30;
 const PLAN_PRICE_GS = Number(process.env.PLAN_PRICE_GS) || 49000;
 const PLAN_NAME = 'Plan Niro Mensual';
+// Durante la prueba de 24 h se puede probar el trabajo en equipo: propietario + 2 agentes.
+const TRIAL_MAX_AGENTS = 2;
 const HOUR = 3600 * 1000;
 
 function trialEndOf(org) {
@@ -32,6 +34,30 @@ function accessFor(org, now = new Date()) {
     planName: PLAN_NAME,
     planDays: PLAN_DAYS
   };
+}
+
+// ---------- Agentes permitidos según plan ----------
+// maxAgents = agentes ADEMÁS del propietario → puestos = maxAgents + 1 (los propietarios extra también ocupan puesto).
+async function seatInfo(organizationId) {
+  const org = await prisma.organization.findUnique({ where: { id: organizationId }, include: { plan: true } });
+  if (!org) return null;
+  const access = accessFor(org);
+  const activeUsers = await prisma.user.count({ where: { organizationId, active: true } });
+  let seats;
+  let planName = null;
+  if (access.state === 'active' && org.plan) { seats = org.plan.maxAgents + 1; planName = org.plan.name; }
+  else if (access.state === 'trial') { seats = TRIAL_MAX_AGENTS + 1; planName = 'Prueba gratuita'; }
+  else { seats = org.maxUsers; planName = org.plan?.name || null; } // sin cargo / plan otorgado a mano: tope manual del superadmin
+  return { state: access.state, planId: org.plan?.id || null, planName, seats, maxAgents: Math.max(0, seats - 1), agentsUsed: Math.max(0, activeUsers - 1), activeUsers, full: activeUsers >= seats };
+}
+
+async function assertCanAddUser(organizationId) {
+  const info = await seatInfo(organizationId);
+  if (info && info.full) {
+    const who = info.maxAgents === 1 ? '1 agente' : `${info.maxAgents} agentes`;
+    throw new HttpError(409, `${info.planName ? `Tu plan ${info.planName}` : 'Tu plan'} permite ${who} además del propietario y ya los usaste. Mejorá tu plan en «Mi plan» para sumar más.`);
+  }
+  return info;
 }
 
 // ---------- Winsap ----------
@@ -75,21 +101,22 @@ function verifySignature(rawBody, header) {
   return a.length === b.length && crypto.timingSafeEqual(a, b);
 }
 
-async function createCheckout(organization, userEmail) {
+async function createCheckout(organization, userEmail, plan) {
+  if (!plan || !plan.active) throw new HttpError(400, 'Elegí un plan disponible');
   // Reutiliza un link pendiente reciente para no llenar de links si el cliente reintenta.
   const recent = await prisma.billingPayment.findFirst({
-    where: { organizationId: organization.id, status: 'pending', paymentUrl: { not: null }, createdAt: { gt: new Date(Date.now() - 6 * HOUR) } },
+    where: { organizationId: organization.id, status: 'pending', planId: plan.id, amount: plan.priceGs, paymentUrl: { not: null }, createdAt: { gt: new Date(Date.now() - 6 * HOUR) } },
     orderBy: { createdAt: 'desc' }
   });
   if (recent) return recent;
 
-  const payment = await prisma.billingPayment.create({ data: { organizationId: organization.id, amount: PLAN_PRICE_GS, periodDays: PLAN_DAYS } });
+  const payment = await prisma.billingPayment.create({ data: { organizationId: organization.id, amount: plan.priceGs, periodDays: PLAN_DAYS, planId: plan.id, planName: plan.name } });
   const origin = publicOrigin();
   try {
     const link = await winsap('POST', '/api/v1/payment-links', {
-      name: PLAN_NAME,
-      description: `Suscripción mensual Niro · ${organization.name}`,
-      price: PLAN_PRICE_GS,
+      name: `Niro · Plan ${plan.name}`,
+      description: `Suscripción mensual Niro (${plan.maxAgents} agente${plan.maxAgents === 1 ? '' : 's'} + propietario) · ${organization.name}`,
+      price: plan.priceGs,
       currency: 'PYG',
       product_type: 'digital',
       success_url: `${origin}/billing?paid=1`,
@@ -97,7 +124,7 @@ async function createCheckout(organization, userEmail) {
       webhook_url: `${origin}/api/billing/webhook/winsap`,
       webhook_secret: webhookSecret(),
       reference: payment.id,
-      metadata: { paymentId: payment.id, organizationId: organization.id, email: userEmail || null }
+      metadata: { paymentId: payment.id, organizationId: organization.id, plan: plan.name, email: userEmail || null }
     });
     const data = link.data || {};
     return prisma.billingPayment.update({
@@ -130,7 +157,7 @@ async function activatePayment(payment, extra = {}) {
   const paidUntil = new Date(base.getTime() + payment.periodDays * 24 * HOUR);
   const [updated] = await prisma.$transaction([
     prisma.billingPayment.update({ where: { id: payment.id }, data: { status: 'paid', paidAt: new Date(), ...extra } }),
-    prisma.organization.update({ where: { id: org.id }, data: { paidUntil } })
+    prisma.organization.update({ where: { id: org.id }, data: { paidUntil, ...(payment.planId ? { planId: payment.planId } : {}) } })
   ]);
   clearBlockedCache(org.id);
   try {
@@ -188,4 +215,4 @@ async function syncPendingPayments(organizationId) {
   return activated;
 }
 
-module.exports = { isBlocked, clearBlockedCache, webhookSecret, accessFor, PLAN_PRICE_GS, PLAN_DAYS, PLAN_NAME, TRIAL_HOURS, winsap, winsapConfigured, createCheckout, activatePayment, verifySignature, pickReference, findPending, syncPendingPayments, trialEndOf, HOUR };
+module.exports = { seatInfo, assertCanAddUser, TRIAL_MAX_AGENTS, isBlocked, clearBlockedCache, webhookSecret, accessFor, PLAN_PRICE_GS, PLAN_DAYS, PLAN_NAME, TRIAL_HOURS, winsap, winsapConfigured, createCheckout, activatePayment, verifySignature, pickReference, findPending, syncPendingPayments, trialEndOf, HOUR };
