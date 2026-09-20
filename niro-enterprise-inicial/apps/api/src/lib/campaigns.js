@@ -9,27 +9,7 @@ const { sanitizeAttachment } = require('./attachments');
 // shared store (e.g. a DB row lock) so two instances don't both drive the same campaign.
 const activeTimers = new Map();
 
-function personalizeCampaignMessage(template, contact) {
-  const fullName = contact && typeof contact.name === 'string' && contact.name.trim() ? contact.name.trim() : 'cliente';
-  const firstName = fullName.split(/\s+/)[0] || 'cliente';
-  const phone = contact && contact.phone ? contact.phone : '—';
-  const email = contact && contact.email ? contact.email : '—';
-  const values = {
-    nombre: firstName,
-    name: firstName,
-    nombre_completo: fullName,
-    'nombre completo': fullName,
-    telefono: phone,
-    'teléfono': phone,
-    phone,
-    email
-  };
-
-  return String(template || '').replace(/\{\{\s*([^}]+?)\s*\}\}/gi, (match, key) => {
-    const value = values[String(key).trim().toLowerCase()];
-    return value === undefined ? match : value;
-  });
-}
+const { personalizeCampaignMessage } = require('./campaignVariables');
 
 function sanitizeCampaign(campaign, counts) {
   return {

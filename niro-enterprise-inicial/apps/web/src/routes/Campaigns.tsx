@@ -41,20 +41,22 @@ const SPEED_OPTIONS: { key: CampaignSpeedProfile; icon: string; label: string; r
 const EMPTY_COUNTS = { total: 0, pending: 0, sent: 0, delivered: 0, read: 0, failed: 0, replies: 0 };
 
 const CAMPAIGN_VARIABLES = [
-  { token: '{{nombre}}', label: 'Nombre', description: 'Primer nombre del contacto' },
-  { token: '{{nombre_completo}}', label: 'Nombre completo', description: 'Nombre completo del contacto' },
-  { token: '{{telefono}}', label: 'Teléfono', description: 'Número del contacto' },
-  { token: '{{email}}', label: 'Email', description: 'Correo del contacto' }
+  { token: '{{nombre}}', label: 'Nombre', description: 'Primer nombre del contacto', example: 'María' },
+  { token: '{{nombre_completo}}', label: 'Nombre completo', description: 'Nombre y apellido tal como está en el CRM', example: 'María Gómez' },
+  { token: '{{telefono}}', label: 'Teléfono', description: 'Número del contacto', example: '595981234567' },
+  { token: '{{email}}', label: 'Email', description: 'Correo del contacto', example: 'maria@correo.com' }
 ];
+const KNOWN_VARIABLE_KEYS = ['nombre', 'name', 'nombre_completo', 'nombre completo', 'telefono', 'teléfono', 'phone', 'email'];
+const VARIABLE_TOKEN = /\{\{\s*([^}|]+?)\s*(?:\|\s*([^}]*?)\s*)?\}\}/g;
+const SAMPLE_CONTACT: Contact = { id: 'sample', name: 'María Gómez', phone: '595981234567', email: 'maria@correo.com', tags: [] };
 
 const CAMPAIGN_WIZARD_STEPS = [
   { number: 1, label: 'Datos básicos', shortLabel: 'Datos', description: 'Nombrá la campaña y elegí la línea de WhatsApp.' },
-  { number: 2, label: 'Mensaje y contenido', shortLabel: 'Mensaje', description: 'Escribí el mensaje y agregá un archivo opcional.' },
-  { number: 3, label: 'Personalización', shortLabel: 'Personalizar', description: 'Prepará un mensaje distinto para cada contacto.' },
-  { number: 4, label: 'Audiencia', shortLabel: 'Contactos', description: 'Seleccioná etiquetas, contactos o sincronizá el teléfono.' },
-  { number: 5, label: 'Programación', shortLabel: 'Programar', description: 'Definí si se envía al iniciar o en una fecha.' },
-  { number: 6, label: 'Velocidad', shortLabel: 'Velocidad', description: 'Elegí el ritmo de entrega por hora.' },
-  { number: 7, label: 'Revisión', shortLabel: 'Revisar', description: 'Verificá todo antes de guardar la campaña.' }
+  { number: 2, label: 'Mensaje y personalización', shortLabel: 'Mensaje', description: 'Escribí el mensaje, insertá variables (nombre, teléfono, email…) y mirá cómo lo recibe cada contacto.' },
+  { number: 3, label: 'Audiencia', shortLabel: 'Contactos', description: 'Seleccioná etiquetas, contactos o sincronizá el teléfono.' },
+  { number: 4, label: 'Programación', shortLabel: 'Programar', description: 'Definí si se envía al iniciar o en una fecha.' },
+  { number: 5, label: 'Velocidad', shortLabel: 'Velocidad', description: 'Elegí el ritmo de entrega por hora.' },
+  { number: 6, label: 'Revisión', shortLabel: 'Revisar', description: 'Verificá todo antes de guardar la campaña.' }
 ];
 
 function formatDate(value: string | null) {
@@ -81,23 +83,33 @@ function initials(contact: { name: string | null; phone: string | null }) {
   return (contact.name || contact.phone || '?').slice(0, 2).toUpperCase();
 }
 
+// Mismo criterio que el servidor (lib/campaignVariables.js): {{nombre|respaldo}}, nombre vacío → "cliente", sin "—".
 function personalizeCampaignMessage(template: string, contact: Contact | null) {
-  const fullName = contact?.name?.trim() || 'cliente';
-  const firstName = fullName.split(/\s+/)[0] || 'cliente';
-  const phone = contact?.phone || '—';
-  const email = contact?.email || '—';
+  const fullName = contact?.name?.trim() || '';
   const values: Record<string, string> = {
-    nombre: firstName,
-    name: firstName,
-    nombre_completo: fullName,
-    'nombre completo': fullName,
-    telefono: phone,
-    'teléfono': phone,
-    phone,
-    email
+    nombre: fullName.split(/\s+/)[0] || '', name: fullName.split(/\s+/)[0] || '',
+    nombre_completo: fullName, 'nombre completo': fullName,
+    telefono: contact?.phone || '', 'teléfono': contact?.phone || '', phone: contact?.phone || '',
+    email: contact?.email || ''
   };
+  return template
+    .replace(VARIABLE_TOKEN, (match, rawKey: string, fallback?: string) => {
+      const key = rawKey.trim().toLowerCase();
+      if (!KNOWN_VARIABLE_KEYS.includes(key)) return match;
+      if (values[key]) return values[key];
+      if (fallback) return fallback;
+      return ['nombre', 'name', 'nombre_completo', 'nombre completo'].includes(key) ? 'cliente' : '';
+    })
+    .replace(/[ \t]{2,}/g, ' ')
+    .replace(/[ \t]+([,.;:!?])/g, '$1');
+}
 
-  return template.replace(/\{\{\s*([^}]+?)\s*\}\}/gi, (match, key: string) => values[key.trim().toLowerCase()] ?? match);
+function unknownVariables(template: string) {
+  const found = new Set<string>();
+  for (const match of template.matchAll(VARIABLE_TOKEN)) {
+    if (!KNOWN_VARIABLE_KEYS.includes(match[1].trim().toLowerCase())) found.add(`{{${match[1].trim()}}}`);
+  }
+  return [...found];
 }
 
 export function Campaigns() {
@@ -393,8 +405,17 @@ function CreateCampaignWizardModal({ onClose, onCreated }: { onClose: () => void
   }, [contacts, contactSearch, onlyNamed]);
   const audience = useMemo(() => contacts.filter((contact) => contact.phone && (selectedContactIds.includes(contact.id) || contactHasSelectedTag(contact, selectedTags))), [contacts, selectedContactIds, selectedTags]);
   const previewContacts = useMemo(() => audience.length > 0 ? audience : contacts.filter((contact) => contact.phone).slice(0, 100), [audience, contacts]);
+  // Avisos de datos faltantes según las variables que usa el mensaje (solo contactos, no grupos).
+  const dataWarnings = useMemo(() => {
+    const used = new Set(Array.from(message.matchAll(VARIABLE_TOKEN), (match) => match[1].trim().toLowerCase()));
+    const warnings: string[] = [];
+    const count = (test: (contact: Contact) => boolean) => audience.filter(test).length;
+    if (used.has('email')) { const n = count((c) => !c.email); if (n > 0) warnings.push(`${n} contacto${n > 1 ? 's' : ''} no tiene${n > 1 ? 'n' : ''} email: ahí {{email}} quedará en blanco.`); }
+    if (['nombre', 'name', 'nombre_completo', 'nombre completo'].some((key) => used.has(key))) { const n = count((c) => !c.name?.trim()); if (n > 0) warnings.push(`${n} contacto${n > 1 ? 's' : ''} sin nombre guardado: se usará “cliente” (o tu valor de respaldo).`); }
+    return warnings;
+  }, [message, audience]);
   const selectedSpeed = SPEED_OPTIONS.find((option) => option.key === speedProfile) || SPEED_OPTIONS[1];
-  const previewContact = previewContacts.find((contact) => contact.id === previewContactId) || previewContacts[0] || null;
+  const previewContact = previewContactId === 'sample' ? SAMPLE_CONTACT : previewContacts.find((contact) => contact.id === previewContactId) || previewContacts[0] || SAMPLE_CONTACT;
   const currentStep = CAMPAIGN_WIZARD_STEPS[step - 1];
   const selectedSession = sessions.find((session) => session.id === sendLine);
   const scheduleMinimum = useMemo(() => {
@@ -447,22 +468,29 @@ function CreateCampaignWizardModal({ onClose, onCreated }: { onClose: () => void
         return false;
       }
     }
-    if (targetStep === 2 && !message.trim()) {
-      setError('Escribí el mensaje que recibirán tus contactos.');
-      return false;
+    if (targetStep === 2) {
+      if (!message.trim()) {
+        setError('Escribí el mensaje que recibirán tus contactos.');
+        return false;
+      }
+      const unknown = unknownVariables(message);
+      if (unknown.length > 0) {
+        setError(`Variable no reconocida: ${unknown.join(', ')}. Usá ${CAMPAIGN_VARIABLES.map((variable) => variable.token).join(', ')}.`);
+        return false;
+      }
     }
-    if (targetStep === 4 && audience.length === 0 && selectedGroups.length === 0) {
+    if (targetStep === 3 && audience.length === 0 && selectedGroups.length === 0) {
       setError('Seleccioná al menos una etiqueta, un contacto con teléfono o un grupo.');
       return false;
     }
-    if (targetStep === 5 && campaignType === 'SCHEDULED') {
+    if (targetStep === 4 && campaignType === 'SCHEDULED') {
       const timestamp = scheduledAt ? new Date(scheduledAt).getTime() : NaN;
       if (!scheduledAt || Number.isNaN(timestamp) || timestamp <= Date.now()) {
         setError('Elegí una fecha y hora futura para programar el envío.');
         return false;
       }
     }
-    if (targetStep === 7 && !reviewConfirmed) {
+    if (targetStep === 6 && !reviewConfirmed) {
       setError('Confirmá que revisaste el resumen antes de crear la campaña.');
       return false;
     }
@@ -486,7 +514,7 @@ function CreateCampaignWizardModal({ onClose, onCreated }: { onClose: () => void
       goNext();
       return;
     }
-    const requiredSteps = [1, 2, 4, 5, 7];
+    const requiredSteps = [1, 2, 3, 4, 6];
     const invalidStep = requiredSteps.find((targetStep) => !validateStep(targetStep));
     if (invalidStep) {
       setStep(invalidStep);
@@ -542,11 +570,26 @@ function CreateCampaignWizardModal({ onClose, onCreated }: { onClose: () => void
 
         {step === 1 && <section className="campaign-wizard-panel"><div className="campaign-wizard-panel-heading"><span className="campaign-wizard-panel-icon">01</span><div><h3>Identificá tu campaña</h3><p>Este nombre se mostrará en el historial y en los reportes.</p></div></div><div className="campaign-form-grid"><div className="field"><label htmlFor="campaign-name">Nombre de la campaña</label><input id="campaign-name" className="input" value={name} onChange={(event) => setName(event.target.value)} placeholder="Promo fin de mes" autoFocus /></div><div className="field"><label htmlFor="campaign-line">Línea de envío</label><select id="campaign-line" className="input" value={sendLine} onChange={(event) => setSendLine(event.target.value)}><option value="">Usar sesión disponible</option>{sessions.map((session) => <option key={session.id} value={session.id}>{session.label} · {session.status === 'connected' ? 'Conectada' : session.status}</option>)}</select><div className="campaign-session-tools"><button type="button" className="campaign-inline-button" onClick={refreshSessions} disabled={refreshingSessions}>{refreshingSessions ? 'Actualizando…' : '↻ Actualizar sesiones'}</button>{sessions.length > 0 && <span>{sessions.filter((session) => session.status === 'connected').length} activas</span>}</div>{sessions.length === 0 && <small className="campaign-field-hint warning">No hay una sesión conectada. Podés guardar la campaña y conectar la línea antes de iniciarla.</small>}</div></div><div className="campaign-wizard-info-card"><span>✓</span><div><strong>{selectedSession ? selectedSession.label : sessions.length > 0 ? 'Elegí una línea para continuar' : 'Campaña preparada para conectar después'}</strong><small>{sessions.length > 0 ? 'La campaña usará esta sesión al momento de iniciar el envío.' : 'La campaña quedará pendiente hasta que haya una sesión de WhatsApp disponible.'}</small></div></div></section>}
 
-        {step === 2 && <section className="campaign-wizard-panel"><div className="campaign-wizard-panel-heading"><span className="campaign-wizard-panel-icon">02</span><div><h3>Construí el contenido</h3><p>Podés usar emojis y un archivo multimedia por campaña.</p></div></div><div className="field"><label htmlFor="campaign-message">Mensaje para tus contactos</label><textarea id="campaign-message" ref={messageRef} className="input campaign-message-input" rows={8} value={message} onChange={(event) => setMessage(event.target.value)} placeholder="Escribí el mensaje que va a recibir cada cliente…" autoFocus /><div className="campaign-emoji-toolbar"><div className="campaign-emoji-anchor"><button type="button" className="campaign-emoji-toggle" onClick={() => setShowEmoji((value) => !value)} aria-expanded={showEmoji}>😊 Emojis</button>{showEmoji && <EmojiPicker onPick={(emoji) => insertAtCursor(emoji)} onClose={() => setShowEmoji(false)} />}</div><span className="campaign-emoji-quick">{['👋', '✨', '🎉', '📣', '✅', '💬'].map((emoji) => <button type="button" key={emoji} onClick={() => insertAtCursor(emoji)}>{emoji}</button>)}</span><span className="campaign-char-count">{message.length} / 4000</span></div></div><div className="campaign-wizard-attachment"><div><strong>Adjuntar contenido (opcional)</strong><small>Imágenes, videos, audio, PDF, documentos de Office o texto.</small></div><input id="campaign-file" type="file" className="campaign-file-input" accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.xls,.xlsx,.txt" onChange={(event) => setFile(event.target.files?.[0] || null)} />{file && <div className="campaign-selected-file"><span>◫</span><div><b>{file.name}</b><small>{file.type || 'Archivo'} · {(file.size / 1024 / 1024).toFixed(2)} MB</small></div><button type="button" onClick={() => setFile(null)} aria-label="Quitar archivo">×</button></div>}</div></section>}
+        {step === 2 && <section className="campaign-wizard-panel"><div className="campaign-wizard-panel-heading"><span className="campaign-wizard-panel-icon">02</span><div><h3>Escribí y personalizá tu mensaje</h3><p>Cada variable se reemplaza con los datos del contacto al enviar. Podés agregar emojis y un archivo.</p></div></div>
+          <div className="campaign-compose">
+            <div className="campaign-compose-editor">
+              <label htmlFor="campaign-message" className="campaign-compose-label">Mensaje para tus contactos</label>
+              <div className="campaign-variable-bar"><span>Insertar dato del contacto:</span>{CAMPAIGN_VARIABLES.map((variable) => <button type="button" key={variable.token} className="campaign-variable-chip" onClick={() => insertVariable(variable.token)} title={`${variable.description} · ej. ${variable.example}`}>＋ {variable.label}</button>)}</div>
+              <textarea id="campaign-message" ref={messageRef} className="input campaign-message-input" rows={9} value={message} onChange={(event) => setMessage(event.target.value)} placeholder="Hola {{nombre}}, tenemos una novedad para vos…" autoFocus />
+              <div className="campaign-emoji-toolbar"><div className="campaign-emoji-anchor"><button type="button" className="campaign-emoji-toggle" onClick={() => setShowEmoji((value) => !value)} aria-expanded={showEmoji}>😊 Emojis</button>{showEmoji && <EmojiPicker onPick={(emoji) => insertAtCursor(emoji)} onClose={() => setShowEmoji(false)} />}</div><span className="campaign-emoji-quick">{['👋', '✨', '🎉', '📣', '✅', '💬'].map((emoji) => <button type="button" key={emoji} onClick={() => insertAtCursor(emoji)}>{emoji}</button>)}</span><span className="campaign-char-count">{message.length} / 4000</span></div>
+              <small className="campaign-field-hint">💡 Si falta un dato, poné un valor de respaldo: <code>{'{{nombre|amigo}}'}</code> → “amigo”. Sin respaldo, el nombre queda como “cliente” y el resto en blanco.</small>
+              {unknownVariables(message).length > 0 && <div className="campaign-alert error" style={{ marginTop: 8 }}>Variable no reconocida: {unknownVariables(message).join(', ')}</div>}
+            </div>
+            <aside className="campaign-compose-preview">
+              <div className="campaign-preview-title"><strong>Así lo recibe el contacto</strong>
+                <select className="input" value={previewContact?.id || ''} onChange={(event) => setPreviewContactId(event.target.value)} aria-label="Contacto para la vista previa"><option value="sample">Ejemplo: María Gómez</option>{previewContacts.slice(0, 100).map((contact) => <option key={contact.id} value={contact.id}>{contact.name || contact.phone || 'Sin nombre'}</option>)}</select></div>
+              <div className="campaign-phone-preview"><div className="campaign-chat-bubble">{file && <div className="campaign-chat-attachment">◫ {file.name}</div>}<p>{message.trim() ? personalizeCampaignMessage(message, previewContact) : <em>Tu mensaje aparecerá acá…</em>}</p><span>ahora ✓✓</span></div></div>
+              <small>Vista previa para <b>{previewContact?.name || previewContact?.phone || 'tu contacto'}</b></small>
+            </aside>
+          </div>
+          <div className="campaign-wizard-attachment"><div><strong>Adjuntar contenido (opcional)</strong><small>Imágenes, videos, audio, PDF, documentos de Office o texto.</small></div><input id="campaign-file" type="file" className="campaign-file-input" accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.xls,.xlsx,.txt" onChange={(event) => setFile(event.target.files?.[0] || null)} />{file && <div className="campaign-selected-file"><span>◫</span><div><b>{file.name}</b><small>{file.type || 'Archivo'} · {(file.size / 1024 / 1024).toFixed(2)} MB</small></div><button type="button" onClick={() => setFile(null)} aria-label="Quitar archivo">×</button></div>}</div></section>}
 
-        {step === 3 && <section className="campaign-wizard-panel"><div className="campaign-wizard-panel-heading"><span className="campaign-wizard-panel-icon">03</span><div><h3>Personalizá cada mensaje</h3><p>Insertá variables y comprobá cómo lo verá una persona real.</p></div></div><div className="campaign-personalization campaign-personalization-large"><div className="campaign-personalization-heading"><div><strong>Variables disponibles</strong><small>Al enviar, cada variable se reemplaza con los datos guardados en el CRM.</small></div>{previewContacts.length > 0 && <label className="campaign-preview-selector">Vista previa<select value={previewContact?.id || ''} onChange={(event) => setPreviewContactId(event.target.value)}><option value="">Primer contacto disponible</option>{previewContacts.map((contact) => <option key={contact.id} value={contact.id}>{contact.name || contact.phone || 'Sin nombre'}</option>)}</select></label>}</div><div className="campaign-variable-row">{CAMPAIGN_VARIABLES.map((variable) => <button type="button" key={variable.token} className="campaign-variable-chip" onClick={() => insertVariable(variable.token)} title={variable.description}>{variable.label} <code>{variable.token}</code></button>)}</div><div className="campaign-preview-bubble"><span>Vista previa para {previewContact?.name || previewContact?.phone || 'tu contacto'}</span><p>{personalizeCampaignMessage(message || 'Hola {{nombre}}, tenemos una novedad para vos.', previewContact)}</p></div></div><div className="campaign-wizard-tip"><span>💡</span><p>Ejemplo: <b>Hola {'{{nombre}}'}, tenemos una novedad para vos.</b> se transforma automáticamente en “Hola María, tenemos una novedad para vos.”</p></div></section>}
-
-        {step === 4 && <section className="campaign-wizard-panel"><div className="campaign-wizard-panel-heading"><span className="campaign-wizard-panel-icon">04</span><div><h3>Elegí la audiencia</h3><p>Combiná etiquetas del CRM, etiquetas de contactos y contactos puntuales. Los destinatarios no se repiten.</p></div><span className="campaign-audience-count">{audience.length} contactos{selectedGroups.length > 0 ? ` · ${selectedGroups.length} grupos` : ''}</span></div>
+        {step === 3 && <section className="campaign-wizard-panel"><div className="campaign-wizard-panel-heading"><span className="campaign-wizard-panel-icon">03</span><div><h3>Elegí la audiencia</h3><p>Combiná etiquetas del CRM, etiquetas de contactos y contactos puntuales. Los destinatarios no se repiten.</p></div><span className="campaign-audience-count">{audience.length} contactos{selectedGroups.length > 0 ? ` · ${selectedGroups.length} grupos` : ''}</span></div>
           <div className="campaign-audience-tabs" role="tablist"><button type="button" role="tab" aria-selected={audienceTab === 'contacts'} className={audienceTab === 'contacts' ? 'active' : ''} onClick={() => setAudienceTab('contacts')}>👥 CRM y contactos{audience.length > 0 ? ` (${audience.length})` : ''}</button><button type="button" role="tab" aria-selected={audienceTab === 'groups'} className={audienceTab === 'groups' ? 'active' : ''} onClick={() => setAudienceTab('groups')}>💬 Grupos de WhatsApp{selectedGroups.length > 0 ? ` (${selectedGroups.length})` : ''}</button></div>
           {audienceTab === 'contacts' ? <><input className="input campaign-audience-search" value={contactSearch} onChange={(event) => setContactSearch(event.target.value)} placeholder="🔎 Buscar por nombre, teléfono o etiqueta…" autoFocus />
           <div className="campaign-audience-tools"><button type="button" className="btn secondary small" onClick={toggleVisibleContacts} disabled={visibleContacts.length === 0}>{visibleContacts.length > 0 && visibleContacts.filter((contact) => contact.phone).every((contact) => selectedContactIds.includes(contact.id)) ? 'Quitar visibles' : `Seleccionar visibles (${visibleContacts.length})`}</button><label className="campaign-only-named"><input type="checkbox" checked={onlyNamed} onChange={(event) => setOnlyNamed(event.target.checked)} /> Solo con nombre ({namedCount})</label><button type="button" className="btn secondary small campaign-sync-button" onClick={syncPhoneContacts} disabled={syncingContacts}>{syncingContacts ? 'Sincronizando…' : '↻ Sincronizar teléfono'}</button></div>
@@ -562,14 +605,14 @@ function CreateCampaignWizardModal({ onClose, onCreated }: { onClose: () => void
         </>}
         </section>}
 
-        {step === 5 && <section className="campaign-wizard-panel"><div className="campaign-wizard-panel-heading"><span className="campaign-wizard-panel-icon">05</span><div><h3>Definí cuándo enviar</h3><p>La campaña se crea sin comenzar. Solo se ejecutará desde su acción de inicio.</p></div></div><div className="campaign-campaign-type-grid"><button type="button" className={`campaign-campaign-type ${campaignType === 'DIRECT' ? 'selected' : ''}`} onClick={() => setCampaignType('DIRECT')}><span>▶</span><div><strong>Directa</strong><small>Queda pendiente y se envía cuando hagas clic en “Iniciar”.</small></div></button><button type="button" className={`campaign-campaign-type ${campaignType === 'SCHEDULED' ? 'selected' : ''}`} onClick={() => setCampaignType('SCHEDULED')}><span>◷</span><div><strong>Programada</strong><small>Queda agendada y comienza automáticamente en la fecha elegida.</small></div></button></div>{campaignType === 'SCHEDULED' && <div className="field campaign-schedule-field"><label htmlFor="campaign-schedule">Fecha y hora de inicio</label><input id="campaign-schedule" type="datetime-local" min={scheduleMinimum} className="input" value={scheduledAt} onChange={(event) => setScheduledAt(event.target.value)} /><small className="campaign-field-hint">Usá la zona horaria configurada en tu navegador.</small></div>}<div className="campaign-safety-note"><span>🛡️</span><p><b>Envío responsable.</b> Usá contactos con consentimiento, mantené una opción de baja y evitá mensajes repetitivos o listas compradas.</p></div></section>}
+        {step === 4 && <section className="campaign-wizard-panel"><div className="campaign-wizard-panel-heading"><span className="campaign-wizard-panel-icon">04</span><div><h3>Definí cuándo enviar</h3><p>La campaña se crea sin comenzar. Solo se ejecutará desde su acción de inicio.</p></div></div><div className="campaign-campaign-type-grid"><button type="button" className={`campaign-campaign-type ${campaignType === 'DIRECT' ? 'selected' : ''}`} onClick={() => setCampaignType('DIRECT')}><span>▶</span><div><strong>Directa</strong><small>Queda pendiente y se envía cuando hagas clic en “Iniciar”.</small></div></button><button type="button" className={`campaign-campaign-type ${campaignType === 'SCHEDULED' ? 'selected' : ''}`} onClick={() => setCampaignType('SCHEDULED')}><span>◷</span><div><strong>Programada</strong><small>Queda agendada y comienza automáticamente en la fecha elegida.</small></div></button></div>{campaignType === 'SCHEDULED' && <div className="field campaign-schedule-field"><label htmlFor="campaign-schedule">Fecha y hora de inicio</label><input id="campaign-schedule" type="datetime-local" min={scheduleMinimum} className="input" value={scheduledAt} onChange={(event) => setScheduledAt(event.target.value)} /><small className="campaign-field-hint">Usá la zona horaria configurada en tu navegador.</small></div>}<div className="campaign-safety-note"><span>🛡️</span><p><b>Envío responsable.</b> Usá contactos con consentimiento, mantené una opción de baja y evitá mensajes repetitivos o listas compradas.</p></div></section>}
 
-        {step === 6 && <section className="campaign-wizard-panel"><div className="campaign-wizard-panel-heading"><span className="campaign-wizard-panel-icon">06</span><div><h3>Elegí la velocidad</h3><p>Distribuí los mensajes por hora según el tamaño y el nivel de control que necesitás.</p></div><span className="campaign-rate-summary">{selectedSpeed.rate} mensajes/hora</span></div><div className="campaign-speed-grid">{SPEED_OPTIONS.map((option) => <button type="button" key={option.key} className={`campaign-speed-option ${speedProfile === option.key ? 'selected' : ''}`} onClick={() => setSpeedProfile(option.key)}><span className="campaign-radio">{speedProfile === option.key ? '●' : ''}</span><span className="campaign-speed-icon">{option.icon}</span><span className="campaign-speed-copy"><b>{option.label}</b>{option.recommended && <em>Recomendado</em>}<small>Hasta {option.rate} mensajes por hora · {option.description}.</small></span></button>)}</div><div className="campaign-wizard-tip"><span>🛡️</span><p>La velocidad elegida ayuda a distribuir el tráfico. Siempre respetá el consentimiento de tus contactos y las políticas de WhatsApp.</p></div></section>}
+        {step === 5 && <section className="campaign-wizard-panel"><div className="campaign-wizard-panel-heading"><span className="campaign-wizard-panel-icon">05</span><div><h3>Elegí la velocidad</h3><p>Distribuí los mensajes por hora según el tamaño y el nivel de control que necesitás.</p></div><span className="campaign-rate-summary">{selectedSpeed.rate} mensajes/hora</span></div><div className="campaign-speed-grid">{SPEED_OPTIONS.map((option) => <button type="button" key={option.key} className={`campaign-speed-option ${speedProfile === option.key ? 'selected' : ''}`} onClick={() => setSpeedProfile(option.key)}><span className="campaign-radio">{speedProfile === option.key ? '●' : ''}</span><span className="campaign-speed-icon">{option.icon}</span><span className="campaign-speed-copy"><b>{option.label}</b>{option.recommended && <em>Recomendado</em>}<small>Hasta {option.rate} mensajes por hora · {option.description}.</small></span></button>)}</div><div className="campaign-wizard-tip"><span>🛡️</span><p>La velocidad elegida ayuda a distribuir el tráfico. Siempre respetá el consentimiento de tus contactos y las políticas de WhatsApp.</p></div></section>}
 
-        {step === 7 && <section className="campaign-wizard-panel campaign-review-panel"><div className="campaign-wizard-panel-heading"><span className="campaign-wizard-panel-icon">✓</span><div><h3>Revisá antes de crear</h3><p>La campaña quedará guardada, pero no se enviará desde este botón.</p></div></div><div className="campaign-review-status"><span>◷</span><div><strong>{campaignType === 'SCHEDULED' ? 'Quedará programada' : 'Quedará pendiente'}</strong><small>{campaignType === 'SCHEDULED' ? `Inicio: ${formatDate(new Date(scheduledAt).toISOString())}` : 'Podrás ejecutarla desde “Iniciar envío” cuando estés listo.'}</small></div></div><div className="campaign-review-grid"><div><span>CAMPAÑA</span><strong>{name || 'Sin nombre'}</strong></div><div><span>LÍNEA</span><strong>{selectedSession?.label || 'Sesión disponible'}</strong></div><div><span>AUDIENCIA</span><strong>{audience.length} contactos{selectedGroups.length > 0 ? ` + ${selectedGroups.length} grupos` : ''}</strong><small>{selectedTags.length > 0 ? selectedTags.map((tag) => `#${tag}`).join(' · ') : selectedGroups.length > 0 && audience.length === 0 ? 'Solo grupos' : 'Selección manual'}</small></div><div><span>VELOCIDAD</span><strong>{selectedSpeed.icon} {selectedSpeed.label}</strong><small>Hasta {selectedSpeed.rate} mensajes/hora</small></div><div><span>CONTENIDO</span><strong>{file ? 'Texto + adjunto' : 'Solo texto'}</strong><small>{file?.name || 'Sin archivo adjunto'}</small></div></div><div className="campaign-review-message"><span>VISTA PREVIA DEL MENSAJE</span><p>{personalizeCampaignMessage(message, previewContact)}</p></div><label className="campaign-review-confirm"><input type="checkbox" checked={reviewConfirmed} onChange={(event) => setReviewConfirmed(event.target.checked)} /> <span>Revisé el mensaje, los destinatarios, la programación y la velocidad. Quiero crear esta campaña.</span></label></section>}
+        {step === 6 && <section className="campaign-wizard-panel campaign-review-panel"><div className="campaign-wizard-panel-heading"><span className="campaign-wizard-panel-icon">✓</span><div><h3>Revisá antes de crear</h3><p>La campaña quedará guardada, pero no se enviará desde este botón.</p></div></div><div className="campaign-review-status"><span>◷</span><div><strong>{campaignType === 'SCHEDULED' ? 'Quedará programada' : 'Quedará pendiente'}</strong><small>{campaignType === 'SCHEDULED' ? `Inicio: ${formatDate(new Date(scheduledAt).toISOString())}` : 'Podrás ejecutarla desde “Iniciar envío” cuando estés listo.'}</small></div></div><div className="campaign-review-grid"><div><span>CAMPAÑA</span><strong>{name || 'Sin nombre'}</strong></div><div><span>LÍNEA</span><strong>{selectedSession?.label || 'Sesión disponible'}</strong></div><div><span>AUDIENCIA</span><strong>{audience.length} contactos{selectedGroups.length > 0 ? ` + ${selectedGroups.length} grupos` : ''}</strong><small>{selectedTags.length > 0 ? selectedTags.map((tag) => `#${tag}`).join(' · ') : selectedGroups.length > 0 && audience.length === 0 ? 'Solo grupos' : 'Selección manual'}</small></div><div><span>VELOCIDAD</span><strong>{selectedSpeed.icon} {selectedSpeed.label}</strong><small>Hasta {selectedSpeed.rate} mensajes/hora</small></div><div><span>CONTENIDO</span><strong>{file ? 'Texto + adjunto' : 'Solo texto'}</strong><small>{file?.name || 'Sin archivo adjunto'}</small></div></div>{dataWarnings.length > 0 && <div className="campaign-wizard-tip" style={{ marginTop: 12 }}><span>⚠️</span><p>{dataWarnings.join(' ')}</p></div>}<div className="campaign-review-message"><span>VISTA PREVIA DEL MENSAJE</span><p>{personalizeCampaignMessage(message, previewContact)}</p></div><label className="campaign-review-confirm"><input type="checkbox" checked={reviewConfirmed} onChange={(event) => setReviewConfirmed(event.target.checked)} /> <span>Revisé el mensaje, los destinatarios, la programación y la velocidad. Quiero crear esta campaña.</span></label></section>}
 
         {error && <div className="campaign-alert error campaign-wizard-error">{error}</div>}
-        <div className="campaign-wizard-footer"><button type="button" className="btn secondary" onClick={onClose}>Cancelar</button><div className="campaign-wizard-actions">{step > 1 && <button type="button" className="btn secondary" onClick={goBack} disabled={submitting}>← Atrás</button>}{step < CAMPAIGN_WIZARD_STEPS.length ? <button type="button" className="btn" onClick={goNext} disabled={submitting || (step === 4 && loadingAudience)}>Siguiente <span>→</span></button> : <button type="submit" className="btn" disabled={submitting || loadingAudience}>{submitting ? 'Creando…' : campaignType === 'SCHEDULED' ? 'Crear campaña programada' : 'Crear campaña pendiente'}</button>}</div></div>
+        <div className="campaign-wizard-footer"><button type="button" className="btn secondary" onClick={onClose}>Cancelar</button><div className="campaign-wizard-actions">{step > 1 && <button type="button" className="btn secondary" onClick={goBack} disabled={submitting}>← Atrás</button>}{step < CAMPAIGN_WIZARD_STEPS.length ? <button type="button" className="btn" onClick={goNext} disabled={submitting || (step === 3 && loadingAudience)}>Siguiente <span>→</span></button> : <button type="submit" className="btn" disabled={submitting || loadingAudience}>{submitting ? 'Creando…' : campaignType === 'SCHEDULED' ? 'Crear campaña programada' : 'Crear campaña pendiente'}</button>}</div></div>
       </form>
     </Modal>
   );

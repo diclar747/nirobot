@@ -9,6 +9,7 @@ const { saveFile } = require('../lib/storage');
 const { extensionFor } = require('../lib/attachments');
 const campaigns = require('../lib/campaigns');
 const whatsapp = require('../lib/whatsapp');
+const { findUnknownVariables, PUBLIC_VARIABLES } = require('../lib/campaignVariables');
 
 const router = express.Router();
 
@@ -73,6 +74,10 @@ router.get('/audience', async (req, res, next) => {
 router.post('/', requireRole('OWNER', 'ADMIN', 'SUPERVISOR'), requireCsrf, async (req, res, next) => {
   try {
     const data = createCampaignSchema.parse(req.body);
+    const unknownVariables = findUnknownVariables(data.message);
+    if (unknownVariables.length > 0) {
+      throw new HttpError(400, `Variable no reconocida: ${unknownVariables.join(', ')}. Usá ${PUBLIC_VARIABLES.join(', ')}`);
+    }
     const scheduledAt = data.scheduledAt ? new Date(data.scheduledAt) : null;
     if (scheduledAt && scheduledAt.getTime() <= Date.now()) {
       throw new HttpError(400, 'La fecha de programación debe estar en el futuro');
