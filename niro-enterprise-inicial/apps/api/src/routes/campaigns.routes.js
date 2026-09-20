@@ -37,6 +37,29 @@ router.get('/', async (req, res, next) => {
   }
 });
 
+// Contactos + etiquetas (del contacto y del CRM/conversaciones) para armar la audiencia.
+router.get('/audience', async (req, res, next) => {
+  try {
+    const organizationId = req.auth.organizationId;
+    const contacts = await prisma.contact.findMany({
+      where: { organizationId, phone: { not: null } },
+      select: {
+        id: true, name: true, phone: true, email: true, tags: true, createdAt: true,
+        conversations: { select: { tags: true } }
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 5000
+    });
+    const rows = contacts.map(({ conversations, ...contact }) => ({
+      ...contact,
+      crmTags: Array.from(new Set(conversations.flatMap((c) => c.tags)))
+    }));
+    res.json({ contacts: rows });
+  } catch (err) {
+    next(err);
+  }
+});
+
 router.post('/', requireRole('OWNER', 'ADMIN', 'SUPERVISOR'), requireCsrf, async (req, res, next) => {
   try {
     const data = createCampaignSchema.parse(req.body);
@@ -51,7 +74,9 @@ router.post('/', requireRole('OWNER', 'ADMIN', 'SUPERVISOR'), requireCsrf, async
         phone: { not: null },
         OR: [
           ...(data.contactIds.length > 0 ? [{ id: { in: data.contactIds } }] : []),
-          ...(data.tagFilter.length > 0 ? [{ tags: { hasSome: data.tagFilter } }] : [])
+          ...(data.tagFilter.length > 0
+            ? [{ tags: { hasSome: data.tagFilter } }, { conversations: { some: { tags: { hasSome: data.tagFilter } } } }]
+            : [])
         ]
       },
       select: { id: true }

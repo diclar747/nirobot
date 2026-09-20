@@ -878,3 +878,92 @@
   .campaign-detail-aside { grid-template-columns: 1fr; }
   .campaign-recipient-time { display: none; }
 }
+
+/* =========================================================
+   Formulario de campaña — más ancho y legible.
+   `.modal { max-width: 520px }` (ui-fixes.css) pisaba el ancho del modal.
+   ========================================================= */
+.modal.campaign-modal { width: min(96vw, 1000px); max-width: 1000px; padding: 26px 30px; }
+.modal.campaign-detail-modal { width: min(96vw, 1180px); max-width: 1180px; }
+.modal.campaign-modal h3 { white-space: normal; }
+.modal.campaign-create-modal { max-height: calc(100vh - 24px); }
+
+.campaign-wizard { gap: 18px; }
+.campaign-wizard-panel { padding: 22px; }
+.campaign-wizard-panel-heading { margin-bottom: 20px; }
+.campaign-wizard-panel-heading h3 { font-size: 16px; }
+.campaign-wizard-panel-heading p { font-size: 12.5px; }
+.campaign-wizard-heading h2 { font-size: 22px; }
+.campaign-wizard-heading p { font-size: 13px; }
+.campaign-wizard-heading > span { font-size: 10.5px; }
+.campaign-wizard-step small { font-size: 11px; }
+.campaign-wizard-intro strong { font-size: 14px; }
+.campaign-wizard-intro p { font-size: 12.5px; }
+.campaign-wizard-info-card strong { font-size: 13px; }
+.campaign-wizard-info-card small,
+.campaign-field-hint { font-size: 12px; }
+.campaign-form-grid { gap: 20px; }
+.campaign-wizard .field { margin-bottom: 0; }
+.campaign-wizard .field label { display: block; margin-bottom: 7px; font-size: 13px; font-weight: 700; }
+.campaign-wizard .input { padding: 11px 13px; font-size: 14px; }
+.campaign-message-input { min-height: 190px; line-height: 1.55; resize: vertical; }
+.campaign-session-tools { margin-top: 9px; }
+.campaign-wizard-attachment { padding: 16px; }
+.campaign-wizard-attachment > div:first-child strong { font-size: 13.5px; }
+.campaign-wizard-attachment > div:first-child small { font-size: 12px; }
+.campaign-variable-chip { font-size: 12px; }
+.campaign-preview-bubble p { font-size: 13.5px; }
+.campaign-campaign-type strong { font-size: 14px; }
+.campaign-campaign-type small { font-size: 12px; }
+.campaign-review-grid span { font-size: 10px; }
+.campaign-review-grid strong { font-size: 13px; }
+.campaign-review-grid small { font-size: 11.5px; }
+.campaign-review-message p { font-size: 13.5px; }
+.campaign-review-confirm { font-size: 12.5px; }
+.campaign-speed-option small { font-size: 12px; }
+
+/* Emojis */
+.campaign-emoji-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 10px; }
+.campaign-emoji-anchor { position: relative; }
+.campaign-emoji-toggle { padding: 8px 14px; border: 1px solid var(--border-color); border-radius: 999px; background: var(--bg-surface); color: var(--text-main); cursor: pointer; font-size: 13px; font-weight: 700; }
+.campaign-emoji-toggle:hover { border-color: var(--primary-glow); background: var(--primary-soft); }
+.campaign-emoji-quick { display: flex; gap: 4px; }
+.campaign-emoji-quick button { width: 34px; height: 34px; border: 0; border-radius: 8px; background: transparent; cursor: pointer; font-size: 19px; }
+.campaign-emoji-quick button:hover { background: var(--bg-surface-hover); }
+.campaign-char-count { margin-left: auto; color: var(--text-dim); font-size: 12px; }
+.emoji-picker { position: absolute; z-index: 30; bottom: calc(100% + 8px); left: 0; width: 340px; max-width: 86vw; padding: 10px; border: 1px solid var(--border-color); border-radius: 14px; background: var(--bg-surface); box-shadow: 0 18px 50px rgba(0, 0, 0, 0.35); }
+.emoji-picker-tabs { display: flex; align-items: center; gap: 2px; padding-bottom: 8px; border-bottom: 1px solid var(--border-color); }
+.emoji-picker-tabs button { width: 34px; height: 32px; border: 0; border-radius: 8px; background: transparent; cursor: pointer; font-size: 18px; }
+.emoji-picker-tabs button.active { background: var(--primary-soft); box-shadow: inset 0 -2px 0 var(--primary-text); }
+.emoji-picker-tabs .emoji-picker-close { margin-left: auto; color: var(--text-dim); font-size: 20px; }
+.emoji-picker-label { margin: 8px 2px 4px; color: var(--text-dim); font-size: 11px; font-weight: 800; letter-spacing: 0.06em; text-transform: uppercase; }
+.emoji-picker-grid { display: grid; grid-template-columns: repeat(8, 1fr); gap: 2px; max-height: 220px; overflow-y: auto; }
+.emoji-picker-grid button { aspect-ratio: 1; border: 0; border-radius: 8px; background: transparent; cursor: pointer; font-size: 22px; line-height: 1; }
+.emoji-picker-grid button:hover { background: var(--bg-surface-hover); transform: scale(1.15); }
+
+/* Audiencia: buscador arriba a todo el ancho */
+.campaign-audience-search { width: 100%; margin-bottom: 12px; box-sizing: border-box; }
+.campaign-audience-tools { flex-wrap: wrap; align-items: center; gap: 10px; margin-bottom: 12px; }
+.campaign-audience-tools .campaign-sync-button { margin-left: auto; }
+.campaign-only-named { display: inline-flex; align-items: center; gap: 6px; color: var(--text-muted); cursor: pointer; font-size: 12.5px; }
+.campaign-sync-success { margin: 0 0 12px; font-size: 12.5px; }
+.campaign-tag-group { margin-bottom: 12px; }
+.campaign-tag-group-label { display: block; margin-bottom: 6px; color: var(--text-dim); font-size: 11px; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; }
+.campaign-tags { margin-bottom: 0; }
+.campaign-tag { padding: 7px 12px; font-size: 12.5px; }
+.campaign-tag em { margin-left: 4px; opacity: 0.7; font-size: 11px; font-style: normal; }
+.campaign-tag.crm { border-color: rgba(139, 92, 246, 0.4); }
+.campaign-tag.crm.active { border-color: #8b5cf6; background: rgba(139, 92, 246, 0.16); color: #c4b5fd; }
+.campaign-contact-picker { max-height: min(380px, 42vh); gap: 3px; padding: 6px; }
+.campaign-contact-row { padding: 9px 11px; }
+.campaign-contact-name b { font-size: 13.5px; }
+.campaign-contact-name small { font-size: 12px; }
+.campaign-avatar { width: 34px; height: 34px; font-size: 12px; }
+.campaign-audience-count { padding: 6px 12px; font-size: 12px; white-space: nowrap; }
+
+@media (max-width: 700px) {
+  .modal.campaign-modal { padding: 16px; }
+  .campaign-wizard-panel { padding: 14px; }
+  .campaign-audience-tools .campaign-sync-button { margin-left: 0; }
+  .campaign-emoji-quick { display: none; }
+}

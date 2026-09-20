@@ -283,10 +283,9 @@ async function rememberPhoneContacts(organizationId, contacts) {
     const resolvedJid = await resolvePhoneJid(entry.sock, rawJid);
     const phone = phoneFromJid(resolvedJid);
     if (!/^\d{6,}$/.test(phone)) continue;
-    entry.phoneContacts.set(phone, {
-      phone,
-      name: contact.name || contact.notify || contact.verifiedName || null
-    });
+    const name = contact.name || contact.notify || contact.verifiedName || null;
+    const previous = entry.phoneContacts.get(phone);
+    entry.phoneContacts.set(phone, { phone, name: name || (previous && previous.name) || null });
   }
 }
 
@@ -442,11 +441,18 @@ async function connectSession(organizationId, options = {}) {
   sock.ev.on('creds.update', saveCreds);
 
   sock.ev.on('messaging-history.set', (payload) => {
-    rememberPhoneContacts(organizationId, payload && payload.contacts)
+    // Los chats individuales también traen el nombre guardado en la libreta.
+    const chatNames = ((payload && payload.chats) || []).map((chat) => ({ id: chat.id, name: chat.name }));
+    rememberPhoneContacts(organizationId, [...chatNames, ...((payload && payload.contacts) || [])])
       .catch((err) => console.error('[whatsapp] contact mapping failed', err));
   });
 
   sock.ev.on('contacts.upsert', (contacts) => {
+    rememberPhoneContacts(organizationId, contacts)
+      .catch((err) => console.error('[whatsapp] contact mapping failed', err));
+  });
+
+  sock.ev.on('contacts.update', (contacts) => {
     rememberPhoneContacts(organizationId, contacts)
       .catch((err) => console.error('[whatsapp] contact mapping failed', err));
   });
@@ -677,7 +683,8 @@ async function syncContacts(organizationId) {
   for (const candidate of entry.phoneContacts.values()) {
     const existing = await prisma.contact.findFirst({ where: { organizationId, phone: candidate.phone } });
     if (existing) {
-      if (!existing.name && candidate.name) {
+      const nameIsBlank = !existing.name || existing.name.replace(/\D/g, '') === candidate.phone;
+      if (nameIsBlank && candidate.name) {
         await prisma.contact.update({ where: { id: existing.id }, data: { name: candidate.name } });
         updated += 1;
       }

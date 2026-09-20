@@ -112,6 +112,7 @@ export interface Contact {
   externalId?: string | null;
   avatarUrl?: string | null;
   tags: string[];
+  crmTags?: string[];
   callConsentStatus?: string | null;
   callConsentAt?: string | null;
   callOptedOutAt?: string | null;
