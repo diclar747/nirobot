@@ -6,3 +6,4 @@ niro-enterprise-inicial.zip
 
 # Archivo de bloqueo de tareas programadas de Claude Code (estado local de la sesión).
 .claude/scheduled_tasks.lock
+backups/

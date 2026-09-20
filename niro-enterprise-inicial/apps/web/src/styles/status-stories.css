@@ -1,0 +1,38 @@
+/* Estados de WhatsApp: barra de historias y visor a pantalla completa. */
+.stories-strip { padding: 10px 14px 6px; border-bottom: 1px solid var(--border-subtle); }
+.stories-strip-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; font-size: 12px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--text-muted); }
+.stories-strip-badge { background: var(--primary-soft); color: var(--primary-text); border-radius: 999px; padding: 2px 8px; font-size: 11px; text-transform: none; letter-spacing: 0; }
+.stories-empty { margin: 0 0 6px; font-size: 12px; color: var(--text-dim); }
+.stories-strip-list { display: flex; gap: 12px; overflow-x: auto; padding: 2px 2px 8px; scrollbar-width: thin; }
+.story-chip { flex: 0 0 auto; width: 62px; display: flex; flex-direction: column; align-items: center; gap: 5px; background: none; border: 0; padding: 0; cursor: pointer; color: var(--text-main); }
+.story-ring { display: grid; place-items: center; width: 58px; height: 58px; border-radius: 50%; padding: 3px; transition: transform .15s ease; }
+.story-chip:hover .story-ring { transform: scale(1.06); }
+.story-ring.unseen { background: linear-gradient(45deg, #f59e0b 0%, #ef4444 40%, #d946ef 70%, #6366f1 100%); }
+.story-ring.seen { background: var(--border-color); }
+.story-ring-inner { display: grid; place-items: center; width: 100%; height: 100%; border-radius: 50%; background: var(--bg-surface); padding: 2px; }
+.story-avatar-img { border-radius: 50%; object-fit: cover; display: block; }
+.story-avatar-fallback { display: grid; place-items: center; border-radius: 50%; background: var(--bg-surface-2); color: var(--text-main); font-weight: 700; }
+.story-chip-name { max-width: 62px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; color: var(--text-muted); }
+
+.story-viewer { position: fixed; inset: 0; z-index: 1000; display: grid; place-items: center; animation: story-fade .18s ease; }
+@keyframes story-fade { from { opacity: 0; } to { opacity: 1; } }
+.story-viewer-backdrop { position: absolute; inset: 0; background: rgba(2, 6, 23, .92); backdrop-filter: blur(14px); }
+.story-card { position: relative; width: min(420px, 100vw); height: min(760px, 100dvh); max-height: 100dvh; border-radius: 16px; overflow: hidden; background: #000; box-shadow: 0 30px 80px rgba(0,0,0,.6); user-select: none; }
+.story-bars { position: absolute; top: 10px; left: 10px; right: 10px; display: flex; gap: 4px; z-index: 3; }
+.story-bar { flex: 1; height: 3px; border-radius: 2px; background: rgba(255,255,255,.35); overflow: hidden; }
+.story-bar-fill { display: block; height: 100%; background: #fff; }
+.story-head { position: absolute; top: 20px; left: 12px; right: 12px; z-index: 3; display: flex; align-items: center; gap: 10px; color: #fff; text-shadow: 0 1px 6px rgba(0,0,0,.6); }
+.story-head-avatar { display: grid; place-items: center; }
+.story-head-text { display: flex; flex-direction: column; flex: 1; min-width: 0; line-height: 1.2; }
+.story-head-text strong { font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.story-head-text small { font-size: 11px; opacity: .85; }
+.story-icon-btn { background: rgba(0,0,0,.35); color: #fff; border: 0; width: 32px; height: 32px; border-radius: 50%; cursor: pointer; font-size: 14px; display: grid; place-items: center; }
+.story-icon-btn:hover { background: rgba(0,0,0,.55); }
+.story-media { position: absolute; inset: 0; display: grid; place-items: center; }
+.story-media img, .story-media video { width: 100%; height: 100%; object-fit: contain; background: #000; }
+.story-text { margin: 0; padding: 0 28px; text-align: center; color: #fff; font-size: 26px; font-weight: 700; line-height: 1.3; word-break: break-word; text-shadow: 0 2px 10px rgba(0,0,0,.25); }
+.story-caption { position: absolute; left: 0; right: 0; bottom: 0; margin: 0; padding: 40px 18px 22px; color: #fff; font-size: 15px; line-height: 1.4; text-align: center; background: linear-gradient(to top, rgba(0,0,0,.7), transparent); }
+.story-nav { position: absolute; top: 70px; bottom: 0; width: 33%; z-index: 2; background: none; border: 0; cursor: pointer; }
+.story-nav-prev { left: 0; }
+.story-nav-next { right: 0; width: 67%; }
+@media (max-width: 480px) { .story-card { width: 100vw; height: 100dvh; border-radius: 0; } }

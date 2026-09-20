@@ -191,7 +191,7 @@ router.get('/:id/messages', async (req, res, next) => {
 
     const before = req.query.before;
     const messages = await prisma.message.findMany({
-      where: { conversationId: conversation.id, ...(before ? { createdAt: { lt: new Date(before) } } : {}) },
+      where: { conversationId: conversation.id, ...(before && !Number.isNaN(new Date(before).getTime()) ? { createdAt: { lt: new Date(before) } } : {}) },
       include: MESSAGE_INCLUDE,
       orderBy: { createdAt: 'desc' },
       take: 50
@@ -291,12 +291,14 @@ router.post('/:id/claim', requireCsrf, async (req, res, next) => {
 
 router.post('/:id/transfer', requireCsrf, async (req, res, next) => {
   try {
-    const { targetUserId, departmentId, note } = req.body;
-    const conversation = await prisma.conversation.findFirst({
-      where: { id: req.params.id, organizationId: req.auth.organizationId },
-      include: CONVERSATION_INCLUDE
-    });
+    const { targetUserId, departmentId } = req.body;
+    const note = typeof req.body.note === 'string' ? req.body.note.slice(0, 500) : undefined;
+    // Visibility-scoped: an AGENT can only move conversations they could already see.
+    const conversation = await loadVisibleConversation(req, req.params.id);
     if (!conversation) throw new HttpError(404, 'Conversación no encontrada');
+    if (req.auth.role === 'AGENT' && conversation.assignedToId && conversation.assignedToId !== req.auth.userId) {
+      throw new HttpError(403, 'Solo podés transferir conversaciones asignadas a vos o sin asignar');
+    }
 
     let targetUser = null;
     if (targetUserId) {
@@ -324,14 +326,16 @@ router.post('/:id/transfer', requireCsrf, async (req, res, next) => {
 
     const noteContent = `🔄 [TRANSFERENCIA]: ${senderName} transfirió la conversación ${destinationText}.${note ? `\nNota: ${note}` : ''}`;
 
-    await prisma.message.create({
+    const noteMessage = await prisma.message.create({
       data: {
         conversationId: conversation.id,
         senderUserId: req.auth.userId,
         direction: 'NOTE',
         content: noteContent
-      }
+      },
+      include: MESSAGE_INCLUDE
     });
+    broadcastMessage(req.auth.organizationId, conversation.id, noteMessage);
 
     const updated = await prisma.conversation.update({
       where: { id: conversation.id },
@@ -379,12 +383,15 @@ router.post('/:id/transfer', requireCsrf, async (req, res, next) => {
 
 router.post('/:id/transfer-response', requireCsrf, async (req, res, next) => {
   try {
-    const { action, reason } = req.body; // 'accept' | 'reject'
-    const conversation = await prisma.conversation.findFirst({
-      where: { id: req.params.id, organizationId: req.auth.organizationId },
-      include: CONVERSATION_INCLUDE
-    });
+    const { action } = req.body; // 'accept' | 'reject'
+    const reason = typeof req.body.reason === 'string' ? req.body.reason.slice(0, 500) : undefined;
+    if (!['accept', 'reject'].includes(action)) throw new HttpError(400, 'Acción inválida');
+    const conversation = await loadVisibleConversation(req, req.params.id);
     if (!conversation) throw new HttpError(404, 'Conversación no encontrada');
+    // Only the agent the conversation was transferred to may answer the transfer.
+    if (conversation.assignedToId && conversation.assignedToId !== req.auth.userId) {
+      throw new HttpError(403, 'Esta transferencia no está dirigida a vos');
+    }
 
     const agent = await prisma.user.findUnique({ where: { id: req.auth.userId }, select: { name: true } });
     const agentName = agent?.name || 'Agente';
@@ -400,14 +407,16 @@ router.post('/:id/transfer-response', requireCsrf, async (req, res, next) => {
         include: CONVERSATION_INCLUDE
       });
 
-      await prisma.message.create({
+      const noteMessage = await prisma.message.create({
         data: {
           conversationId: conversation.id,
           senderUserId: req.auth.userId,
           direction: 'NOTE',
           content: `✅ ${agentName} aceptó la transferencia de la conversación.`
-        }
+        },
+        include: MESSAGE_INCLUDE
       });
+      broadcastMessage(req.auth.organizationId, conversation.id, noteMessage);
 
       const payload = sanitizeConversation(updated);
       emitToOrg(req.auth.organizationId, 'conversation:updated', { conversation: payload });
@@ -423,14 +432,16 @@ router.post('/:id/transfer-response', requireCsrf, async (req, res, next) => {
         include: CONVERSATION_INCLUDE
       });
 
-      await prisma.message.create({
+      const noteMessage = await prisma.message.create({
         data: {
           conversationId: conversation.id,
           senderUserId: req.auth.userId,
           direction: 'NOTE',
           content: `❌ ${agentName} rechazó la transferencia.${reason ? ` Motivo: ${reason}` : ''} La conversación volvió a la cola de espera.`
-        }
+        },
+        include: MESSAGE_INCLUDE
       });
+      broadcastMessage(req.auth.organizationId, conversation.id, noteMessage);
 
       const payload = sanitizeConversation(updated);
       emitToOrg(req.auth.organizationId, 'conversation:updated', { conversation: payload });
@@ -469,6 +480,7 @@ router.post('/:id/messages', requireCsrf, async (req, res, next) => {
         senderUserId: req.auth.userId,
         direction,
         content: data.content,
+        ...(direction === 'OUTBOUND' && conversation.channel === 'whatsapp' && conversation.contact.phone ? { deliveryStatus: 'pending' } : {}),
         quotedMessageId: quotedMessage ? quotedMessage.id : null,
         quotedPreview: quotedMessage ? quotedMessage.content.slice(0, 200) : null,
         quotedSender: quotedMessage ? labelForMessage(quotedMessage) : null
@@ -491,14 +503,19 @@ router.post('/:id/messages', requireCsrf, async (req, res, next) => {
         : null;
       whatsapp
         .sendText(req.auth.organizationId, conversation.contact.phone, data.content, { quoted: quotedOption })
-        .then((waMessageId) => {
-          if (!waMessageId) return null;
-          return prisma.message.update({ where: { id: message.id }, data: { waMessageId }, include: MESSAGE_INCLUDE });
-        })
+        .then((waMessageId) => prisma.message.update({
+          where: { id: message.id },
+          data: { deliveryStatus: waMessageId ? 'sent' : 'failed', ...(waMessageId ? { waMessageId } : {}) },
+          include: MESSAGE_INCLUDE
+        }))
         .then((withId) => {
-          if (withId) emitToOrg(req.auth.organizationId, 'message:updated', { conversationId: conversation.id, message: sanitizeMessage(withId) });
+          emitToOrg(req.auth.organizationId, 'message:updated', { conversationId: conversation.id, message: sanitizeMessage(withId) });
         })
-        .catch((err) => console.error('[whatsapp] outbound send failed', err));
+        .catch(async (err) => {
+          console.error('[whatsapp] outbound send failed', err);
+          const failed = await prisma.message.update({ where: { id: message.id }, data: { deliveryStatus: 'failed' }, include: MESSAGE_INCLUDE }).catch(() => null);
+          if (failed) emitToOrg(req.auth.organizationId, 'message:updated', { conversationId: conversation.id, message: sanitizeMessage(failed) });
+        });
     }
 
     if (direction === 'INBOUND' && !conversation.departmentId) {
@@ -523,7 +540,7 @@ router.post('/:id/messages', requireCsrf, async (req, res, next) => {
           const aiSettings = flowResult.aiPrompt ? { ...settings, systemPrompt: `${settings.systemPrompt || ''} ${flowResult.aiPrompt}`.trim() } : settings;
           const reply = await aiBot.generateReply(conversation.id, aiSettings, settings.organization?.name || null);
           if (reply && reply.content) {
-            const botMessage = await sendBotMessage(conversation.id, req.auth.organizationId, reply.content);
+            const botMessage = await sendBotMessage(conversation.id, req.auth.organizationId, reply.content, 'ai');
             if (updated.channel === 'whatsapp' && updated.contact?.phone) whatsapp.sendText(req.auth.organizationId, updated.contact.phone, reply.content).catch((err) => console.error('[whatsapp] flow ai reply failed', err));
             if (botMessage) emitToOrg(req.auth.organizationId, 'message:updated', { conversationId: conversation.id, message: sanitizeMessage(botMessage) });
           }
@@ -546,7 +563,7 @@ router.post('/:id/messages', requireCsrf, async (req, res, next) => {
         } else if (aiBot.shouldReply(updated, settings)) {
         const reply = await aiBot.generateReply(conversation.id, settings, settings.organization?.name || null);
         if (reply && reply.content) {
-          const botMessage = await sendBotMessage(conversation.id, req.auth.organizationId, reply.content);
+          const botMessage = await sendBotMessage(conversation.id, req.auth.organizationId, reply.content, 'ai');
           if (updated.channel === 'whatsapp' && updated.contact?.phone) {
             whatsapp
               .sendText(req.auth.organizationId, updated.contact.phone, reply.content)
@@ -576,7 +593,8 @@ router.post('/:id/attachments', requireCsrf, upload.single('file'), async (req, 
     const conversation = await loadVisibleConversation(req, req.params.id);
     if (!conversation) throw new HttpError(404, 'Conversación no encontrada');
 
-    const direction = (req.body.type || 'outbound').toUpperCase();
+    const direction = String(req.body.type || 'outbound').toUpperCase();
+    if (!['OUTBOUND', 'INBOUND', 'NOTE'].includes(direction)) throw new HttpError(400, 'Tipo de mensaje inválido');
     const mimeType = normalizeMimeType(req.file.mimetype);
     const storageKey = await saveFile(req.auth.organizationId, req.file.buffer, extensionFor(mimeType));
 

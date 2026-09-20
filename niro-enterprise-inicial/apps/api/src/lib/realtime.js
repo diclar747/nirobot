@@ -56,6 +56,8 @@ function attachSocketServer(httpServer) {
         return next();
       }
 
+      const origin = socket.handshake.headers.origin;
+      if (origin && !(process.env.WEB_ORIGIN || 'http://localhost:3000').split(',').map(x => x.trim()).includes(origin)) return next(new Error('unauthorized origin'));
       const cookies = cookie.parse(socket.handshake.headers.cookie || '');
       const token = cookies[ACCESS_COOKIE];
       if (!token) return next(new Error('unauthorized'));
@@ -63,23 +65,15 @@ function attachSocketServer(httpServer) {
       const payload = verifyToken(token);
       if (payload.type !== 'access') return next(new Error('unauthorized'));
 
-      // Fetch user name & role
-      let userObj = { id: payload.sub, name: 'Usuario', email: '', role: payload.role };
-      try {
-        const dbUser = await prisma.user.findUnique({
-          where: { id: payload.sub },
-          select: { id: true, name: true, email: true, role: true }
-        });
-        if (dbUser) userObj = dbUser;
-      } catch (e) {
-        // fallback
-      }
-
+      const dbUser = await prisma.user.findUnique({
+        where: { id: payload.sub },
+        select: { id: true, name: true, email: true, role: true, active: true, organizationId: true, organization: { select: { active: true } } }
+      });
+      if (!dbUser?.active || (dbUser.organizationId && !dbUser.organization?.active)
+        || dbUser.organizationId !== (payload.organizationId ?? null)) return next(new Error('unauthorized'));
       socket.data.auth = {
-        userId: payload.sub,
-        organizationId: payload.organizationId ?? null,
-        role: payload.role,
-        user: userObj
+        userId: dbUser.id, organizationId: dbUser.organizationId, role: dbUser.role,
+        user: { id: dbUser.id, name: dbUser.name, email: dbUser.email, role: dbUser.role }
       };
       next();
     } catch {
@@ -93,6 +87,7 @@ function attachSocketServer(httpServer) {
       return;
     }
 
+    require('./callMedia').attachCallMedia(socket);
     const { organizationId, userId, user } = socket.data.auth || {};
     if (organizationId) {
       socket.join(`org:${organizationId}`);

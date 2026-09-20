@@ -82,6 +82,11 @@ model Organization {
   active        Boolean               @default(true)
   planTier      String                @default("basic")
   maxUsers      Int                   @default(20)
+  trialEndsAt   DateTime?
+  paidUntil     DateTime?
+  billingExempt Boolean               @default(false)
+  billingPayments BillingPayment[]
+  platformNotices PlatformNotice[]
   createdAt     DateTime              @default(now())
   updatedAt     DateTime              @updatedAt
   users         User[]
@@ -100,6 +105,9 @@ model Organization {
   callAuditLogs CallAuditLog[]
   apiKeys       ApiKey[]
   aiUsageLogs   AiUsageLog[]
+  whatsappStatuses WhatsappStatus[]
+  statusPosts   WhatsappStatusPost[]
+  statusCampaigns WhatsappStatusCampaign[]
 }
 
 model OrganizationSettings {
@@ -178,6 +186,7 @@ model Contact {
   callCampaignRecipients CallCampaignRecipient[]
   callSurveyResponses CallSurveyResponse[]
   directCallRecords CallDirectRecord[]
+  whatsappStatuses WhatsappStatus[]
   callConsentStatus String? @default("UNKNOWN")
   callConsentAt DateTime?
   callConsentSource String?
@@ -223,6 +232,7 @@ model Message {
   content         String           @db.Text
   contentType     String           @default("text")
   deliveryStatus  String           @default("sent")
+  senderKind      String?
   waMessageId     String?
   campaignId      String?
   apiKeyId        String?
@@ -291,7 +301,9 @@ model Campaign {
 model CampaignRecipient {
   id           String                  @id @default(cuid())
   campaignId   String
-  contactId    String
+  contactId    String?
+  groupJid     String?
+  groupName    String?
   status       CampaignRecipientStatus @default(PENDING)
   waMessageId  String?
   errorMessage String?
@@ -300,9 +312,10 @@ model CampaignRecipient {
   readAt       DateTime?
   createdAt    DateTime                @default(now())
   campaign     Campaign                @relation(fields: [campaignId], references: [id], onDelete: Cascade)
-  contact      Contact                 @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  contact      Contact?                @relation(fields: [contactId], references: [id], onDelete: Cascade)
 
   @@unique([campaignId, contactId])
+  @@unique([campaignId, groupJid])
   @@index([campaignId, status])
   @@index([waMessageId])
 }
@@ -662,4 +675,152 @@ model PushSubscription {
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
+}
+
+// "Estados" (stories) que los contactos publican en WhatsApp. Duran 24 h: se guardan para
+// mostrarlos en la bandeja y se eliminan al vencer.
+model WhatsappStatus {
+  id              String       @id @default(cuid())
+  organizationId  String
+  contactId       String?
+  participantJid  String
+  phone           String?
+  displayName     String?
+  waMessageId     String
+  kind            String
+  text            String?
+  caption         String?
+  backgroundColor String?
+  mimeType        String?
+  storageKey      String?
+  fromMe          Boolean      @default(false)
+  postedAt        DateTime
+  expiresAt       DateTime
+  createdAt       DateTime     @default(now())
+  organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  contact         Contact?     @relation(fields: [contactId], references: [id], onDelete: SetNull)
+
+  @@unique([organizationId, waMessageId])
+  @@index([organizationId, expiresAt])
+}
+
+// Estados que la organización publica desde Nirobot (texto o imagen), inmediatos o programados.
+// La cola vive en esta tabla: un worker reclama de forma atómica las publicaciones vencidas.
+model WhatsappStatusPost {
+  id                 String       @id @default(cuid())
+  organizationId     String
+  createdByUserId    String?
+  contentType        String
+  textContent        String?
+  caption            String?
+  mediaStorageKey    String?
+  mimeType           String?
+  backgroundColor    String?
+  fontStyle          Int?
+  audienceType       String
+  audienceTags       String[]     @default([])
+  audienceContactIds String[]     @default([])
+  audienceCount      Int          @default(0)
+  publicationMode    String
+  scheduledAt        DateTime?
+  publishedAt        DateTime?
+  expiresAt          DateTime?
+  status             String
+  nextAttemptAt      DateTime?
+  waMessageId        String?
+  errorMessage       String?
+  retryCount         Int          @default(0)
+  createdAt          DateTime     @default(now())
+  updatedAt          DateTime     @updatedAt
+  organization       Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  campaignId         String?
+  sequence           Int?
+  attempts           WhatsappStatusAttempt[]
+  campaign           WhatsappStatusCampaign? @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId, status, createdAt])
+  @@index([status, nextAttemptAt])
+  @@index([campaignId, sequence])
+}
+
+// Campaña de estados: una serie de publicaciones que salen solas cada N horas.
+// Cada ítem es un WhatsappStatusPost programado; pausar la campaña detiene al worker.
+model WhatsappStatusCampaign {
+  id               String       @id @default(cuid())
+  organizationId   String
+  createdByUserId  String?
+  name             String
+  intervalHours    Int
+  startAt          DateTime
+  replacePrevious  Boolean      @default(false)
+  status           String       @default("active")
+  totalItems       Int
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+  organization     Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  posts            WhatsappStatusPost[]
+
+  @@index([organizationId, status])
+}
+
+model WhatsappStatusAttempt {
+  id            String             @id @default(cuid())
+  postId        String
+  attemptNumber Int
+  startedAt     DateTime           @default(now())
+  finishedAt    DateTime?
+  successful    Boolean            @default(false)
+  errorMessage  String?
+  post          WhatsappStatusPost @relation(fields: [postId], references: [id], onDelete: Cascade)
+
+  @@index([postId])
+}
+
+
+// Cobro del plan mensual (Winsap: link de pago con tarjeta / QR Bancard).
+model BillingPayment {
+  id              String       @id @default(cuid())
+  organizationId  String
+  amount          Int
+  currency        String       @default("PYG")
+  periodDays      Int          @default(30)
+  status          String       @default("pending") // pending | paid | failed | expired
+  winsapLinkId    String?
+  winsapLinkToken String?
+  paymentUrl      String?
+  winsapPaymentId String?
+  paymentMethod   String?
+  paidAt          DateTime?
+  raw             Json?
+  createdAt       DateTime     @default(now())
+  organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, createdAt])
+  @@index([status])
+}
+
+// Avisos del superadmin hacia los clientes. audience: all | trial | active | expired | org
+model PlatformNotice {
+  id             String               @id @default(cuid())
+  audience       String               @default("all")
+  organizationId String?
+  title          String
+  body           String               @db.Text
+  level          String               @default("info") // info | warning | success
+  createdByUserId String?
+  createdAt      DateTime             @default(now())
+  organization   Organization?        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  reads          PlatformNoticeRead[]
+
+  @@index([createdAt])
+}
+
+model PlatformNoticeRead {
+  id       String         @id @default(cuid())
+  noticeId String
+  userId   String
+  readAt   DateTime       @default(now())
+  notice   PlatformNotice @relation(fields: [noticeId], references: [id], onDelete: Cascade)
+
+  @@unique([noticeId, userId])
 }

@@ -140,13 +140,21 @@ async function start(flowId) {
     logger: pino({ level: 'silent' }),
     printQRInTerminal: false,
     browser: QR_BROWSER,
-    syncFullHistory: false
+    syncFullHistory: true
   };
   if (versionInfo && versionInfo.version) socketOptions.version = versionInfo.version;
 
   const sock = makeWASocket(socketOptions);
   entry.sock = sock;
   console.log(`[whatsapp-qr] flujo iniciado ${flowId}`);
+  sock.ev.on('messaging-history.set', payload => {
+    if (entry.finished) return;
+    try {
+      fs.appendFileSync(path.join(flowDir(flowId), '.niro-history.jsonl'), JSON.stringify({
+        contacts: payload?.contacts || [], messages: payload?.messages || []
+      }, (_key, value) => typeof value === 'bigint' ? value.toString() : value) + '\n');
+    } catch (error) { console.warn('[whatsapp-qr] historial pendiente:', error.message); }
+  });
   sock.ev.on('creds.update', async (creds) => {
     // logout()/end() puede emitir un último creds.update de forma asíncrona.
     // No escribir después de finalizar el flujo evita ENOENT si la carpeta

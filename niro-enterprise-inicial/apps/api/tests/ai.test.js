@@ -94,12 +94,18 @@ describe('Agentes IA — /api/org/ai', () => {
   });
 
   test('GET /agents lista los agentes propios de la organización', async () => {
-    const { agent } = await setupOrg('AGENT');
-    mockNiroAi.listAgents.mockResolvedValue([{ id: 'a1', name: 'Asesor', category: 'CHAT' }]);
+    const { org, agent } = await setupOrg('AGENT');
+    await prisma.auditLog.create({ data: { organizationId: org.id, action: 'ai_agent.created', entityType: 'AiAgent', entityId: 'a1' } });
+    // The provider list is global (shared platform key): agents of other organizations must not leak.
+    mockNiroAi.listAgents.mockResolvedValue([
+      { id: 'a1', name: 'Asesor', category: 'CHAT' },
+      { id: 'other-org-agent', name: 'Ajeno', category: 'CHAT' }
+    ]);
 
     const res = await agent.get('/api/org/ai/agents');
     expect(res.status).toBe(200);
     expect(res.body.agents).toHaveLength(1);
+    expect(res.body.agents[0].id).toBe('a1');
   });
 
   test('POST /agents crea un agente y lo audita, solo para roles de gestión', async () => {
@@ -131,7 +137,8 @@ describe('Agentes IA — /api/org/ai', () => {
   });
 
   test('POST /agents/:id/chat conversa con un agente propio', async () => {
-    const { agent, csrfToken } = await setupOrg('AGENT');
+    const { org, agent, csrfToken } = await setupOrg('AGENT');
+    await prisma.auditLog.create({ data: { organizationId: org.id, action: 'ai_agent.created', entityType: 'AiAgent', entityId: 'agent-1' } });
     mockNiroAi.chatWithAgent.mockResolvedValue({ content: 'Respuesta del agente', cost: 0.002 });
 
     const res = await agent
@@ -142,6 +149,16 @@ describe('Agentes IA — /api/org/ai', () => {
     expect(res.status).toBe(200);
     expect(res.body.reply).toBe('Respuesta del agente');
     expect(mockNiroAi.chatWithAgent).toHaveBeenCalledWith('agent-1', [{ role: 'user', content: 'hola' }]);
+  });
+
+  test('POST /agents/:id/chat rechaza un agente de otra organización', async () => {
+    const { agent, csrfToken } = await setupOrg('AGENT');
+    const res = await agent
+      .post('/api/org/ai/agents/agent-de-otra-org/chat')
+      .set('X-CSRF-Token', csrfToken)
+      .send({ messages: [{ role: 'user', content: 'hola' }] });
+    expect(res.status).toBe(404);
+    expect(mockNiroAi.chatWithAgent).not.toHaveBeenCalledWith('agent-de-otra-org', expect.anything());
   });
 
   test('POST /vision/extract exige un archivo', async () => {

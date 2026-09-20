@@ -1,0 +1,36 @@
+.contacts-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 4px 0 16px; }
+.contacts-toolbar .contacts-search { flex: 1 1 280px; min-width: 220px; }
+.contacts-toolbar select.input { width: auto; min-width: 170px; }
+.contacts-check { display: inline-flex; align-items: center; gap: 6px; color: var(--text-muted); font-size: 13px; cursor: pointer; }
+.contacts-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 14px; transition: opacity .15s; }
+.contacts-grid.is-loading { opacity: .55; }
+.contact-card { display: flex; flex-direction: column; gap: 12px; padding: 16px; border: 1px solid var(--border-color); border-radius: 16px; background: var(--bg-surface); transition: border-color .15s, transform .15s, box-shadow .15s; }
+.contact-card:hover { border-color: var(--primary-glow); transform: translateY(-2px); box-shadow: 0 10px 28px rgba(0,0,0,.12); }
+.contact-card-top { display: flex; align-items: center; gap: 12px; }
+.contact-avatar { flex-shrink: 0; border-radius: 50%; object-fit: cover; }
+.contact-avatar.fallback { display: inline-grid; place-items: center; color: #fff; font-weight: 800; }
+.contact-card-id { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 2px; }
+.contact-card-id strong { overflow: hidden; color: var(--text-main); font-size: 15px; text-overflow: ellipsis; white-space: nowrap; }
+.contact-card-id span { color: var(--text-muted); font-size: 13px; }
+.contact-card-id small { overflow: hidden; color: var(--text-dim); font-size: 11.5px; text-overflow: ellipsis; white-space: nowrap; }
+.contact-menu-wrap { position: relative; }
+.contact-menu-btn { width: 32px; height: 32px; border: 0; border-radius: 50%; background: transparent; color: var(--text-muted); cursor: pointer; font-size: 20px; line-height: 1; }
+.contact-menu-btn:hover { background: var(--bg-surface-hover); }
+.contact-menu { position: absolute; z-index: 40; top: 34px; right: 0; width: 210px; padding: 6px; border: 1px solid var(--border-color); border-radius: 12px; background: var(--bg-surface); box-shadow: 0 14px 40px rgba(0,0,0,.28); }
+.contact-menu button { display: flex; align-items: center; gap: 8px; width: 100%; padding: 8px 10px; border: 0; border-radius: 8px; background: transparent; color: var(--text-main); cursor: pointer; font-size: 13px; text-align: left; }
+.contact-menu button:hover { background: var(--bg-surface-hover); } .contact-menu button.danger { color: var(--danger); }
+.contact-menu button i { width: 9px; height: 9px; border-radius: 50%; }
+.contact-menu-label { padding: 6px 10px 2px; color: var(--text-dim); font-size: 10.5px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
+.contact-menu-sep { height: 1px; margin: 5px 4px; background: var(--border-color); }
+.contact-card-tags { display: flex; flex-wrap: wrap; gap: 6px; min-height: 26px; }
+.contact-chip { display: inline-flex; align-items: center; gap: 4px; padding: 3px 9px; border: 1px solid var(--border-color); border-radius: 999px; background: var(--bg-surface-2); color: var(--text-muted); font-size: 11.5px; font-weight: 700; }
+.contact-chip.crm { background: transparent; } .contact-chip.more { opacity: .7; }
+.contact-chip button { border: 0; background: transparent; color: inherit; cursor: pointer; font-size: 14px; line-height: 1; }
+.contact-chip.suggest { cursor: pointer; }
+.contact-card-actions { display: flex; gap: 8px; margin-top: auto; } .contact-card-actions .btn { flex: 1; justify-content: center; }
+.contacts-empty { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 60px 16px; border: 1px dashed var(--border-color); border-radius: 16px; color: var(--text-dim); text-align: center; }
+.contacts-empty strong { color: var(--text-main); font-size: 16px; }
+.contacts-pager { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 6px; margin: 20px 0 8px; } .contacts-pager span { margin-left: 10px; color: var(--text-dim); font-size: 12.5px; }
+.contact-edit-head { display: flex; align-items: center; gap: 12px; color: var(--text-dim); font-size: 12.5px; }
+.contact-tag-edit { display: flex; flex-wrap: wrap; gap: 6px; }
+.contacts-toast { position: fixed; z-index: 90; bottom: 24px; left: 50%; transform: translateX(-50%); max-width: 90vw; padding: 11px 18px; border-radius: 999px; background: #0f172a; color: #fff; font-size: 13.5px; box-shadow: 0 10px 30px rgba(0,0,0,.35); }

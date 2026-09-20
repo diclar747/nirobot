@@ -5,6 +5,8 @@ const { audit } = require('../lib/audit');
 const { requireAuth, requireRole, requireCsrf } = require('../middleware/auth');
 const { createOrganizationSchema, updateOrganizationSchema } = require('../validation/superadmin.validation');
 const { HttpError } = require('../lib/errors');
+const whatsapp = require('../lib/whatsapp');
+const billing = require('../lib/billing');
 
 const router = express.Router();
 
@@ -130,6 +132,15 @@ router.patch('/organizations/:id', requireCsrf, async (req, res, next) => {
     let action = 'organization.updated';
     if (typeof data.active === 'boolean' && data.active !== existing.active) {
       action = data.active ? 'organization.activated' : 'organization.suspended';
+      if (!data.active) {
+        // A suspended organization keeps no live transport: stop its WhatsApp socket (bot, sends,
+        // calls) and pause running campaigns. Credentials are kept so reactivation is seamless.
+        await whatsapp.suspendSession(existing.id).catch((err) => console.error('[superadmin] suspend whatsapp', err));
+        await prisma.campaign.updateMany({ where: { organizationId: existing.id, status: 'SENDING' }, data: { status: 'PAUSED' } });
+        await prisma.callCampaign.updateMany({ where: { organizationId: existing.id, status: 'RUNNING' }, data: { status: 'PAUSED' } });
+      } else if (whatsapp.hasStoredSession(existing.id)) {
+        whatsapp.connect(existing.id).catch((err) => console.error('[superadmin] reconnect whatsapp', err));
+      }
     }
 
     await audit(prisma, {
@@ -145,6 +156,108 @@ router.patch('/organizations/:id', requireCsrf, async (req, res, next) => {
   } catch (err) {
     next(err);
   }
+});
+
+
+// ---------- Facturación / clientes ----------
+router.get('/billing/overview', async (_req, res, next) => {
+  try {
+    const orgs = await prisma.organization.findMany({
+      orderBy: { createdAt: 'desc' },
+      include: {
+        _count: { select: { users: true, contacts: true } },
+        users: { where: { role: 'OWNER' }, select: { name: true, email: true }, take: 1 },
+        billingPayments: { where: { status: { in: ['paid', 'pending'] } }, orderBy: { createdAt: 'desc' }, take: 5 },
+        callAccounts: { select: { phoneNumber: true }, take: 1 }
+      }
+    });
+    const now = new Date();
+    const customers = orgs.filter((o) => o.active || o.billingPayments.length || o.callAccounts.length).map((o) => {
+      const access = billing.accessFor(o, now);
+      const lastPaid = o.billingPayments.find((p) => p.status === 'paid');
+      const hasPending = o.billingPayments.some((p) => p.status === 'pending');
+      let bucket = access.state; // trial | active | expired | exempt
+      return {
+        id: o.id, name: o.name, active: o.active, createdAt: o.createdAt,
+        phone: o.callAccounts[0]?.phoneNumber || null,
+        owner: o.users[0] || null,
+        users: o._count.users, contacts: o._count.contacts,
+        state: bucket, hasPending,
+        trialEndsAt: access.trialEndsAt, paidUntil: access.paidUntil,
+        lastPayment: lastPaid ? { amount: lastPaid.amount, paidAt: lastPaid.paidAt } : null
+      };
+    });
+    const paidAgg = await prisma.billingPayment.aggregate({ where: { status: 'paid' }, _sum: { amount: true }, _count: true });
+    const monthAgg = await prisma.billingPayment.aggregate({ where: { status: 'paid', paidAt: { gte: new Date(now.getFullYear(), now.getMonth(), 1) } }, _sum: { amount: true } });
+    const count = (state) => customers.filter((c) => c.state === state).length;
+    res.json({
+      summary: { total: customers.length, active: count('active'), trial: count('trial'), expired: count('expired'), exempt: count('exempt'), pending: customers.filter((c) => c.hasPending && c.state !== 'active').length, revenueTotal: paidAgg._sum.amount || 0, revenueMonth: monthAgg._sum.amount || 0, payments: paidAgg._count, priceGs: billing.PLAN_PRICE_GS },
+      customers
+    });
+  } catch (err) { next(err); }
+});
+
+router.get('/billing/organizations/:id/users', async (req, res, next) => {
+  try {
+    const users = await prisma.user.findMany({ where: { organizationId: req.params.id }, select: { id: true, name: true, email: true, role: true, active: true, createdAt: true }, orderBy: { createdAt: 'asc' } });
+    const payments = await prisma.billingPayment.findMany({ where: { organizationId: req.params.id }, orderBy: { createdAt: 'desc' }, take: 20 });
+    res.json({ users, payments: payments.map((p) => ({ id: p.id, amount: p.amount, status: p.status, paymentMethod: p.paymentMethod, paidAt: p.paidAt, createdAt: p.createdAt })) });
+  } catch (err) { next(err); }
+});
+
+router.post('/billing/organizations/:id/grant', requireCsrf, async (req, res, next) => {
+  try {
+    const org = await prisma.organization.findUnique({ where: { id: req.params.id } });
+    if (!org) throw new HttpError(404, 'Organización no encontrada');
+    const days = Math.min(365, Math.max(1, Number(req.body?.days) || 30));
+    const base = org.paidUntil && new Date(org.paidUntil) > new Date() ? new Date(org.paidUntil) : new Date();
+    const updated = await prisma.organization.update({ where: { id: org.id }, data: { paidUntil: new Date(base.getTime() + days * 24 * 3600 * 1000) } });
+    await audit(prisma, { organizationId: org.id, actorUserId: req.auth.userId, action: 'billing.granted', entityType: 'Organization', entityId: org.id, metadata: { days } });
+    res.json({ paidUntil: updated.paidUntil });
+  } catch (err) { next(err); }
+});
+
+router.post('/billing/organizations/:id/trial', requireCsrf, async (req, res, next) => {
+  try {
+    const hours = Math.min(24 * 30, Math.max(1, Number(req.body?.hours) || 24));
+    const updated = await prisma.organization.update({ where: { id: req.params.id }, data: { trialEndsAt: new Date(Date.now() + hours * 3600 * 1000) } });
+    await audit(prisma, { organizationId: updated.id, actorUserId: req.auth.userId, action: 'billing.trial_extended', entityType: 'Organization', entityId: updated.id, metadata: { hours } });
+    res.json({ trialEndsAt: updated.trialEndsAt });
+  } catch (err) { next(err); }
+});
+
+router.post('/billing/organizations/:id/exempt', requireCsrf, async (req, res, next) => {
+  try {
+    const updated = await prisma.organization.update({ where: { id: req.params.id }, data: { billingExempt: Boolean(req.body?.exempt) } });
+    await audit(prisma, { organizationId: updated.id, actorUserId: req.auth.userId, action: updated.billingExempt ? 'billing.exempted' : 'billing.exempt_removed', entityType: 'Organization', entityId: updated.id });
+    res.json({ billingExempt: updated.billingExempt });
+  } catch (err) { next(err); }
+});
+
+router.get('/notices', async (_req, res, next) => {
+  try {
+    const notices = await prisma.platformNotice.findMany({ orderBy: { createdAt: 'desc' }, take: 50, include: { organization: { select: { name: true } }, _count: { select: { reads: true } } } });
+    res.json({ notices: notices.map((n) => ({ id: n.id, audience: n.audience, organizationName: n.organization?.name || null, title: n.title, body: n.body, level: n.level, createdAt: n.createdAt, reads: n._count.reads })) });
+  } catch (err) { next(err); }
+});
+
+router.post('/notices', requireCsrf, async (req, res, next) => {
+  try {
+    const title = String(req.body?.title || '').trim().slice(0, 120);
+    const body = String(req.body?.body || '').trim().slice(0, 2000);
+    const audience = ['all', 'trial', 'active', 'expired', 'org'].includes(req.body?.audience) ? req.body.audience : 'all';
+    const level = ['info', 'warning', 'success'].includes(req.body?.level) ? req.body.level : 'info';
+    const organizationId = audience === 'org' ? String(req.body?.organizationId || '') : null;
+    if (!title || !body) throw new HttpError(400, 'Escribí el título y el mensaje del aviso');
+    if (audience === 'org' && !(await prisma.organization.findUnique({ where: { id: organizationId }, select: { id: true } }))) throw new HttpError(404, 'Cliente no encontrado');
+    const notice = await prisma.platformNotice.create({ data: { title, body, audience, level, organizationId, createdByUserId: req.auth.userId } });
+    try { require('../lib/realtime').emitToAll?.('notice:new', { id: notice.id }); } catch { /* opcional */ }
+    res.status(201).json({ notice });
+  } catch (err) { next(err); }
+});
+
+router.delete('/notices/:id', requireCsrf, async (req, res, next) => {
+  try { await prisma.platformNotice.delete({ where: { id: req.params.id } }); res.json({ ok: true }); } catch (err) { next(err); }
 });
 
 module.exports = router;

@@ -9,6 +9,7 @@ const { extensionFor, safeDownloadName } = require('../lib/attachments');
 const { createCallCampaignSchema } = require('../validation/call.validation');
 const whatsapp = require('../lib/whatsapp');
 const calls = require('../lib/callCampaigns');
+const { isAcceptableAudio, normalizeCallAudio } = require('../lib/callAudioConvert');
 const tts = require('../lib/tts');
 
 const router = express.Router();
@@ -16,7 +17,7 @@ const audioUpload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 25 * 1024 * 1024 },
   fileFilter: (_req, file, cb) => {
-    if (!['audio/mpeg', 'audio/wav', 'audio/x-wav'].includes(file.mimetype)) return cb(new Error('Solo se admiten audios MP3 o WAV'));
+    if (!isAcceptableAudio(file)) return cb(new HttpError(400, 'Formato no soportado. Subí un audio MP3, WAV, M4A, OGG, OPUS, AAC o AMR'));
     cb(null, true);
   }
 });
@@ -129,7 +130,7 @@ router.get('/direct/:id', async (req, res, next) => {
 
 router.post('/direct/:id/hangup', requireCsrf, async (req, res, next) => {
   try {
-    const call = calls.endDirectCall(req.auth.organizationId, req.params.id);
+    const call = await calls.endDirectCall(req.auth.organizationId, req.params.id);
     if (!call) throw new HttpError(404, 'Llamada no encontrada o ya expiró');
     await writeCallAudit({ organizationId: req.auth.organizationId, userId: req.auth.userId, action: 'call.direct.hangup', entityType: 'DirectCall', entityId: call.id, details: { callId: call.callId } });
     res.json({ call });
@@ -150,15 +151,21 @@ router.get('/audios/ai/status', async (_req, res) => {
 router.post('/audios', requireRole('OWNER', 'ADMIN', 'SUPERVISOR'), requireCsrf, audioUpload.single('file'), async (req, res, next) => {
   try {
     if (!req.file) throw new HttpError(400, 'Falta el archivo de audio');
-    const storageKey = await saveFile(req.auth.organizationId, req.file.buffer, extensionFor(req.file.mimetype));
+    let normalized;
+    try {
+      normalized = await normalizeCallAudio(req.file);
+    } catch (convertError) {
+      throw new HttpError(422, convertError.message || 'No se pudo procesar el audio');
+    }
+    const storageKey = await saveFile(req.auth.organizationId, normalized.buffer, extensionFor(normalized.mimeType));
     const audio = await prisma.callAudio.create({
       data: {
         organizationId: req.auth.organizationId,
         name: String(req.body?.name || req.file.originalname || 'Audio de llamada').slice(0, 120),
         description: req.body?.description ? String(req.body.description).slice(0, 500) : null,
         storageKey,
-        mimeType: req.file.mimetype,
-        size: req.file.size,
+        mimeType: normalized.mimeType,
+        size: normalized.buffer.length,
         processingStatus: 'READY',
         source: 'UPLOAD',
         createdByUserId: req.auth.userId

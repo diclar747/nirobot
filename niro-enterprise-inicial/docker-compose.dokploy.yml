@@ -1,0 +1,80 @@
+# Variante de docker-compose.yml para Dokploy (tipo "Compose").
+# No publica puertos en el host (el 3000 lo usa el panel de Dokploy): el dominio se asigna en
+# Dokploy → Domains apuntando al servicio `web`, puerto 80, y Traefik hace el HTTPS.
+# `web` ya proxea /api y /socket.io hacia `api` (ver apps/web/nginx.conf).
+# En Dokploy: Compose Path = ./niro-enterprise-inicial/docker-compose.dokploy.yml
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-niro}
+      POSTGRES_USER: ${POSTGRES_USER:-niro}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    volumes:
+      - niro_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-niro} -d ${POSTGRES_DB:-niro}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    networks: [niro]
+
+  api:
+    build: ./apps/api
+    restart: unless-stopped
+    environment:
+      PORT: 4000
+      TRUST_CLOUDFLARE: ${TRUST_CLOUDFLARE:-true}
+      TRUST_PROXY: ${TRUST_PROXY:-loopback,linklocal,uniquelocal}
+      DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL in .env}
+      JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in .env}
+      WEB_ORIGIN: ${WEB_ORIGIN:-http://localhost:3000}
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
+      SEED_SUPERADMIN_EMAIL: ${SEED_SUPERADMIN_EMAIL:-}
+      SEED_SUPERADMIN_PASSWORD: ${SEED_SUPERADMIN_PASSWORD:-}
+      STORAGE_ROOT: /app/storage/uploads
+      WHATSAPP_SESSION_ROOT: /app/storage/whatsapp-sessions
+      # Mismo volumen que las sesiones: el QR se mueve con rename() y entre volumes da EXDEV.
+      WHATSAPP_QR_FLOW_ROOT: /app/storage/whatsapp-sessions/.qr-flows
+      NIRO_AI_BASE_URL: ${NIRO_AI_BASE_URL:-https://niro.cnid.com.py}
+      NIRO_AI_API_KEY: ${NIRO_AI_API_KEY:-}
+      VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY:-}
+      VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY:-}
+      VAPID_SUBJECT: ${VAPID_SUBJECT:-}
+      WHATSAPP_CALL_PROVIDER: ${WHATSAPP_CALL_PROVIDER:-unavailable}
+      # Cobro del plan mensual (Winsap: tarjeta / QR Bancard)
+      WINSAP_API_KEY: ${WINSAP_API_KEY:-}
+      WINSAP_BASE_URL: ${WINSAP_BASE_URL:-https://winsap.com.py}
+      WINSAP_WEBHOOK_SECRET: ${WINSAP_WEBHOOK_SECRET:-}
+      PLAN_PRICE_GS: ${PLAN_PRICE_GS:-49000}
+      PUBLIC_APP_URL: ${PUBLIC_APP_URL:-}
+    volumes:
+      - niro_uploads:/app/storage/uploads
+      # Credenciales de sesión de WhatsApp (Baileys). Sin este volumen, cada `docker compose up
+      # --build` las borra y hay que volver a escanear el QR de todas las organizaciones.
+      - niro_whatsapp_sessions:/app/storage/whatsapp-sessions
+    depends_on:
+      db:
+        condition: service_healthy
+    expose:
+      - "4000"
+    networks: [niro]
+
+  web:
+    build: ./apps/web
+    restart: unless-stopped
+    depends_on: [api]
+    expose:
+      - "80"
+    networks: [niro]
+
+volumes:
+  niro_pgdata:
+  niro_uploads:
+  niro_whatsapp_sessions:
+
+networks:
+  niro:
+    driver: bridge

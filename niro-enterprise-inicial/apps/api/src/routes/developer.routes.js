@@ -2,7 +2,7 @@ const express = require('express');
 const { prisma } = require('../lib/prisma');
 const { audit } = require('../lib/audit');
 const { HttpError } = require('../lib/errors');
-const { requireAuth, requireCsrf } = require('../middleware/auth');
+const { requireAuth, requireRole, requireCsrf } = require('../middleware/auth');
 const { apiKeyNameSchema } = require('../validation/api.validation');
 const { createSecret, sanitizeApiKey } = require('../lib/apiKeys');
 
@@ -33,7 +33,7 @@ router.get('/api-keys', async (req, res, next) => {
   }
 });
 
-router.post('/api-keys', requireCsrf, async (req, res, next) => {
+router.post('/api-keys', requireRole('OWNER', 'ADMIN'), requireCsrf, async (req, res, next) => {
   try {
     const data = apiKeyNameSchema.parse(req.body);
     const generated = createSecret();

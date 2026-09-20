@@ -1,0 +1,10 @@
+# Override local del servidor: engancha `web` a la red de Traefik (ruta en /etc/dokploy/traefik/dynamic/nirobot.yml)
+services:
+  web:
+    networks:
+      niro: {}
+      dokploy-network:
+        aliases: [nirobot-web]
+networks:
+  dokploy-network:
+    external: true

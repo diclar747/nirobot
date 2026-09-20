@@ -29,6 +29,12 @@ router.post('/sync-contacts', requireCsrf, requireRole('OWNER', 'ADMIN', 'SUPERV
   }
 });
 
+router.post('/sync-avatars', requireCsrf, requireRole('OWNER', 'ADMIN', 'SUPERVISOR'), (req, res) => {
+  // Runs in the background (it is throttled on purpose); answer immediately.
+  whatsapp.backfillAvatars(req.auth.organizationId).catch(() => {});
+  res.status(202).json({ started: true });
+});
+
 router.post('/connect', requireCsrf, requireRole('OWNER', 'ADMIN'), async (req, res, next) => {
   try {
     const status = await whatsapp.connect(req.auth.organizationId, { fresh: true });

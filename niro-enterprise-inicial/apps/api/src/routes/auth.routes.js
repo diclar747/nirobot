@@ -356,10 +356,12 @@ router.post('/whatsapp/complete', qrLoginLimiter, async (req, res, next) => {
           data: {
             name: companyName,
             active: true,
-            slug: `niro-${phoneNumber}-${data.flowId.slice(-6).toLowerCase()}`
+            slug: `niro-${phoneNumber}-${data.flowId.slice(-6).toLowerCase()}`,
+            // 24 h de prueba desde que el teléfono se conecta (un número que vuelve reutiliza su organización: no renueva la prueba).
+            trialEndsAt: new Date(Date.now() + 24 * 3600 * 1000)
           }
         });
-        await tx.user.create({
+        const createdOwner = await tx.user.create({
           data: {
             organizationId,
             name: adminName,
@@ -370,6 +372,21 @@ router.post('/whatsapp/complete', qrLoginLimiter, async (req, res, next) => {
             mustChangePassword: false
           }
         });
+        // The WhatsApp number is how a later QR login recognises this organization. Create the
+        // account in the same transaction so a failure afterwards can never leave an active
+        // organization that no future login can match (which spawned duplicates).
+        if (!(await tx.callAccount.findFirst({ where: { organizationId } }))) {
+          await tx.callAccount.create({
+            data: {
+              organizationId,
+              name: 'WhatsApp principal',
+              phoneNumber,
+              status: 'CONNECTED',
+              sessionReference: whatsapp.getSessionReference(organizationId),
+              createdByUserId: createdOwner.id
+            }
+          });
+        }
       });
       owner = await prisma.user.findFirst({
         where: { organizationId, role: 'OWNER', active: true },
@@ -381,7 +398,9 @@ router.post('/whatsapp/complete', qrLoginLimiter, async (req, res, next) => {
 
     const account = await prisma.callAccount.findFirst({ where: { organizationId }, orderBy: { createdAt: 'asc' } });
     const whatsappStatus = whatsapp.getStatus(organizationId);
-    const shouldAttachQrSession = flow.pendingOrganization || whatsappStatus.status === 'disconnected';
+    // Only a healthy live session keeps priority. If it is disconnected, reconnecting or revoked, the fresh
+    // QR pairing (valid credentials) must replace it: discarding it left the number with no session at all.
+    const shouldAttachQrSession = flow.pendingOrganization || whatsappStatus.status !== 'connected';
     console.log('[auth-qr] estado de la sesión principal', {
       flowId: data.flowId,
       status: whatsappStatus.status,
@@ -390,7 +409,7 @@ router.post('/whatsapp/complete', qrLoginLimiter, async (req, res, next) => {
 
     if (shouldAttachQrSession) {
       console.log('[auth-qr] tomando sesión QR', { flowId: data.flowId });
-      await whatsappQr.takeSession(data.flowId, whatsapp.getSessionReference(organizationId));
+      await whatsapp.adoptSession(organizationId, (dir) => whatsappQr.takeSession(data.flowId, dir));
       await whatsapp.connect(organizationId);
     } else {
       console.log('[auth-qr] cerrando flujo temporal', { flowId: data.flowId });
@@ -506,6 +525,14 @@ router.post('/refresh', async (req, res, next) => {
     if (!stored || stored.expiresAt < new Date()) {
       clearAuthCookies(res);
       throw new HttpError(401, 'Sesión expirada, iniciá sesión nuevamente');
+    }
+
+    // Two tabs (or the HTTP client and the socket) can legitimately present the same
+    // cookie within moments of each other: the loser of the race must not be treated as
+    // token theft, otherwise every session of the user is revoked.
+    const REFRESH_REUSE_GRACE_MS = 15 * 1000;
+    if (stored.revokedAt && stored.replacedByHash && Date.now() - stored.revokedAt.getTime() < REFRESH_REUSE_GRACE_MS) {
+      throw new HttpError(409, 'La sesión se está renovando, reintentá');
     }
 
     if (stored.revokedAt) {

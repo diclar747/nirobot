@@ -119,7 +119,9 @@ function mockCall(phone, options = {}) {
     callId,
     phone,
     on: (...args) => { events.on(...args); return call; },
-    end: () => finish('hangup'),
+    end: (reason = 'hangup') => finish(reason),
+    pushAudio: (pcm) => events.emit('audio', pcm),
+    off: (...args) => { events.off(...args); return call; },
     mute: () => {},
     waitForEnd: () => endedPromise
   };
@@ -131,7 +133,7 @@ function mockCall(phone, options = {}) {
       if (ended) return;
       events.emit('connected');
       events.emit('audio-started');
-      timer = setTimeout(() => finish('hangup'), durationMs);
+      timer = setTimeout(() => finish(options.audioSource === 'live' ? 'duration_limit' : 'audio_complete'), durationMs);
     }, 40);
   }, 20);
 
@@ -155,8 +157,16 @@ async function getClient(account) {
   if (clients.has(key)) return clients.get(key);
   const VoipClient = await loadVoipClient();
   const client = new VoipClient({ authDir: account.sessionReference });
-  await client.connect();
   clients.set(key, client);
+  let timer;
+  try {
+    await Promise.race([client.connect(), new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error('Tiempo agotado al conectar el proveedor de llamadas')), 30000);
+    })]);
+  } catch (error) {
+    await closeAccount(key);
+    throw error;
+  } finally { clearTimeout(timer); }
   return client;
 }
 
@@ -188,38 +198,30 @@ async function startCall(account, phone, options = {}) {
     const client = await getClient(account);
     const call = await client.call(phone, {
       audioSource: options.audioSource,
-      durationMs: options.durationMs
+      durationMs: 0
     });
 
-    // Keep the chat socket paused for the complete provider call. The
-    // provider's `ended` event and waitForEnd promise cover both remote
-    // hangups and local/provider failures.
-    let statePoll = null;
-    const callStartedAt = Date.now();
-    const stopStatePoll = () => {
-      if (statePoll) clearInterval(statePoll);
-      statePoll = null;
+    let answerTimer;
+    let durationTimer;
+    let connected = false;
+    const onConnected = () => {
+      if (connected) return;
+      connected = true;
+      clearTimeout(answerTimer);
+      durationTimer = setTimeout(() => call.end('duration_limit'), Math.max(1000, options.durationMs || 30 * 60 * 1000));
     };
-    statePoll = setInterval(() => {
-      // ActiveCall starts in Idle before signaling changes it to Calling. Only
-      // use the fallback after a short grace period to avoid ending a call
-      // before the remote device starts ringing.
-      if (Date.now() - callStartedAt < 1500) return;
-      const state = Number(call.state);
-      if (![0, 13].includes(state)) return;
-      // baileys-caller exposes _forceEnd as its internal finalizer. It is the
-      // reliable bridge for remote hangups when the provider misses `ended`.
-      if (typeof call._forceEnd === 'function') call._forceEnd('ended');
-    }, 500);
-    statePoll.unref?.();
-    Promise.resolve(call.waitForEnd()).then((reason) => {
-      stopStatePoll();
-      console.log(`[calls] llamada finalizada (${reason || 'sin motivo'}) para ${organizationId || 'sin organización'}`);
-      return restoreChatSocket();
-    }, (error) => {
-      stopStatePoll();
-      return restoreChatSocket().then(() => { throw error; });
-    }).catch(() => {});
+    call.on('connected', onConnected);
+    call.on('provider-error', error => console.warn('[calls] audio:', error.message));
+    answerTimer = setTimeout(() => call.end('timeout'), Math.max(1000, options.answerTimeoutMs || 45000));
+    if (Number(call.state) === 6) onConnected();
+    const finished = call.waitForEnd().finally(async () => {
+      clearTimeout(answerTimer);
+      clearTimeout(durationTimer);
+      await restoreChatSocket();
+    });
+    call.waitForEnd = () => finished;
+    // Consumers wait for transport cleanup too, before releasing account locks.
+    finished.catch(error => console.warn('[calls] cierre:', error.message));
     return call;
   } catch (error) {
     await restoreChatSocket();

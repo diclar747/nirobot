@@ -1,0 +1,26 @@
+.media-video { width: 300px; max-width: 100%; overflow: hidden; border-radius: 10px; margin-top: 4px; --plyr-color-main: #10b981; --plyr-video-control-background-hover: #10b981; --plyr-control-radius: 8px; }
+.media-video .plyr { border-radius: 10px; }
+.media-video video { display: block; max-height: 360px; }
+
+.media-audio { display: flex; align-items: center; gap: 10px; width: 270px; max-width: 100%; padding: 4px 2px; }
+.media-audio-play { display: grid; width: 36px; height: 36px; flex-shrink: 0; place-items: center; border: 0; border-radius: 50%; background: #10b981; color: #fff; cursor: pointer; font-size: 12px; padding-left: 2px; transition: transform 0.12s ease, background 0.12s ease; }
+.media-audio-play:hover { background: #059669; transform: scale(1.06); }
+.media-audio-body { min-width: 0; flex: 1; }
+.media-audio-wave { width: 100%; min-height: 30px; cursor: pointer; }
+.media-audio-time { margin-top: 1px; font-size: 10.5px; opacity: 0.7; font-variant-numeric: tabular-nums; }
+.media-audio-rate { flex-shrink: 0; min-width: 34px; padding: 3px 6px; border: 0; border-radius: 999px; background: rgba(148, 163, 184, 0.22); color: inherit; cursor: pointer; font-size: 10.5px; font-weight: 700; }
+.media-audio-fallback { width: 100%; min-width: 220px; margin-top: 4px; }
+
+/* Sticker */
+.crm-msg-sticker { display: block; width: 150px; max-width: 100%; height: auto; background: transparent; }
+.chat-msg-ticks { margin-left: 4px; font-weight: 800; letter-spacing: -2px; }
+.chat-msg-ticks.read { color: #38bdf8; }
+.chat-msg-ticks.delivered, .chat-msg-ticks.sent { color: #94a3b8; }
+.chat-msg-ticks.pending { color: #f59e0b; letter-spacing: 0; }
+.chat-msg-ticks.failed { color: #ef4444; letter-spacing: 0; }
+.chat-author { display: inline-flex; align-items: center; gap: 4px; padding: 1px 7px; border-radius: 999px; background: rgba(148, 163, 184, 0.16); font-size: 10.5px; font-weight: 700; }
+.chat-author.agent { background: rgba(16, 185, 129, 0.16); color: #059669; }
+.chat-author.bot { background: rgba(139, 92, 246, 0.16); color: #7c3aed; }
+.chat-author.ai { background: rgba(236, 72, 153, 0.16); color: #db2777; }
+.chat-author.phone { background: rgba(14, 165, 233, 0.16); color: #0284c7; }
+.chat-author.campaign, .chat-author.api { background: rgba(245, 158, 11, 0.16); color: #b45309; }

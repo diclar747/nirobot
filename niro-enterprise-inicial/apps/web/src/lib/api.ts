@@ -19,14 +19,22 @@ export class ApiError extends Error {
 
 const MUTATING_METHODS = new Set(['POST', 'PATCH', 'PUT', 'DELETE']);
 
-async function refreshAccessSession(): Promise<boolean> {
+export async function refreshAccessSession(): Promise<boolean> {
   if (!refreshPromise) {
-    refreshPromise = fetch('/api/auth/refresh', {
-      method: 'POST',
-      credentials: 'include'
-    }).then((response) => response.ok).catch(() => false).finally(() => {
-      refreshPromise = null;
-    });
+    const attempt = () => fetch('/api/auth/refresh', { method: 'POST', credentials: 'include' });
+    refreshPromise = attempt()
+      .then(async (response) => {
+        // 409: another tab is renewing the shared cookie right now. Retry once with the new cookie.
+        if (response.status === 409) {
+          await new Promise((resolve) => setTimeout(resolve, 600));
+          return (await attempt()).ok;
+        }
+        return response.ok;
+      })
+      .catch(() => false)
+      .finally(() => {
+        refreshPromise = null;
+      });
   }
   return refreshPromise;
 }
@@ -59,6 +67,8 @@ export async function api<T = unknown>(path: string, options: RequestInit = {}, 
 
   const isJson = res.headers.get('content-type')?.includes('application/json');
   const body = isJson ? await res.json().catch(() => null) : null;
+
+  if (res.status === 402 && body?.code === 'SUBSCRIPTION_REQUIRED') window.dispatchEvent(new Event('niro:subscription-required'));
 
   if (!res.ok) {
     const message = (body && (body.error as string)) || `Error ${res.status}`;

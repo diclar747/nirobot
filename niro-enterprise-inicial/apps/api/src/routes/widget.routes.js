@@ -153,7 +153,7 @@ router.post('/:slug/messages', async (req, res, next) => {
       channel: 'web'
     });
 
-    if (!conversation.departmentId) {
+    if (!conversation.departmentId && !(await require('../lib/billing').isBlocked(conversation.organizationId).catch(() => false))) {
       const settings = await prisma.organizationSettings.findUnique({
         where: { organizationId: conversation.organizationId },
         include: { organization: { select: { name: true } } }
@@ -168,7 +168,7 @@ router.post('/:slug/messages', async (req, res, next) => {
         if (flowResult.useAi && aiBot.shouldReply(routed, settings)) {
           const aiSettings = flowResult.aiPrompt ? { ...settings, systemPrompt: `${settings.systemPrompt || ''} ${flowResult.aiPrompt}`.trim() } : settings;
           const reply = await aiBot.generateReply(conversation.id, aiSettings, settings.organization?.name || null);
-          if (reply && reply.content) await sendBotMessage(conversation.id, conversation.organizationId, reply.content);
+          if (reply && reply.content) await sendBotMessage(conversation.id, conversation.organizationId, reply.content, 'ai');
         }
         emitToOrg(conversation.organizationId, 'conversation:updated', { conversation: sanitizeConversation(routed) });
       } else {
@@ -183,7 +183,7 @@ router.post('/:slug/messages', async (req, res, next) => {
         emitToOrg(conversation.organizationId, 'conversation:updated', { conversation: sanitizeConversation(routed) });
         } else if (aiBot.shouldReply(updated, settings)) {
         const reply = await aiBot.generateReply(conversation.id, settings, settings.organization?.name || null);
-        if (reply && reply.content) await sendBotMessage(conversation.id, conversation.organizationId, reply.content);
+        if (reply && reply.content) await sendBotMessage(conversation.id, conversation.organizationId, reply.content, 'ai');
         }
       }
     }

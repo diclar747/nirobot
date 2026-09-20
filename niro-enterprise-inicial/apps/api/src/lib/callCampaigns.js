@@ -12,7 +12,9 @@ const scheduledTimers = new Map();
 const accountLocks = new Set();
 const activeCalls = new Map();
 const directCalls = new Map();
+let stopping = false;
 
+const ANSWERED_END_REASONS = new Set(['audio_complete', 'remote_end', 'hangup', 'ended']);
 const STATUS_TERMINAL = new Set(['COMPLETED', 'NO_ANSWER', 'FAILED', 'CANCELLED']);
 const STATUS_ACTIVE = new Set(['STARTING', 'RINGING', 'CONNECTED', 'PLAYING']);
 
@@ -309,7 +311,8 @@ async function runAttempt(campaign, recipient) {
     call = await callProvider.startCall(campaign.account, recipient.phoneNumber, {
       organizationId: campaign.organizationId,
       audioSource: audioPath,
-      durationMs: campaign.answerTimeoutSeconds * 1000
+      answerTimeoutMs: campaign.answerTimeoutSeconds * 1000,
+      durationMs: 30 * 60 * 1000
     });
     activeCalls.set(attempt.id, call);
     await prisma.callAttempt.update({ where: { id: attempt.id }, data: { callId: call.callId || null } });
@@ -325,7 +328,10 @@ async function runAttempt(campaign, recipient) {
     const reason = await call.waitForEnd();
     await transitionChain;
     const durationSeconds = Math.max(0, Math.round((Date.now() - startedAt) / 1000));
-    const status = connected && reason === 'hangup' ? 'COMPLETED' : (connected ? 'FAILED' : 'NO_ANSWER');
+    const currentCampaign = await prisma.callCampaign.findUnique({ where: { id: campaign.id }, select: { status: true } });
+    // Someone who picked up and later hung up was reached: that is a completed contact, not a
+    // failure, and must not be dialled again. Only transport/provider errors count as FAILED.
+    const status = currentCampaign?.status === 'CANCELLED' ? 'CANCELLED' : connected && ANSWERED_END_REASONS.has(reason) ? 'COMPLETED' : (connected ? 'FAILED' : 'NO_ANSWER');
     const finished = await finishRecipient(campaign, recipient, attempt, status, {
       durationSeconds,
       errorCode: status === 'NO_ANSWER' ? 'NO_ANSWER' : null,
@@ -345,6 +351,34 @@ async function runAttempt(campaign, recipient) {
   } finally {
     activeCalls.delete(attempt.id);
     await emitCampaignUpdate(campaign.organizationId, campaign.id);
+  }
+}
+
+// Consent and opt-out can change after a campaign is created. Check them again right before dialling.
+async function contactStillCallable(recipient) {
+  const contact = await prisma.contact.findUnique({
+    where: { id: recipient.contactId },
+    select: { callConsentStatus: true, callOptedOutAt: true }
+  });
+  return Boolean(contact && !contact.callOptedOutAt && contact.callConsentStatus === 'GRANTED');
+}
+
+async function runClaimedRecipient(campaign, recipient) {
+  try {
+    if (!(await contactStillCallable(recipient))) {
+      await prisma.callCampaignRecipient.update({ where: { id: recipient.id }, data: { status: 'CANCELLED', finalResult: 'CONSENT_REVOKED' } });
+      await recordEvent(campaign.organizationId, campaign.id, null, 'RECIPIENT_SKIPPED', { recipientId: recipient.id, reason: 'CONSENT_REVOKED' });
+      return { shouldRetry: false, recipientStatus: 'CANCELLED' };
+    }
+    return await runAttempt(campaign, recipient);
+  } catch (error) {
+    // Never leave a claimed recipient in QUEUED: the worker would wait for it forever.
+    console.error('[wa-calls] intento abortado', recipient.id, error.message || error);
+    await prisma.callCampaignRecipient.updateMany({
+      where: { id: recipient.id, status: { in: ['QUEUED', 'STARTING'] } },
+      data: { status: 'FAILED', finalResult: 'INTERNAL_ERROR' }
+    }).catch(() => {});
+    return { shouldRetry: false, recipientStatus: 'FAILED' };
   }
 }
 
@@ -374,7 +408,7 @@ async function runWorker(organizationId, campaignId) {
   if (workers.has(campaignId)) return;
   const worker = (async () => {
     try {
-      while (true) {
+      while (!stopping) {
         const campaign = await prisma.callCampaign.findUnique({ where: { id: campaignId }, include: CAMPAIGN_INCLUDE });
         if (!campaign || campaign.status !== 'RUNNING') return;
         if (!isWithinWindow(campaign)) {
@@ -382,7 +416,7 @@ async function runWorker(organizationId, campaignId) {
           await emitCampaignUpdate(organizationId, campaignId);
           return;
         }
-        const recipients = await claimRecipients(campaign, Math.max(1, campaign.maxConcurrent));
+        const recipients = await claimRecipients(campaign, 1);
         if (recipients.length === 0) {
           const pending = await prisma.callCampaignRecipient.count({ where: { campaignId, status: { in: ['PENDING', 'QUEUED', 'RETRY_PENDING'] } } });
           if (pending === 0) {
@@ -394,7 +428,7 @@ async function runWorker(organizationId, campaignId) {
           await delay(250);
           continue;
         }
-        await Promise.all(recipients.map((recipient) => runAttempt(campaign, recipient)));
+        await Promise.all(recipients.map((recipient) => runClaimedRecipient(campaign, recipient)));
         await delay(campaign.pauseBetweenSeconds * 1000);
       }
     } catch (err) {
@@ -415,6 +449,9 @@ async function startCampaign(organizationId, campaignId) {
   const campaign = await findCampaign(organizationId, campaignId);
   if (!campaign) throw Object.assign(new Error('Campaña de llamadas no encontrada'), { status: 404 });
   if (campaign.status === 'RUNNING') return campaign;
+  if (await require('./billing').isBlocked(organizationId).catch(() => false)) {
+    throw Object.assign(new Error('Tu plan venció: activalo para iniciar campañas de llamadas'), { status: 402 });
+  }
   await assertRunnable(campaign);
   if (accountLocks.has(campaign.accountId)) {
     const error = new Error('La cuenta de WhatsApp ya está ocupada por otra campaña de llamadas');
@@ -422,8 +459,13 @@ async function startCampaign(organizationId, campaignId) {
     throw error;
   }
   accountLocks.add(campaign.accountId);
-  await prisma.callCampaign.update({ where: { id: campaign.id }, data: { status: 'RUNNING', startedAt: campaign.startedAt || new Date(), completedAt: null } });
-  await recordEvent(organizationId, campaign.id, null, 'CAMPAIGN_STARTED', { provider: providerState().mode });
+  try {
+    await prisma.callCampaign.update({ where: { id: campaign.id }, data: { status: 'RUNNING', startedAt: campaign.startedAt || new Date(), completedAt: null } });
+    await recordEvent(organizationId, campaign.id, null, 'CAMPAIGN_STARTED', { provider: providerState().mode });
+  } catch (error) {
+    accountLocks.delete(campaign.accountId);
+    throw error;
+  }
   runWorker(organizationId, campaign.id);
   return findCampaign(organizationId, campaign.id);
 }
@@ -474,10 +516,9 @@ async function startDirectCall(organizationId, account, phoneNumber, options = {
   try {
     call = await callProvider.startCall(account, phoneNumber, {
       organizationId,
-      // baileys-caller needs an outbound audio stream. Direct calls start with
-      // silence because the CRM does not expose the server microphone to the browser.
-      audioSource: 'silence',
-      durationMs: Math.max(1000, Number(options.durationMs || process.env.WHATSAPP_DIRECT_CALL_DURATION_MS || 60000))
+      audioSource: 'live',
+      answerTimeoutMs: 45000,
+      durationMs: Math.max(1000, Number(options.durationMs || process.env.WHATSAPP_DIRECT_CALL_DURATION_MS || 1800000))
     });
   } catch (error) {
     accountLocks.delete(account.id);
@@ -508,26 +549,36 @@ async function startDirectCall(organizationId, account, phoneNumber, options = {
     durationSeconds: 0,
     endedReason: null,
     requestedHangup: false,
+    userId: options.userId,
+    audioToken: crypto.randomBytes(32).toString("hex"),
+    mediaSocket: null,
+    mediaTimer: null,
     connected: false,
     call
   };
   directCalls.set(directCall.id, directCall);
   await updateDirectRecord(directRecord.id, { callId: directCall.callId });
 
-  const finish = (reason) => {
+  const finish = async (reason) => {
     if (directCall.finishedAt) return;
     const finishedAt = new Date();
     directCall.finishedAt = finishedAt;
+    clearTimeout(directCall.mediaTimer);
+    directCall.mediaSocket?.emit("wa-call:ended", { id: directCall.id, reason });
     directCall.endedReason = directCall.endedReason || reason || null;
-    directCall.status = directCall.requestedHangup
-      ? 'CANCELLED'
-      : directCall.connected
-        ? 'COMPLETED'
-        : (reason === 'rejected' || reason === 'timeout' ? 'NO_ANSWER' : 'FAILED');
+    // A call that was answered and then ended (by either side) is a normal, finished call.
+    // Only calls that never connected are cancelled/unanswered, and only real errors are FAILED.
+    const answeredEnd = ['hangup', 'ended', 'remote_end', 'duration_limit', 'audio_complete'].includes(reason);
+    directCall.status = directCall.connected && (directCall.requestedHangup || answeredEnd)
+      ? 'COMPLETED'
+      : directCall.requestedHangup
+        ? 'CANCELLED'
+        : (['rejected', 'timeout', 'remote_end', 'ended', 'hangup'].includes(reason) ? 'NO_ANSWER' : 'FAILED');
+    console.log(`[calls] llamada directa ${directCall.id} terminó: estado=${directCall.status} motivo=${reason} conectada=${directCall.connected} duración=${directCall.connectedAt ? Math.round((finishedAt.getTime() - directCall.connectedAt.getTime()) / 1000) : 0}s`);
     directCall.durationSeconds = directCall.connectedAt
       ? Math.max(0, Math.round((finishedAt.getTime() - directCall.connectedAt.getTime()) / 1000))
       : 0;
-    updateDirectRecord(directCall.recordId, {
+    await updateDirectRecord(directCall.recordId, {
       status: directCall.status,
       answeredAt: directCall.connectedAt,
       finishedAt,
@@ -541,11 +592,13 @@ async function startDirectCall(organizationId, account, phoneNumber, options = {
 
   call.on('ringing', () => {
     if (directCall.finishedAt) return;
+    console.log(`[calls] llamada directa ${directCall.id}: sonando`);
     directCall.status = 'RINGING';
     updateDirectRecord(directCall.recordId, { status: 'RINGING' });
   });
   call.on('connected', () => {
     if (directCall.finishedAt) return;
+    console.log(`[calls] llamada directa ${directCall.id}: contestada`);
     directCall.connected = true;
     directCall.connectedAt = new Date();
     directCall.status = 'CONNECTED';
@@ -559,10 +612,40 @@ async function startDirectCall(organizationId, account, phoneNumber, options = {
       try { call.end(); } catch {}
     }
   });
-  call.on('ended', finish);
-  Promise.resolve(call.waitForEnd()).then(finish).catch((error) => finish(error?.message || 'provider_error'));
+  directCall.finishedPromise = Promise.resolve(call.waitForEnd()).then(finish).catch((error) => finish(error?.message || 'provider_error'));
 
-  return sanitizeDirectCall(directCall);
+  directCall.mediaTimer = setTimeout(() => { console.warn(`[calls] llamada directa ${directCall.id}: el navegador no enlazó el micrófono a tiempo`); call.end('media_timeout'); }, 30000);
+  call.on('audio', pcm => {
+    if (!directCall.finishedAt && directCall.mediaSocket?.connected) {
+      directCall.mediaSocket.volatile.emit('wa-call:audio', { id: directCall.id, pcm: Buffer.from(pcm.buffer, pcm.byteOffset, pcm.byteLength) });
+    }
+  });
+  if (Number(call.state) === 6) {
+    directCall.connected = true;
+    directCall.connectedAt = new Date();
+    directCall.status = 'CONNECTED';
+    updateDirectRecord(directCall.recordId, { status: 'CONNECTED', answeredAt: directCall.connectedAt });
+  }
+  return { ...sanitizeDirectCall(directCall), audioToken: directCall.audioToken };
+}
+
+function bindDirectAudio(auth, id, token, socket) {
+  const item = directCalls.get(id);
+  if (!item || item.finishedAt || item.organizationId !== auth.organizationId || item.userId !== auth.userId
+      || typeof token !== 'string' || token.length !== item.audioToken.length
+      || !crypto.timingSafeEqual(Buffer.from(token), Buffer.from(item.audioToken))) return null;
+  if (item.mediaSocket && item.mediaSocket.id !== socket.id && item.mediaSocket.connected) return null;
+  clearTimeout(item.mediaTimer);
+  item.mediaSocket = socket;
+  return {
+    push(pcm) { if (!item.finishedAt && item.mediaSocket === socket) item.call.pushAudio?.(pcm); },
+    detach() {
+      if (item.mediaSocket !== socket || item.finishedAt) return;
+      item.mediaSocket = null;
+      clearTimeout(item.mediaTimer);
+      item.mediaTimer = setTimeout(() => item.call.end('media_disconnected'), 10000);
+    }
+  };
 }
 
 function getDirectCall(organizationId, callId) {
@@ -570,13 +653,14 @@ function getDirectCall(organizationId, callId) {
   return sanitizeDirectCall(directCall);
 }
 
-function endDirectCall(organizationId, callId) {
+async function endDirectCall(organizationId, callId) {
   const directCall = [...directCalls.values()].find((item) => item.organizationId === organizationId && (item.id === callId || item.callId === callId));
   if (!directCall) return null;
   if (!directCall.finishedAt) {
     directCall.requestedHangup = true;
     try { directCall.call.end(); } catch (error) { directCall.endedReason = error?.message || 'hangup_error'; }
   }
+  await directCall.finishedPromise;
   return sanitizeDirectCall(directCall);
 }
 
@@ -585,6 +669,11 @@ function pauseCampaign(campaignId) {
 }
 
 async function cancelCampaign(organizationId, campaignId) {
+  const existing = await findCampaign(organizationId, campaignId);
+  if (!existing) throw Object.assign(new Error('Campaña de llamadas no encontrada'), { status: 404 });
+  if (['COMPLETED', 'CANCELLED'].includes(existing.status)) {
+    throw Object.assign(new Error('La campaña ya terminó'), { status: 409 });
+  }
   for (const [attemptId, call] of activeCalls.entries()) {
     const attempt = await prisma.callAttempt.findUnique({ where: { id: attemptId }, select: { campaignId: true } }).catch(() => null);
     if (attempt && attempt.campaignId === campaignId) {
@@ -607,9 +696,11 @@ function scheduleCampaign(organizationId, campaignId, scheduledAt) {
     scheduledTimers.delete(campaignId);
     const current = await findCampaign(organizationId, campaignId);
     if (current && current.status === 'SCHEDULED') {
+      if (new Date(current.scheduledAt).getTime() > Date.now()) { scheduleCampaign(organizationId, campaignId, current.scheduledAt); return; }
       try { await startCampaign(organizationId, campaignId); } catch (err) { await recordEvent(organizationId, campaignId, null, 'SCHEDULE_ERROR', { message: err.message }); }
     }
-  }, delayMs);
+  }, Math.min(delayMs, 2147483647));
+  timer.unref?.();
   scheduledTimers.set(campaignId, timer);
 }
 
@@ -643,6 +734,10 @@ async function resumeRunningCampaigns() {
     await prisma.callAttempt.update({ where: { id: attempt.id }, data: { status: 'FAILED', errorCode: 'WORKER_RESTARTED', errorMessage: 'El worker se reinició antes de confirmar el resultado' } });
     await prisma.callCampaignRecipient.updateMany({ where: { id: attempt.campaignContactId, status: { in: ['STARTING', 'RINGING', 'CONNECTED', 'PLAYING'] } }, data: { status: 'RETRY_PENDING', finalResult: 'WORKER_RESTARTED', nextAttemptAt: new Date() } }).catch(() => {});
   }
+  await prisma.callCampaignRecipient.updateMany({
+    where: { status: 'QUEUED', campaign: { status: 'RUNNING' } },
+    data: { status: 'PENDING' }
+  });
   const running = await prisma.callCampaign.findMany({ where: { status: 'RUNNING' }, select: { id: true, organizationId: true, accountId: true } });
   for (const campaign of running) {
     accountLocks.add(campaign.accountId);
@@ -651,6 +746,10 @@ async function resumeRunningCampaigns() {
 }
 
 async function shutdown() {
+  stopping = true;
+  for (const item of directCalls.values()) { if (!item.finishedAt) item.call.end('server_shutdown'); }
+  for (const call of activeCalls.values()) call.end('server_shutdown');
+  await Promise.all([...directCalls.values()].map(item => item.finishedPromise));
   for (const timer of scheduledTimers.values()) clearTimeout(timer);
   scheduledTimers.clear();
   await callProvider.shutdown();
@@ -665,6 +764,7 @@ module.exports = {
   findCampaign,
   startCampaign,
   startDirectCall,
+  bindDirectAudio,
   getDirectCall,
   endDirectCall,
   pauseCampaign,

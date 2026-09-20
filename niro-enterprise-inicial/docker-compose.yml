@@ -33,7 +33,7 @@ services:
       VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY:-}
       VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY:-}
       VAPID_SUBJECT: ${VAPID_SUBJECT:-}
-      WHATSAPP_CALL_PROVIDER: ${WHATSAPP_CALL_PROVIDER:-mock}
+      WHATSAPP_CALL_PROVIDER: ${WHATSAPP_CALL_PROVIDER:-unavailable}
     volumes:
       - niro_uploads:/app/storage/uploads
       # Credenciales de sesión de WhatsApp (Baileys). Sin este volumen, cada `docker compose up

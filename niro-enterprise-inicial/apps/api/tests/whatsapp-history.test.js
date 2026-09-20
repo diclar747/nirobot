@@ -1,0 +1,20 @@
+const { prisma, resetDb } = require('./helpers/testApp');
+const { createOrganization } = require('./helpers/auth');
+const whatsapp = require('../src/lib/whatsapp');
+beforeEach(resetDb);
+afterAll(async () => { await resetDb(); await prisma.$disconnect(); });
+test('imports history and phone outbound messages exactly once without auto replies', async () => {
+  const org = await createOrganization(prisma, { slug: 'history' });
+  const messages = [false, true].map((fromMe, i) => ({ key: { remoteJid: '595991000111@s.whatsapp.net', fromMe, id: 'history-'+i }, pushName: 'Cliente', messageTimestamp: 1700000000 + i, message: { conversation: 'texto de prueba '+i } }));
+  const sock = { profilePictureUrl: jest.fn().mockResolvedValue(null) };
+  await whatsapp.ingestMessages(org.id, sock, messages, true);
+  await whatsapp.ingestMessages(org.id, sock, messages, true);
+  const stored = await prisma.message.findMany({ orderBy: { createdAt: 'asc' } });
+  expect(stored).toHaveLength(2);
+  expect(stored.map(m => m.direction)).toEqual(['INBOUND', 'OUTBOUND']);
+  expect(stored[0].createdAt.getTime()).toBe(1700000000000);
+  expect(await prisma.conversation.count()).toBe(1);
+  expect(sock.profilePictureUrl).not.toHaveBeenCalled();
+  await whatsapp.ingestMessages(org.id, sock, [{ ...messages[1], key: { ...messages[1].key, id: 'phone-live' } }], false);
+  expect(await prisma.message.count()).toBe(3);
+});

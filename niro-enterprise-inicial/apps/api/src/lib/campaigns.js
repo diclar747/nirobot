@@ -78,7 +78,7 @@ async function getCounts(campaignId) {
         createdAt: { gte: firstSentAt },
         conversation: {
           organizationId: campaign.organizationId,
-          contactId: { in: sentRecipients.map((recipient) => recipient.contactId) }
+          contactId: { in: sentRecipients.map((recipient) => recipient.contactId).filter(Boolean) }
         }
       }
     });
@@ -226,6 +226,25 @@ async function processNext(organizationId, campaignId) {
     return;
   }
 
+  // Plan vencido: se pausa la campaña en vez de seguir enviando.
+  if (await require('./billing').isBlocked(organizationId).catch(() => false)) {
+    await prisma.campaign.update({ where: { id: campaignId }, data: { status: 'PAUSED' } });
+    activeTimers.delete(campaignId);
+    console.warn(`[campaigns] campaña ${campaignId} pausada: plan vencido`);
+    await emitCampaignUpdate(organizationId, campaignId);
+    return;
+  }
+
+  // Without a live WhatsApp session every send would throw and burn through the recipient list
+  // as FAILED. Pause instead, so the operator can reconnect and resume where it stopped.
+  if (whatsapp.getStatus(organizationId).status !== 'connected') {
+    await prisma.campaign.update({ where: { id: campaignId }, data: { status: 'PAUSED' } });
+    activeTimers.delete(campaignId);
+    console.warn(`[campaigns] campaña ${campaignId} pausada: WhatsApp no está conectado`);
+    await emitCampaignUpdate(organizationId, campaignId);
+    return;
+  }
+
   const next = await prisma.campaignRecipient.findFirst({
     where: { campaignId, status: 'PENDING' },
     include: { contact: true },
@@ -240,25 +259,27 @@ async function processNext(organizationId, campaignId) {
   }
 
   try {
-    if (!next.contact.phone) throw new Error('El contacto no tiene número de teléfono');
-    const renderedMessage = personalizeCampaignMessage(campaign.message, next.contact);
+    const isGroup = Boolean(next.groupJid);
+    const target = isGroup ? next.groupJid : next.contact && next.contact.phone;
+    if (!target) throw new Error('El contacto no tiene número de teléfono');
+    const renderedMessage = personalizeCampaignMessage(campaign.message, isGroup ? { name: next.groupName || 'grupo', phone: '', email: '' } : next.contact);
     let waMessageId;
     if (campaign.attachment) {
       const buffer = await readAttachmentBuffer(campaign.attachment);
-      waMessageId = await whatsapp.sendMedia(organizationId, next.contact.phone, {
+      waMessageId = await whatsapp.sendMedia(organizationId, target, {
         buffer,
         mimetype: campaign.attachment.mimeType,
         fileName: campaign.attachment.fileName,
         caption: renderedMessage
       });
     } else {
-      waMessageId = await whatsapp.sendText(organizationId, next.contact.phone, renderedMessage);
+      waMessageId = await whatsapp.sendText(organizationId, target, renderedMessage);
     }
     await prisma.campaignRecipient.update({
       where: { id: next.id },
       data: { status: 'SENT', waMessageId: waMessageId || null, sentAt: new Date() }
     });
-    await recordCampaignMessage(organizationId, campaign, next.contact.id, waMessageId, renderedMessage);
+    if (!isGroup) await recordCampaignMessage(organizationId, campaign, next.contact.id, waMessageId, renderedMessage);
   } catch (err) {
     await prisma.campaignRecipient.update({
       where: { id: next.id },
@@ -267,6 +288,9 @@ async function processNext(organizationId, campaignId) {
   }
 
   await emitCampaignUpdate(organizationId, campaignId);
+
+  const stillSending = await prisma.campaign.findUnique({ where: { id: campaignId }, select: { status: true } });
+  if (!stillSending || stillSending.status !== 'SENDING') return;
 
   const messagesPerHour = campaign.messagesPerHour || Math.max(1, (campaign.ratePerMinute || 1) * 60);
   const delayMs = Math.max(1000, Math.round(3600000 / Math.max(1, messagesPerHour)));
@@ -278,6 +302,8 @@ async function processNext(organizationId, campaignId) {
 
 // Marks a recipient's message as delivered/read from a Baileys delivery-receipt update. Also
 // used to update a regular 1:1 Message row when the waMessageId matches one instead.
+const MESSAGE_INCLUDE_LOCAL = { sender: { select: { id: true, name: true } }, attachment: true };
+
 async function handleDeliveryUpdate(waMessageId, statusLevel) {
   if (!waMessageId) return;
 
@@ -291,16 +317,29 @@ async function handleDeliveryUpdate(waMessageId, statusLevel) {
     if (Object.keys(data).length > 0) {
       const updated = await prisma.campaignRecipient.update({ where: { id: recipient.id }, data, include: { campaign: true } });
       const label = statusLevel >= 4 ? 'read' : statusLevel >= 3 ? 'delivered' : 'sent';
-      await prisma.message.updateMany({ where: { waMessageId }, data: { deliveryStatus: label } });
+      await applyMessageStatus(waMessageId, label);
       await emitCampaignUpdate(updated.campaign.organizationId, updated.campaignId);
     }
     return;
   }
 
-  const message = await prisma.message.findFirst({ where: { waMessageId } });
-  if (message) {
-    const label = statusLevel >= 4 ? 'read' : statusLevel >= 3 ? 'delivered' : 'sent';
-    await prisma.message.update({ where: { id: message.id }, data: { deliveryStatus: label } });
+  const label = statusLevel >= 4 ? 'read' : statusLevel >= 3 ? 'delivered' : 'sent';
+  await applyMessageStatus(waMessageId, label);
+}
+
+const STATUS_RANK = { failed: 0, pending: 1, sent: 2, delivered: 3, read: 4 };
+
+// Sube el estado de un mensaje 1:1 (nunca lo baja: un "sent" tardío no pisa un "read") y avisa en vivo al inbox.
+async function applyMessageStatus(waMessageId, label) {
+  const rows = await prisma.message.findMany({ where: { waMessageId, direction: 'OUTBOUND' }, include: MESSAGE_INCLUDE_LOCAL });
+  for (const row of rows) {
+    if ((STATUS_RANK[label] || 0) <= (STATUS_RANK[row.deliveryStatus] || 0)) continue;
+    const updated = await prisma.message.update({ where: { id: row.id }, data: { deliveryStatus: label }, include: MESSAGE_INCLUDE_LOCAL });
+    const conversation = await prisma.conversation.findUnique({ where: { id: row.conversationId }, select: { organizationId: true } });
+    if (conversation) {
+      const { sanitizeMessage } = require('./conversations');
+      require('./realtime').emitToOrg(conversation.organizationId, 'message:updated', { conversationId: row.conversationId, message: sanitizeMessage(updated) });
+    }
   }
 }
 
@@ -332,6 +371,7 @@ async function resendCampaign(organizationId, campaignId) {
 }
 
 module.exports = {
+  processNext,
   sanitizeCampaign,
   getCounts,
   startCampaign,

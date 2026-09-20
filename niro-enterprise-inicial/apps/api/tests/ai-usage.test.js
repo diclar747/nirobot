@@ -37,6 +37,7 @@ describe('Registro y resumen de uso de IA', () => {
     const { org, agent, csrfToken } = await setupOrg();
     mockNiroAi.chatCompletion.mockResolvedValue({ content: 'hola', cost: 0.5 });
     mockNiroAi.chatWithAgent.mockResolvedValue({ content: 'respuesta', cost: 1.25 });
+    await prisma.auditLog.create({ data: { organizationId: org.id, action: 'ai_agent.created', entityType: 'AiAgent', entityId: 'agent-1' } });
 
     await agent.post('/api/org/ai/chat/test').set('X-CSRF-Token', csrfToken).send({ message: 'hola' });
     await agent

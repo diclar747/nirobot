@@ -7,6 +7,10 @@ const whatsappQr = require('./lib/whatsappQr');
 const campaigns = require('./lib/campaigns');
 const callCampaigns = require('./lib/callCampaigns');
 
+// A stray rejected promise (e.g. a WhatsApp socket closing mid-send) must not take the whole
+// process down and disconnect every organization.
+process.on('unhandledRejection', (reason) => console.error('[process] unhandledRejection', reason));
+
 const port = Number(process.env.PORT || 4000);
 
 const server = http.createServer(app);
@@ -25,7 +29,40 @@ campaigns.resumeSendingCampaigns().catch((err) => console.error('[campaigns] res
 callCampaigns.resumeScheduledCampaigns().catch((err) => console.error('[wa-calls] resumeScheduledCampaigns failed', err));
 callCampaigns.resumeRunningCampaigns().catch((err) => console.error('[wa-calls] resumeRunningCampaigns failed', err));
 
+// QR logins create a temporary inactive organization per attempt. The in-memory flow that owned it
+// dies with the process, so sweep the abandoned ones (never activated, no users) on boot.
+async function sweepAbandonedQrOrganizations() {
+  const result = await prisma.organization.deleteMany({
+    where: { active: false, name: 'Nueva empresa Niro', users: { none: {} }, createdAt: { lt: new Date(Date.now() - 60 * 60 * 1000) } }
+  });
+  if (result.count) console.log(`[auth-qr] ${result.count} organizaciones temporales abandonadas eliminadas`);
+}
+sweepAbandonedQrOrganizations().catch((err) => console.error('[auth-qr] sweep failed', err));
+
+// Statuses last 24 h: drop the expired ones (and their files) periodically.
+const whatsappStatus = require('./lib/whatsappStatus');
+const statusCleanupTimer = setInterval(() => {
+  whatsappStatus.cleanupExpired().catch((err) => console.error('[status] cleanup failed', err));
+}, 60 * 60 * 1000);
+statusCleanupTimer.unref?.();
+
+let stopping = false;
+
+// Publishing queue for statuses posted from Nirobot: scheduled posts, retries and crash recovery.
+const statusPosts = require('./lib/statusPosts');
+let statusPostsBusy = false;
+async function statusPostsTick() {
+  if (statusPostsBusy || stopping) return;
+  statusPostsBusy = true;
+  try { await statusPosts.tick(); } catch (err) { console.error('[status-posts] tick failed', err); } finally { statusPostsBusy = false; }
+}
+const statusPostsTimer = setInterval(statusPostsTick, 30 * 1000);
+statusPostsTimer.unref?.();
+setTimeout(statusPostsTick, 15 * 1000).unref?.();
+whatsappStatus.cleanupExpired().catch((err) => console.error('[status] cleanup failed', err));
+
 async function shutdown() {
+  stopping = true;
   io.close();
   server.close();
   await callCampaigns.shutdown();

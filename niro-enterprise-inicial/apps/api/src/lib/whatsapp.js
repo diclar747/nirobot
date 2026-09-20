@@ -37,9 +37,27 @@ const SESSION_ROOT = process.env.WHATSAPP_SESSION_ROOT || path.join(__dirname, '
 const NIRO_BROWSER = ['Niro', 'Niro Bot', '1.0.0'];
 
 const sessions = new Map();
+const callOwnership = new Set();
+const messageQueues = new Map();
 const connectionPromises = new Map();
 const reconnectTimers = new Map();
 const reconnectAttempts = new Map();
+// A linked session that keeps closing with a non-logout error (e.g. repeated
+// "Connection Failure" 401s from a stale pairing) never recovers on its own.
+// After this many consecutive automatic failures we stop retrying, keep the
+// credentials, and surface a manual-reconnect state instead of looping forever.
+const MAX_CONSECUTIVE_RECONNECT_FAILURES = 8;
+const consecutiveFailures = new Map();
+const stalledSessions = new Set();
+// Sessions WhatsApp itself revoked (device_removed / repeated 401): the stored credentials are dead,
+// so the only way back is a fresh QR. Tracked apart from "stalled" (transient) failures.
+const relinkRequired = new Map();
+const AUTH_REJECT_LIMIT = 3;
+const authRejections = new Map();
+// Inside SESSION_ROOT (same volume, so rename works) but as a hidden directory without creds.json, which
+// resumeSessions() skips.
+const REMOVED_SESSION_ROOT = path.join(SESSION_ROOT, '.removed');
+const RELINK_MESSAGE = 'WhatsApp cerró la sesión de este dispositivo (se quitó de Dispositivos vinculados). Escaneá el QR para volver a vincular el número.';
 const lastDisconnectErrors = new Map();
 const sessionAvatars = new Map();
 const sessionProfileNames = new Map();
@@ -56,7 +74,7 @@ function scheduleReconnect(organizationId) {
   reconnectAttempts.set(organizationId, attempt);
   const timer = setTimeout(() => {
     reconnectTimers.delete(organizationId);
-    connect(organizationId)
+    connect(organizationId, { auto: true })
       .then((status) => {
         if (status.status === 'connected') reconnectAttempts.delete(organizationId);
       })
@@ -116,6 +134,34 @@ function rotatePartialSession(organizationId) {
   console.warn(`[whatsapp] sesión parcial respaldada en ${path.basename(backupDir)}; se generará un QR nuevo`);
 }
 
+// Moves dead credentials out of SESSION_ROOT (so a restart never tries to resume them) without
+// destroying them.
+function archiveSession(organizationId, label) {
+  const dir = sessionDir(organizationId);
+  if (!fs.existsSync(dir)) return;
+  try {
+    fs.mkdirSync(REMOVED_SESSION_ROOT, { recursive: true });
+    const target = path.join(REMOVED_SESSION_ROOT, `${organizationId}-${label}-${Date.now()}`);
+    try {
+      fs.renameSync(dir, target);
+    } catch (err) {
+      if (err.code !== 'EXDEV') throw err;
+      fs.cpSync(dir, target, { recursive: true });
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  } catch (err) {
+    console.warn(`[whatsapp] no se pudo archivar la sesión de ${organizationId}: ${err.message}`);
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+function isDeviceRemoved(error) {
+  const data = error && error.data;
+  if (!data) return false;
+  const type = data.attrs && data.attrs.type;
+  return /device[_-]?removed|replaced_by_logout/i.test(String(type || '')) && (data.tag === 'conflict' || data.tag === 'stream:error');
+}
+
 function publicStatus(organizationId) {
   const entry = sessions.get(organizationId);
   const avatarUrl = entry?.avatarUrl || sessionAvatars.get(organizationId) || null;
@@ -124,11 +170,87 @@ function publicStatus(organizationId) {
   // credenciales persistidas ya demuestran que la empresa sigue vinculada. Mostrar
   // "connecting" evita que la UI la marque como desconectada y evita pedir otro QR.
   if (!entry) {
+    if (relinkRequired.has(organizationId)) {
+      return { status: 'disconnected', qr: null, phone: null, avatarUrl, profileName, needsRelink: true, lastError: relinkRequired.get(organizationId) };
+    }
+    if (stalledSessions.has(organizationId)) {
+      return { status: 'disconnected', qr: null, phone: null, avatarUrl, profileName, needsManualReconnect: true, lastError: lastDisconnectErrors.get(organizationId) || 'La conexión falló repetidas veces. Reconecta o vuelve a vincular el número.' };
+    }
     return hasStoredSession(organizationId)
       ? { status: 'connecting', qr: null, phone: null, avatarUrl, profileName, lastError: lastDisconnectErrors.get(organizationId) || null }
       : { status: 'disconnected', qr: null, phone: null, avatarUrl, profileName, lastError: lastDisconnectErrors.get(organizationId) || null };
   }
   return { status: entry.status, qr: entry.qr, phone: entry.phone, avatarUrl, profileName, lastError: entry.lastError || null };
+}
+
+// Importing the phone's history creates hundreds of contacts without a profile picture (the
+// live-message path is the only one that fetches it). Fill them in slowly and in the
+// background: WhatsApp rate-limits profile lookups, so never burst.
+const AVATAR_BACKFILL_DELAY_MS = Math.max(300, Number(process.env.WHATSAPP_AVATAR_BACKFILL_DELAY_MS || 800));
+const avatarBackfills = new Set();
+
+async function backfillContactAvatars(organizationId, sock) {
+  if (avatarBackfills.has(organizationId)) return { started: false };
+  avatarBackfills.add(organizationId);
+  const skipped = new Set();
+  let fetched = 0;
+  let noPicture = 0;
+  let consecutiveErrors = 0;
+  try {
+    for (;;) {
+      const entry = sessions.get(organizationId);
+      if (!entry || entry.sock !== sock || entry.status !== 'connected' || entry.pausedForCall) break;
+      // Most recently active chats first: those are the ones the agent is looking at.
+      const batch = await prisma.contact.findMany({
+        where: { organizationId, avatarUrl: null, id: { notIn: [...skipped] }, OR: [{ phone: { not: null } }, { externalId: { not: null } }] },
+        orderBy: [{ conversations: { _count: 'desc' } }, { createdAt: 'desc' }],
+        take: 25,
+        select: { id: true, phone: true, externalId: true }
+      });
+      if (batch.length === 0) break;
+      for (const contact of batch) {
+        const current = sessions.get(organizationId);
+        if (!current || current.sock !== sock || current.status !== 'connected' || current.pausedForCall) return { started: true, fetched, noPicture, interrupted: true };
+        const jid = contact.externalId && /@(s\.whatsapp\.net|lid)$/.test(contact.externalId) ? contact.externalId : (contact.phone ? jidFromPhone(contact.phone) : null);
+        skipped.add(contact.id);
+        if (!jid) continue;
+        try {
+          const url = await Promise.race([
+            sock.profilePictureUrl(jid, 'image'),
+            new Promise((_, reject) => { const t = setTimeout(() => reject(new Error('timeout')), 8000); t.unref?.(); })
+          ]);
+          consecutiveErrors = 0;
+          if (typeof url === 'string' && /^https?:\/\//i.test(url)) {
+            await prisma.contact.update({ where: { id: contact.id }, data: { avatarUrl: url } });
+            fetched += 1;
+          }
+        } catch (err) {
+          const message = String(err?.message || err);
+          if (/item-not-found|not-authorized|forbidden|404|401/i.test(message)) {
+            // No picture, or hidden by privacy settings: remember it so it is not asked again.
+            await prisma.contact.update({ where: { id: contact.id }, data: { avatarUrl: '' } }).catch(() => {});
+            noPicture += 1;
+            consecutiveErrors = 0;
+          } else {
+            consecutiveErrors += 1;
+            if (consecutiveErrors >= 5) {
+              console.warn(`[whatsapp] ${organizationId}: demasiados errores al descargar avatares (${message}); se detiene`);
+              return { started: true, fetched, noPicture, stopped: true };
+            }
+            await new Promise((resolve) => setTimeout(resolve, 15000));
+          }
+        }
+        await new Promise((resolve) => setTimeout(resolve, AVATAR_BACKFILL_DELAY_MS));
+      }
+    }
+    console.log(`[whatsapp] avatares de contactos para ${organizationId}: ${fetched} descargados, ${noPicture} sin foto`);
+    return { started: true, fetched, noPicture };
+  } catch (err) {
+    console.error('[whatsapp] backfill de avatares falló:', err.message || err);
+    return { started: true, fetched, noPicture, error: true };
+  } finally {
+    avatarBackfills.delete(organizationId);
+  }
 }
 
 async function refreshSessionAvatar(organizationId, entry, sock) {
@@ -252,7 +374,37 @@ function phoneFromJid(jid) {
 }
 
 function jidFromPhone(phone) {
+  // Los grupos ya vienen como JID completo (…@g.us): se usan tal cual.
+  if (/@g\.us$/.test(String(phone))) return String(phone);
   return String(phone).replace(/[^0-9]/g, '') + '@s.whatsapp.net';
+}
+
+const groupCache = new Map();
+
+// Grupos de WhatsApp donde participa la cuenta conectada (cache corto para no golpear a WhatsApp).
+async function listGroups(organizationId, { force = false } = {}) {
+  const entry = sessions.get(organizationId);
+  if (!entry || entry.status !== 'connected' || !entry.sock) {
+    const error = new Error('Conectá WhatsApp para ver tus grupos');
+    error.status = 409;
+    throw error;
+  }
+  const cached = groupCache.get(organizationId);
+  if (!force && cached && Date.now() - cached.at < 60000) return cached.groups;
+  const all = await entry.sock.groupFetchAllParticipating();
+  const groups = Object.values(all || {})
+    .filter((group) => group && group.id && !group.isCommunityAnnounce)
+    .map((group) => ({
+      id: group.id,
+      name: group.subject || 'Grupo sin nombre',
+      size: Array.isArray(group.participants) ? group.participants.length : (group.size || 0),
+      announce: Boolean(group.announce),
+      // Si el grupo es "solo admins pueden escribir", el envío solo funciona si la cuenta es admin.
+      canSend: !group.announce || (group.participants || []).some((p) => p.admin && phoneFromJid(p.id) === phoneFromJid(entry.sock.user && entry.sock.user.id))
+    }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+  groupCache.set(organizationId, { at: Date.now(), groups });
+  return groups;
 }
 
 function isLidJid(jid) {
@@ -280,13 +432,15 @@ async function rememberPhoneContacts(organizationId, contacts) {
   for (const contact of contacts) {
     const rawJid = contact && contact.id;
     if (!rawJid || !isRealPersonJid(rawJid)) continue;
-    const resolvedJid = await resolvePhoneJid(entry.sock, rawJid);
+    const resolvedJid = await resolvePhoneJid(entry.sock, contact.phoneNumber || rawJid);
     const phone = phoneFromJid(resolvedJid);
     if (!/^\d{6,}$/.test(phone)) continue;
-    entry.phoneContacts.set(phone, {
-      phone,
-      name: contact.name || contact.notify || contact.verifiedName || null
-    });
+    const previous = entry.phoneContacts.get(phone);
+    const name = contact.name || contact.notify || contact.verifiedName || (previous && previous.name) || null;
+    entry.phoneContacts.set(phone, { phone, name });
+    const existing = await prisma.contact.findFirst({ where: { organizationId, OR: [{ phone }, { externalId: rawJid }] } });
+    if (!existing) await prisma.contact.create({ data: { organizationId, phone, externalId: rawJid, name } });
+    else if (((!existing.name || existing.name.replace(/\D/g, '') === phone) && name) || !existing.phone) await prisma.contact.update({ where: { id: existing.id }, data: { phone, ...((!existing.name || existing.name.replace(/\D/g, '') === phone) && name ? { name } : {}) } });
   }
 }
 
@@ -398,6 +552,7 @@ async function ensureContactAvatar(sock, contact, jid) {
 }
 
 function connect(organizationId, options = {}) {
+  if (callOwnership.has(organizationId)) return Promise.resolve(publicStatus(organizationId));
   const pending = connectionPromises.get(organizationId);
   if (pending) return pending;
 
@@ -415,6 +570,12 @@ async function connectSession(organizationId, options = {}) {
     return publicStatus(organizationId);
   }
 
+  if (!options.auto) {
+    stalledSessions.delete(organizationId);
+    consecutiveFailures.delete(organizationId);
+    authRejections.delete(organizationId);
+  }
+  if (relinkRequired.has(organizationId) && !hasStoredSession(organizationId)) relinkRequired.delete(organizationId);
   if (options.fresh) rotatePartialSession(organizationId);
   const dir = sessionDir(organizationId);
   fs.mkdirSync(dir, { recursive: true });
@@ -442,12 +603,19 @@ async function connectSession(organizationId, options = {}) {
   sock.ev.on('creds.update', saveCreds);
 
   sock.ev.on('messaging-history.set', (payload) => {
-    rememberPhoneContacts(organizationId, payload && payload.contacts)
-      .catch((err) => console.error('[whatsapp] contact mapping failed', err));
+    // Los chats individuales también traen el nombre guardado en la libreta.
+    const chatNames = (payload?.chats || []).map((chat) => ({ id: chat.id, name: chat.name }));
+    enqueueMessages(organizationId, sock, payload?.messages || [], true, [...chatNames, ...(payload?.contacts || [])])
+      .catch(err => console.error('[whatsapp] history sync failed:', err.message));
   });
 
   sock.ev.on('contacts.upsert', (contacts) => {
-    rememberPhoneContacts(organizationId, contacts)
+    enqueueMessages(organizationId, sock, [], true, contacts)
+      .catch((err) => console.error('[whatsapp] contact mapping failed', err));
+  });
+
+  sock.ev.on('contacts.update', (contacts) => {
+    enqueueMessages(organizationId, sock, [], true, contacts)
       .catch((err) => console.error('[whatsapp] contact mapping failed', err));
   });
 
@@ -469,6 +637,10 @@ async function connectSession(organizationId, options = {}) {
     }
 
     if (connection === 'open') {
+      consecutiveFailures.delete(organizationId);
+      authRejections.delete(organizationId);
+      stalledSessions.delete(organizationId);
+      relinkRequired.delete(organizationId);
       entry.status = 'connected';
       entry.qr = null;
       entry.lastError = null;
@@ -486,7 +658,11 @@ async function connectSession(organizationId, options = {}) {
         linkedAt: new Date().toISOString()
       }));
       syncCallAccountState(organizationId, 'CONNECTED', entry.phone);
+      restoreQrHistory(organizationId, sock).catch(err => console.error('[whatsapp] restore history:', err.message));
       emitStatus(organizationId);
+      // Let the history import settle first, then fetch profile pictures in the background.
+      const avatarTimer = setTimeout(() => { backfillContactAvatars(organizationId, sock).catch(() => {}); }, 20000);
+      avatarTimer.unref?.();
     }
 
     if (connection === 'close') {
@@ -501,7 +677,14 @@ async function connectSession(organizationId, options = {}) {
       const loggedOut = statusCode === DisconnectReason.loggedOut && !socketConflict && explicitLogout;
       entry.lastError = disconnectMessage;
       lastDisconnectErrors.set(organizationId, disconnectMessage);
-      console.warn(`[whatsapp] conexión cerrada para ${organizationId}; código=${statusCode || 'desconocido'}; logout=${loggedOut}; detalle=${disconnectMessage}`);
+      // WhatsApp explains a stream error in the payload (e.g. conflict type="replaced" when another
+      // client took the session, or "device_removed" when it was unlinked from the phone).
+      let reasonData = '';
+      try {
+        const data = lastDisconnect?.error?.data;
+        if (data) reasonData = `; datos=${JSON.stringify(data, (_k, v) => (v && v.type === 'Buffer' ? '[bin]' : v)).slice(0, 300)}`;
+      } catch { /* diagnostic only */ }
+      console.warn(`[whatsapp] conexión cerrada para ${organizationId}; código=${statusCode || 'desconocido'}; logout=${loggedOut}; detalle=${disconnectMessage}${reasonData}`);
 
       // Calls use baileys-caller, which must temporarily own the WhatsApp
       // socket. Do not treat this intentional hand-off as a network failure
@@ -514,6 +697,29 @@ async function connectSession(organizationId, options = {}) {
       }
 
       sessions.delete(organizationId);
+
+      // WhatsApp says explicitly that this linked device was removed, or keeps rejecting the stored
+      // credentials with 401: they are dead. Retrying only hammers the server (and the number), so stop,
+      // archive them and ask for a new QR.
+      const rejected = statusCode === 401 && /connection failure/i.test(disconnectMessage);
+      const rejections = rejected ? (authRejections.get(organizationId) || 0) + 1 : 0;
+      if (rejected) authRejections.set(organizationId, rejections);
+      const revoked = !loggedOut && (isDeviceRemoved(lastDisconnect?.error) || rejections >= AUTH_REJECT_LIMIT);
+      if (revoked) {
+        const pendingTimer = reconnectTimers.get(organizationId);
+        if (pendingTimer) clearTimeout(pendingTimer);
+        reconnectTimers.delete(organizationId);
+        reconnectAttempts.delete(organizationId);
+        consecutiveFailures.delete(organizationId);
+        authRejections.delete(organizationId);
+        stalledSessions.delete(organizationId);
+        archiveSession(organizationId, 'removed');
+        relinkRequired.set(organizationId, RELINK_MESSAGE);
+        console.error(`[whatsapp] ${organizationId}: WhatsApp revocó la sesión (${isDeviceRemoved(lastDisconnect?.error) ? 'device_removed' : `${rejections} rechazos 401`}); credenciales archivadas, hace falta un QR nuevo`);
+        syncCallAccountState(organizationId, 'DISCONNECTED', null, RELINK_MESSAGE);
+        emitToOrg(organizationId, 'whatsapp:status', { status: 'disconnected', qr: null, phone: null, needsRelink: true, lastError: RELINK_MESSAGE });
+        return;
+      }
 
       if (loggedOut) {
         reconnectAttempts.delete(organizationId);
@@ -535,6 +741,19 @@ async function connectSession(organizationId, options = {}) {
       } else {
         // Keep linked sessions alive across transient socket/network failures.
         // Baileys can close with 408 while the linked device remains valid.
+        const failures = (consecutiveFailures.get(organizationId) || 0) + 1;
+        consecutiveFailures.set(organizationId, failures);
+        if (failures >= MAX_CONSECUTIVE_RECONNECT_FAILURES) {
+          const pending = reconnectTimers.get(organizationId);
+          if (pending) clearTimeout(pending);
+          reconnectTimers.delete(organizationId);
+          reconnectAttempts.delete(organizationId);
+          stalledSessions.add(organizationId);
+          console.error(`[whatsapp] ${organizationId}: ${failures} fallos consecutivos; se detiene la reconexión automática (credenciales conservadas)`);
+          syncCallAccountState(organizationId, 'DISCONNECTED', null, disconnectMessage);
+          emitToOrg(organizationId, 'whatsapp:status', { status: 'disconnected', qr: null, phone: null, needsManualReconnect: true, lastError: disconnectMessage });
+          return;
+        }
         syncCallAccountState(organizationId, 'RECONNECTING', null, disconnectMessage);
         emitToOrg(organizationId, 'whatsapp:status', { status: 'connecting', qr: null, phone: null, avatarUrl: entry.avatarUrl || sessionAvatars.get(organizationId) || null, lastError: disconnectMessage });
         scheduleReconnect(organizationId);
@@ -543,10 +762,19 @@ async function connectSession(organizationId, options = {}) {
   });
 
   sock.ev.on('messages.upsert', (payload) => {
-    if (payload.type !== 'notify') return;
-    for (const waMessage of payload.messages) {
-      handleInboundMessage(organizationId, sock, waMessage).catch((err) => console.error('[whatsapp] inbound message error', err));
+    // Estados (status@broadcast) are stories, not conversations: route them to their own store.
+    const statusMessages = [];
+    const chatMessages = [];
+    for (const message of payload.messages || []) {
+      (whatsappStatus.isStatusBroadcast(message?.key?.remoteJid) ? statusMessages : chatMessages).push(message);
     }
+    for (const message of statusMessages) {
+      whatsappStatus.handleStatusMessage(organizationId, sock, message, statusHelpers)
+        .catch((err) => console.error('[whatsapp] status sync failed:', err.message || err));
+    }
+    if (chatMessages.length === 0 && statusMessages.length > 0) return;
+    enqueueMessages(organizationId, sock, chatMessages, payload.type !== 'notify')
+      .catch(err => console.error('[whatsapp] message sync failed:', err.message));
   });
 
   sock.ev.on('messages.reaction', (reactions) => {
@@ -572,12 +800,13 @@ async function connectSession(organizationId, options = {}) {
 // Pause only the transport; credentials remain on disk and are never logged
 // out, so the phone stays linked and the chat resumes after the call.
 async function pauseForCall(organizationId) {
+  callOwnership.add(organizationId);
   const pendingTimer = reconnectTimers.get(organizationId);
   if (pendingTimer) clearTimeout(pendingTimer);
   reconnectTimers.delete(organizationId);
 
   const entry = sessions.get(organizationId);
-  if (!entry || !entry.sock) return false;
+  if (!entry || !entry.sock) { callOwnership.delete(organizationId); return false; }
   entry.pausedForCall = true;
   try {
     await entry.sock.end();
@@ -594,11 +823,19 @@ async function pauseForCall(organizationId) {
 }
 
 async function resumeAfterCall(organizationId) {
+  callOwnership.delete(organizationId);
   if (!hasStoredSession(organizationId)) return publicStatus(organizationId);
   const current = sessions.get(organizationId);
   if (current && ['connecting', 'qr', 'connected'].includes(current.status)) return publicStatus(organizationId);
-  const status = await connect(organizationId);
-  return status;
+  await connect(organizationId);
+  const deadline = Date.now() + 15000;
+  while (Date.now() < deadline) {
+    const status = publicStatus(organizationId);
+    if (status.status === 'connected') return status;
+    if (status.status === 'qr') throw new Error('WhatsApp requiere vinculación');
+    await new Promise(resolve => setTimeout(resolve, 200));
+  }
+  throw new Error('WhatsApp todavía se está reconectando');
 }
 
 // Called once at server boot: every org that has a previously-linked session (a creds.json
@@ -607,8 +844,13 @@ async function resumeAfterCall(organizationId) {
 async function resumeSessions() {
   if (!fs.existsSync(SESSION_ROOT)) return;
   const entries = fs.readdirSync(SESSION_ROOT, { withFileTypes: true });
+  const inactive = new Set((await prisma.organization.findMany({ where: { active: false }, select: { id: true } })).map((org) => org.id));
   for (const entry of entries) {
     if (!entry.isDirectory()) continue;
+    if (inactive.has(entry.name)) {
+      console.warn(`[whatsapp] se omite la organización suspendida ${entry.name}`);
+      continue;
+    }
     const credsPath = path.join(SESSION_ROOT, entry.name, 'creds.json');
     if (!fs.existsSync(credsPath)) continue;
     // A creds.json with registered=false is created before the QR is scanned.
@@ -620,6 +862,27 @@ async function resumeSessions() {
     }
     connect(entry.name).catch((err) => console.error('[whatsapp] resume failed for', entry.name, err));
   }
+}
+
+// A QR login (login page) linked this number again while the organisation's own session was dead or
+// reconnecting. The fresh pairing replaces the old credentials instead of being thrown away.
+async function adoptSession(organizationId, takeFn) {
+  const pendingTimer = reconnectTimers.get(organizationId);
+  if (pendingTimer) clearTimeout(pendingTimer);
+  reconnectTimers.delete(organizationId);
+  reconnectAttempts.delete(organizationId);
+  consecutiveFailures.delete(organizationId);
+  authRejections.delete(organizationId);
+  stalledSessions.delete(organizationId);
+  relinkRequired.delete(organizationId);
+  const entry = sessions.get(organizationId);
+  if (entry) {
+    entry.pausedForCall = true; // makes the close handler a no-op instead of scheduling a reconnect
+    try { if (entry.sock && typeof entry.sock.end === 'function') entry.sock.end(undefined); } catch { /* already closed */ }
+    sessions.delete(organizationId);
+  }
+  archiveSession(organizationId, 'replaced');
+  return takeFn(sessionDir(organizationId));
 }
 
 async function disconnect(organizationId) {
@@ -634,7 +897,25 @@ async function disconnect(organizationId) {
   sessions.delete(organizationId);
   lastDisconnectErrors.delete(organizationId);
   fs.rmSync(sessionDir(organizationId), { recursive: true, force: true });
+  relinkRequired.delete(organizationId);
+  authRejections.delete(organizationId);
   emitToOrg(organizationId, 'whatsapp:status', { status: 'disconnected', qr: null, phone: null, lastError: null });
+}
+
+// Suspending an organization must stop its WhatsApp transport (bot replies, campaigns, calls)
+// without unlinking the phone: credentials stay on disk so reactivation resumes seamlessly.
+async function suspendSession(organizationId) {
+  const pending = reconnectTimers.get(organizationId);
+  if (pending) clearTimeout(pending);
+  reconnectTimers.delete(organizationId);
+  reconnectAttempts.delete(organizationId);
+  consecutiveFailures.delete(organizationId);
+  stalledSessions.add(organizationId);
+  const entry = sessions.get(organizationId);
+  if (!entry) return;
+  entry.pausedForCall = true; // makes the close handler a no-op instead of scheduling a reconnect
+  try { if (entry.sock) await entry.sock.end(); } catch (err) { console.warn('[whatsapp] suspend:', err.message || err); }
+  if (sessions.get(organizationId) === entry) sessions.delete(organizationId);
 }
 
 // Close transport sockets during an API restart without logging out the
@@ -677,7 +958,8 @@ async function syncContacts(organizationId) {
   for (const candidate of entry.phoneContacts.values()) {
     const existing = await prisma.contact.findFirst({ where: { organizationId, phone: candidate.phone } });
     if (existing) {
-      if (!existing.name && candidate.name) {
+      const nameIsBlank = !existing.name || existing.name.replace(/\D/g, '') === candidate.phone;
+      if (nameIsBlank && candidate.name) {
         await prisma.contact.update({ where: { id: existing.id }, data: { name: candidate.name } });
         updated += 1;
       }
@@ -689,8 +971,40 @@ async function syncContacts(organizationId) {
   return { imported, updated, total: entry.phoneContacts.size };
 }
 
-async function handleInboundMessage(organizationId, sock, waMessage) {
-  if (waMessage.key.fromMe) return;
+const whatsappStatus = require('./whatsappStatus');
+const statusHelpers = {
+  extractMedia: (m) => extractMedia(m),
+  extractText: (m) => extractText(m),
+  downloadInboundMedia: (s, m, media) => downloadInboundMedia(s, m, media),
+  resolvePhoneJid: (s, jid) => resolvePhoneJid(s, jid),
+  phoneFromJid: (jid) => phoneFromJid(jid)
+};
+
+function enqueueMessages(organizationId, sock, messages, historical = false, contacts = []) {
+  const previous = messageQueues.get(organizationId) || Promise.resolve();
+  const next = previous.catch(() => {}).then(async () => {
+    await rememberPhoneContacts(organizationId, contacts);
+    for (const message of messages) await handleInboundMessage(organizationId, sock, message, { historical });
+    if (historical && messages.length) console.log(`[whatsapp] historial procesado: ${messages.length} mensajes para ${organizationId}`);
+  });
+  messageQueues.set(organizationId, next);
+  next.finally(() => { if (messageQueues.get(organizationId) === next) messageQueues.delete(organizationId); }).catch(() => {});
+  return next;
+}
+
+async function restoreQrHistory(organizationId, sock) {
+  const file = path.join(sessionDir(organizationId), '.niro-history.jsonl');
+  if (!fs.existsSync(file)) return;
+  for (const line of fs.readFileSync(file, 'utf8').split('\n').filter(Boolean)) {
+    const payload = JSON.parse(line);
+    await enqueueMessages(organizationId, sock, payload.messages || [], true, payload.contacts);
+  }
+  fs.unlinkSync(file);
+}
+
+async function handleInboundMessage(organizationId, sock, waMessage, { historical = false } = {}) {
+  if (!waMessage?.key) return;
+  const fromMe = Boolean(waMessage.key.fromMe);
   const rawJid = waMessage.key.remoteJid;
   if (!rawJid || !isRealPersonJid(rawJid)) return;
 
@@ -698,12 +1012,12 @@ async function handleInboundMessage(organizationId, sock, waMessage) {
   const caption = extractText(waMessage);
   if (!caption && !media) return;
 
-  const resolvedJid = await resolvePhoneJid(sock, rawJid);
+  const resolvedJid = await resolvePhoneJid(sock, waMessage.key.remoteJidAlt || rawJid);
   const phone = phoneFromJid(resolvedJid);
   const rawUser = jidUser(rawJid);
   const quoted = extractQuoted(waMessage);
 
-  if (phone) {
+  if (phone && !historical && !fromMe) {
     await registerInboundResponse(organizationId, phone, caption).catch((err) => {
       console.error('[whatsapp] survey response error', err);
     });
@@ -725,7 +1039,7 @@ async function handleInboundMessage(organizationId, sock, waMessage) {
         organizationId,
         phone: phone || null,
         externalId: rawJid,
-        name: waMessage.pushName || null
+        name: (fromMe ? null : waMessage.pushName) || sessions.get(organizationId)?.phoneContacts.get(phone)?.name || null
       }
     });
   } else if (phone && (contact.phone !== phone || contact.externalId !== rawJid)) {
@@ -734,10 +1048,10 @@ async function handleInboundMessage(organizationId, sock, waMessage) {
       data: { phone, externalId: rawJid }
     });
   }
-  contact = await ensureContactAvatar(sock, contact, resolvedJid || rawJid);
+  if (!historical) contact = await ensureContactAvatar(sock, contact, resolvedJid || rawJid);
 
   let conversation = await prisma.conversation.findFirst({
-    where: { organizationId: organizationId, contactId: contact.id, channel: 'whatsapp', status: { not: 'CLOSED' } },
+    where: { organizationId: organizationId, contactId: contact.id, channel: 'whatsapp', ...(historical ? {} : { status: { not: 'CLOSED' } }) },
     orderBy: { updatedAt: 'desc' },
     include: CONVERSATION_INCLUDE
   });
@@ -764,7 +1078,7 @@ async function handleInboundMessage(organizationId, sock, waMessage) {
   // WhatsApp content as-is; no audio transcription or image OCR runs automatically here.
   let attachmentCreate = null;
   let mediaBuffer = null;
-  if (media) {
+  if (media && !historical) {
     mediaBuffer = await downloadInboundMedia(sock, waMessage, media);
     if (mediaBuffer) {
       const storageKey = await saveFile(organizationId, mediaBuffer, extensionFor(media.mimeType));
@@ -777,11 +1091,16 @@ async function handleInboundMessage(organizationId, sock, waMessage) {
   const content = caption || (media ? media.label : '');
   const contentType = media ? (attachmentCreate ? media.kind : `${media.kind}-failed`) : 'text';
 
+  const timestamp = waMessage.messageTimestamp;
+  const seconds = typeof timestamp === 'object' && timestamp !== null && 'low' in timestamp ? (timestamp.high || 0) * 4294967296 + (timestamp.low >>> 0) : Number(timestamp || 0);
+  const messageDate = historical && seconds > 0 && seconds < Date.now() / 1000 + 86400 ? new Date(seconds * 1000) : new Date();
   const message = await prisma.message.create({
     data: {
       conversationId: conversation.id,
       senderUserId: null,
-      direction: 'INBOUND',
+      ...(fromMe ? { senderKind: 'phone' } : {}),
+      direction: fromMe ? 'OUTBOUND' : 'INBOUND',
+      createdAt: messageDate,
       content: content.slice(0, 4000),
       contentType,
       waMessageId: waMessage.key.id || null,
@@ -795,7 +1114,7 @@ async function handleInboundMessage(organizationId, sock, waMessage) {
 
   let updated = await prisma.conversation.update({
     where: { id: conversation.id },
-    data: { updatedAt: new Date() },
+    data: { updatedAt: historical && !isNewConversation ? new Date(Math.max(new Date(conversation.updatedAt).getTime(), messageDate.getTime())) : messageDate },
     include: CONVERSATION_INCLUDE
   });
 
@@ -803,6 +1122,10 @@ async function handleInboundMessage(organizationId, sock, waMessage) {
   emitToOrg(organizationId, isNewConversation ? 'conversation:new' : 'conversation:updated', {
     conversation: sanitizeConversation(updated)
   });
+
+  if (historical || fromMe) return;
+  // Plan vencido: el mensaje queda guardado, pero el bot y la IA dejan de responder.
+  if (await require('./billing').isBlocked(organizationId).catch(() => false)) return;
 
   push.notifyNewInboundMessage({
     organizationId,
@@ -854,7 +1177,7 @@ async function handleInboundMessage(organizationId, sock, waMessage) {
       const aiSettings = flowResult.aiPrompt ? { ...settings, systemPrompt: `${settings.systemPrompt || ''} ${flowResult.aiPrompt}`.trim() } : settings;
       const reply = await aiBot.generateReply(conversation.id, aiSettings, organizationName);
       if (reply && reply.content) {
-        await sendBotMessage(conversation.id, organizationId, reply.content);
+        await sendBotMessage(conversation.id, organizationId, reply.content, 'ai');
         if (phone) await sendText(organizationId, phone, reply.content).catch((err) => console.error('[whatsapp] flow ai reply failed', err));
       }
     }
@@ -885,7 +1208,7 @@ async function handleInboundMessage(organizationId, sock, waMessage) {
   if (aiBot.shouldReply(updated, settings)) {
     const reply = await aiBot.generateReply(conversation.id, settings, organizationName);
     if (reply && reply.content) {
-      await sendBotMessage(conversation.id, organizationId, reply.content);
+      await sendBotMessage(conversation.id, organizationId, reply.content, 'ai');
       if (phone) {
         await sendText(organizationId, phone, reply.content).catch((err) => console.error('[whatsapp] ai reply send failed', err));
       }
@@ -936,6 +1259,41 @@ async function sendText(organizationId, phone, content, options) {
   const sendOpts = buildQuoteOptions(jid, options);
   const sent = await entry.sock.sendMessage(jid, { text: content }, sendOpts);
   return sent && sent.key ? sent.key.id : null;
+}
+
+// Publishing a WhatsApp "estado" (story) goes to status@broadcast with an explicit audience.
+// The session's own number is always included so the status also shows on the phone.
+function statusRecipients(entry, jids) {
+  const own = phoneFromJid(entry.sock.user && entry.sock.user.id);
+  const list = new Set(jids);
+  if (own) list.add(jidFromPhone(own));
+  return [...list];
+}
+
+async function sendStatusBroadcast(organizationId, content, options = {}, jids = []) {
+  const entry = sessions.get(organizationId);
+  if (!entry || entry.status !== 'connected' || !entry.sock) {
+    throw new Error('WhatsApp no esta conectado para esta organizacion');
+  }
+  const sent = await entry.sock.sendMessage('status@broadcast', content, {
+    ...options,
+    broadcast: true,
+    statusJidList: statusRecipients(entry, jids)
+  });
+  return sent && sent.key ? sent.key.id : null;
+}
+
+async function deleteStatusBroadcast(organizationId, waMessageId, jids = []) {
+  const entry = sessions.get(organizationId);
+  if (!entry || entry.status !== 'connected' || !entry.sock) {
+    throw new Error('WhatsApp no esta conectado para esta organizacion');
+  }
+  const own = entry.sock.user && entry.sock.user.id;
+  await entry.sock.sendMessage(
+    'status@broadcast',
+    { delete: { remoteJid: 'status@broadcast', fromMe: true, id: waMessageId, participant: own } },
+    { broadcast: true, statusJidList: statusRecipients(entry, jids) }
+  );
 }
 
 async function sendMedia(organizationId, phone, opts) {
@@ -1036,17 +1394,25 @@ function buildQuoteOptions(jid, options) {
 
 module.exports = {
   connect: connect,
+  adoptSession: adoptSession,
   disconnect: disconnect,
   shutdown: shutdown,
+  suspendSession: suspendSession,
+  hasStoredSession: hasStoredSession,
   pauseForCall: pauseForCall,
   resumeAfterCall: resumeAfterCall,
   resumeSessions: resumeSessions,
   getStatus: publicStatus,
   listSessions: listSessions,
   syncContacts: syncContacts,
+  listGroups: listGroups,
+  backfillAvatars: (organizationId) => { const entry = sessions.get(organizationId); return entry && entry.sock ? backfillContactAvatars(organizationId, entry.sock) : Promise.resolve({ started: false }); },
+  ingestMessages: enqueueMessages,
   getSessionReference: (organizationId) => sessionDir(organizationId),
   sendText: sendText,
   sendMedia: sendMedia,
+  sendStatusBroadcast: sendStatusBroadcast,
+  deleteStatusBroadcast: deleteStatusBroadcast,
   sendReaction: sendReaction,
   deleteMessage: deleteMessage,
   sendPoll: sendPoll,

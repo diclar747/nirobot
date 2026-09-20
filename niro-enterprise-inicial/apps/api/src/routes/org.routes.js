@@ -439,7 +439,9 @@ router.get('/dashboard-stats', async (req, res, next) => {
   try {
     const organizationId = req.auth.organizationId;
     const now = new Date();
-    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const PY_OFFSET_MS = -3 * 60 * 60 * 1000; // America/Asuncion (UTC-3)
+    const pyNow = new Date(now.getTime() + PY_OFFSET_MS);
+    const startOfToday = new Date(Date.UTC(pyNow.getUTCFullYear(), pyNow.getUTCMonth(), pyNow.getUTCDate()) - PY_OFFSET_MS);
     const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
 
     const [
@@ -533,11 +535,11 @@ router.get('/dashboard-stats', async (req, res, next) => {
       .filter((c) => c.messages.length > 0)
       .map((c) => (c.messages[0].createdAt.getTime() - c.createdAt.getTime()) / 60000);
     const avgFirstResponseMinutes =
-      responseSamples.length > 0 ? Math.round(responseSamples.reduce((a, b) => a + b, 0) / responseSamples.length) : 3;
+      responseSamples.length > 0 ? Math.round(responseSamples.reduce((a, b) => a + b, 0) / responseSamples.length) : null;
 
     // Response rate
     const agentOutbound = outboundMessages - botMessages;
-    const responseRate = inboundMessages > 0 ? Math.min(100, Math.round((agentOutbound / inboundMessages) * 100)) : 100;
+    const responseRate = inboundMessages > 0 ? Math.min(100, Math.round((agentOutbound / inboundMessages) * 100)) : null;
 
     // Status map
     const convStatusMap = Object.fromEntries(conversationsByStatus.map((s) => [s.status, s._count]));

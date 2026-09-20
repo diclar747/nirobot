@@ -6,6 +6,7 @@ import { Logo } from './Logo';
 import { NiroMascot } from './NiroMascot';
 import { WhatsAppConnectModal } from './WhatsAppConnectModal';
 import { NotificationBell } from './NotificationBell';
+import { BillingGate } from './BillingGate';
 import { apiGet } from '../lib/api';
 import { getSocket } from '../lib/socket';
 import '../styles/app-theme.css';
@@ -222,6 +223,18 @@ export function Layout() {
               </NavLink>
             )}
 
+            {isSuperadmin && (
+              <NavLink to="/clientes" className={({ isActive }) => `sidebar-nav-item ${isActive ? 'active' : ''}`}>
+                <div className="sidebar-nav-item-content">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <rect x="2" y="5" width="20" height="14" rx="2" />
+                    <line x1="2" y1="10" x2="22" y2="10" />
+                  </svg>
+                  <span>Clientes y cobros</span>
+                </div>
+              </NavLink>
+            )}
+
             {!isSuperadmin && (
               <NavLink to="/inbox" className={({ isActive }) => `sidebar-nav-item ${isActive ? 'active' : ''}`}>
                 <div className="sidebar-nav-item-content">
@@ -233,6 +246,32 @@ export function Layout() {
                 {unreadConversationsCount > 0 && (
                   <span className="sidebar-badge-count">{unreadConversationsCount}</span>
                 )}
+              </NavLink>
+            )}
+
+            {!isSuperadmin && (
+              <NavLink to="/contactos" className={({ isActive }) => `sidebar-nav-item ${isActive ? 'active' : ''}`}>
+                <div className="sidebar-nav-item-content">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+                    <circle cx="9" cy="7" r="4" />
+                    <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
+                    <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+                  </svg>
+                  <span>Contactos</span>
+                </div>
+              </NavLink>
+            )}
+
+            {!isSuperadmin && (
+              <NavLink to="/billing" className={({ isActive }) => `sidebar-nav-item ${isActive ? 'active' : ''}`}>
+                <div className="sidebar-nav-item-content">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <rect x="2" y="5" width="20" height="14" rx="2" />
+                    <line x1="2" y1="10" x2="22" y2="10" />
+                  </svg>
+                  <span>Mi plan</span>
+                </div>
               </NavLink>
             )}
 
@@ -325,6 +364,18 @@ export function Layout() {
                     <path d="M22 2 15 22 11 13 2 9 22 2Z" />
                   </svg>
                   <span>Campañas</span>
+                </div>
+              </NavLink>
+            )}
+
+            {!isSuperadmin && canSeeReports && (
+              <NavLink to="/estados" className={({ isActive }) => `sidebar-nav-item ${isActive ? 'active' : ''}`}>
+                <div className="sidebar-nav-item-content">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <circle cx="12" cy="12" r="9" strokeDasharray="4 3" />
+                    <circle cx="12" cy="12" r="4" />
+                  </svg>
+                  <span>Estados WhatsApp</span>
                 </div>
               </NavLink>
             )}
@@ -539,7 +590,9 @@ export function Layout() {
 
         {/* PAGE CONTENT */}
         <main style={{ flex: 1, overflowY: 'auto' }}>
-          <Outlet />
+          <BillingGate>
+            <Outlet />
+          </BillingGate>
         </main>
       </div>
 

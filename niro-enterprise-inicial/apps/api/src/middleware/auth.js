@@ -1,7 +1,8 @@
 const { verifyToken, ACCESS_COOKIE, CSRF_COOKIE } = require('../lib/tokens');
 const { HttpError } = require('../lib/errors');
+const { prisma } = require('../lib/prisma');
 
-function requireAuth(req, _res, next) {
+async function requireAuth(req, _res, next) {
   const token = req.cookies?.[ACCESS_COOKIE];
   if (!token) return next(new HttpError(401, 'No autenticado'));
 
@@ -13,7 +14,13 @@ function requireAuth(req, _res, next) {
   }
   if (payload.type !== 'access') return next(new HttpError(401, 'Token inválido'));
 
-  req.auth = { userId: payload.sub, organizationId: payload.organizationId ?? null, role: payload.role };
+  let user;
+  try {
+    user = await prisma.user.findUnique({ where: { id: payload.sub }, include: { organization: { select: { active: true } } } });
+  } catch (error) { return next(error); }
+  if (!user?.active || (user.organizationId && !user.organization?.active)) return next(new HttpError(401, 'La cuenta ya no está habilitada'));
+  if (user.organizationId !== (payload.organizationId ?? null)) return next(new HttpError(401, 'La sesión cambió de organización'));
+  req.auth = { userId: user.id, organizationId: user.organizationId, role: user.role };
   next();
 }
 

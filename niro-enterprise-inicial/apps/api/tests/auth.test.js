@@ -84,11 +84,20 @@ describe('POST /api/auth/refresh', () => {
     expect(newRefreshToken).toBeTruthy();
     expect(newRefreshToken).not.toBe(oldRefreshToken);
 
-    // Reusar el token viejo (ya rotado) debe fallar y revocar toda la sesión del usuario.
+    // Dentro de la ventana de gracia (pestañas concurrentes) el token viejo se rechaza sin
+    // revocar la sesión nueva.
+    const raceRes = await request(app).post('/api/auth/refresh').set('Cookie', `niro_rt=${oldRefreshToken}`);
+    expect(raceRes.status).toBe(409);
+    const stillValid = await request(app).post('/api/auth/refresh').set('Cookie', `niro_rt=${newRefreshToken}`);
+    expect(stillValid.status).toBe(200);
+    const rotatedAgain = extractCookieValue(stillValid.headers['set-cookie'], 'niro_rt');
+
+    // Pasada la ventana, reusar un token ya rotado es robo: debe fallar y revocar toda la sesión.
+    await prisma.refreshToken.updateMany({ where: { revokedAt: { not: null } }, data: { revokedAt: new Date(Date.now() - 60 * 1000) } });
     const reuseRes = await request(app).post('/api/auth/refresh').set('Cookie', `niro_rt=${oldRefreshToken}`);
     expect(reuseRes.status).toBe(401);
 
-    const newTokenNowRes = await request(app).post('/api/auth/refresh').set('Cookie', `niro_rt=${newRefreshToken}`);
+    const newTokenNowRes = await request(app).post('/api/auth/refresh').set('Cookie', `niro_rt=${rotatedAgain}`);
     expect(newTokenNowRes.status).toBe(401);
   });
 });

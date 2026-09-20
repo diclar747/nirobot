@@ -92,14 +92,33 @@ describe('Campañas de WhatsApp', () => {
     expect(response.body.campaign.attachment.mimeType).toBe('text/plain');
   });
 
-  test('marca fallidos cuando se inicia sin WhatsApp conectado', async () => {
+  test('se pausa (sin quemar destinatarios) cuando se inicia sin WhatsApp conectado', async () => {
     const { agent, csrfToken, ana } = await setup();
     const created = await agent.post('/api/org/campaigns').set('X-CSRF-Token', csrfToken).send({ name: 'Fallo QA', message: 'Prueba', contactIds: [ana.id], messagesPerHour: 100 });
     const started = await agent.post(`/api/org/campaigns/${created.body.campaign.id}/start`).set('X-CSRF-Token', csrfToken).send({});
     expect(started.status).toBe(200);
-    await new Promise((resolve) => setTimeout(resolve, 100));
+    const deadline = Date.now() + 5000;
+    while (Date.now() < deadline) {
+      const current = await prisma.campaign.findUnique({ where: { id: created.body.campaign.id } });
+      if (current.status === 'PAUSED') break;
+      await new Promise(resolve => setTimeout(resolve, 25));
+    }
     const detail = await agent.get(`/api/org/campaigns/${created.body.campaign.id}`);
-    expect(detail.body.campaign.counts.failed).toBe(1);
+    expect(detail.body.campaign.status).toBe('PAUSED');
+    expect(detail.body.campaign.counts.failed).toBe(0);
+    expect(detail.body.campaign.counts.pending).toBe(1);
+    campaigns.clearAllTimers();
+  });
+
+  test('no permite pausar ni cancelar una campaña que ya terminó', async () => {
+    const { agent, csrfToken, ana } = await setup();
+    const created = await agent.post('/api/org/campaigns').set('X-CSRF-Token', csrfToken).send({ name: 'Estados QA', message: 'Prueba', contactIds: [ana.id], messagesPerHour: 100 });
+    const id = created.body.campaign.id;
+    await prisma.campaign.update({ where: { id }, data: { status: 'CANCELLED' } });
+    expect((await agent.post(`/api/org/campaigns/${id}/pause`).set('X-CSRF-Token', csrfToken).send({})).status).toBe(409);
+    await prisma.campaign.update({ where: { id }, data: { status: 'COMPLETED' } });
+    expect((await agent.post(`/api/org/campaigns/${id}/cancel`).set('X-CSRF-Token', csrfToken).send({})).status).toBe(409);
+    expect((await agent.post(`/api/org/campaigns/${id}/pause`).set('X-CSRF-Token', csrfToken).send({})).status).toBe(409);
     campaigns.clearAllTimers();
   });
 
@@ -113,10 +132,15 @@ describe('Campañas de WhatsApp', () => {
       messagesPerHour: 100
     });
     const campaignId = response.body.campaign.id;
+    const statusSpy = jest.spyOn(whatsapp, 'getStatus').mockReturnValue({ status: 'connected', qr: null, phone: '595980000000' });
     const sendTextSpy = jest.spyOn(whatsapp, 'sendText').mockResolvedValue('wa-campaign-qa');
 
     await campaigns.startCampaign(organization.id, campaignId);
-    await new Promise((resolve) => setTimeout(resolve, 100));
+    const deadline = Date.now() + 5000;
+    while (Date.now() < deadline) {
+      if (await prisma.message.findFirst({ where: { campaignId } })) break;
+      await new Promise(resolve => setTimeout(resolve, 25));
+    }
 
     const sentRecipient = await prisma.campaignRecipient.findFirst({ where: { campaignId } });
     expect(sentRecipient.status).toBe('SENT');
@@ -133,6 +157,7 @@ describe('Campañas de WhatsApp', () => {
 
     campaigns.clearAllTimers();
     sendTextSpy.mockRestore();
+    statusSpy.mockRestore();
   });
 
   test('personaliza el mensaje por destinatario y conserva el texto renderizado en el historial', async () => {
@@ -146,11 +171,15 @@ describe('Campañas de WhatsApp', () => {
       messagesPerHour: 100
     });
     const campaignId = response.body.campaign.id;
+    const statusSpy = jest.spyOn(whatsapp, 'getStatus').mockReturnValue({ status: 'connected', qr: null, phone: '595980000000' });
     const sendTextSpy = jest.spyOn(whatsapp, 'sendText').mockResolvedValue('wa-personalized-ana');
 
     await campaigns.startCampaign(organization.id, campaignId);
-    await new Promise((resolve) => setTimeout(resolve, 100));
-    await new Promise((resolve) => setTimeout(resolve, 100));
+    const deadline = Date.now() + 5000;
+    while (Date.now() < deadline) {
+      if (await prisma.message.findFirst({ where: { campaignId } })) break;
+      await new Promise(resolve => setTimeout(resolve, 25));
+    }
 
     expect(sendTextSpy).toHaveBeenCalledWith(organization.id, ana.phone, 'Hola Ana, tu teléfono es 595980000101.');
     const messages = await prisma.message.findMany({ where: { campaignId }, orderBy: { createdAt: 'asc' } });
@@ -158,6 +187,7 @@ describe('Campañas de WhatsApp', () => {
 
     campaigns.clearAllTimers();
     sendTextSpy.mockRestore();
+    statusSpy.mockRestore();
   });
 
   test('genera una API key de una sola lectura, envía por Bearer y revoca el acceso', async () => {

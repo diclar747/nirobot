@@ -14,7 +14,7 @@ describe('proveedor de llamadas', () => {
     const reason = await call.waitForEnd();
 
     expect(events).toEqual(['ringing', 'connected']);
-    expect(reason).toBe('hangup');
+    expect(reason).toBe('audio_complete');
     expect(call.callId).toMatch(/^mock-/);
   });
 

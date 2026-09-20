@@ -152,7 +152,7 @@ export function Home() {
   const isWaConnected = waStatus === 'connected';
 
   const msgStats = stats?.kpis.messages;
-  const avgResponseLabel = msgStats ? `${msgStats.avgFirstResponseMinutes}m` : '—';
+  const avgResponseLabel = msgStats && msgStats.avgFirstResponseMinutes !== null ? `${msgStats.avgFirstResponseMinutes}m` : '—';
   const botResolvedPct = msgStats && msgStats.outbound > 0 ? Math.round((msgStats.bot / msgStats.outbound) * 100) : 0;
   const transferredPct = msgStats && msgStats.outbound > 0 ? 100 - botResolvedPct : 0;
 

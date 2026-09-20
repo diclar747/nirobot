@@ -37,6 +37,9 @@ function sanitizeMessage(message) {
     content: message.content,
     contentType: message.contentType,
     deliveryStatus: message.deliveryStatus,
+    senderKind: message.senderKind || null,
+    viaCampaign: Boolean(message.campaignId),
+    viaApi: Boolean(message.apiKeyId),
     waMessageId: message.waMessageId,
     quotedMessageId: message.quotedMessageId,
     quotedPreview: message.quotedPreview,
@@ -62,9 +65,9 @@ function broadcastMessage(organizationId, conversationId, message) {
   return payload;
 }
 
-async function sendBotMessage(conversationId, organizationId, content) {
+async function sendBotMessage(conversationId, organizationId, content, kind = 'bot') {
   const message = await prisma.message.create({
-    data: { conversationId, senderUserId: null, direction: 'OUTBOUND', content },
+    data: { conversationId, senderUserId: null, senderKind: kind, direction: 'OUTBOUND', content },
     include: MESSAGE_INCLUDE
   });
   broadcastMessage(organizationId, conversationId, message);

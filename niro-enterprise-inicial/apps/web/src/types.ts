@@ -112,6 +112,7 @@ export interface Contact {
   externalId?: string | null;
   avatarUrl?: string | null;
   tags: string[];
+  crmTags?: string[];
   callConsentStatus?: string | null;
   callConsentAt?: string | null;
   callOptedOutAt?: string | null;
@@ -152,6 +153,9 @@ export interface Message {
   content: string;
   contentType: string;
   deliveryStatus: string;
+  senderKind?: string | null;
+  viaCampaign?: boolean;
+  viaApi?: boolean;
   waMessageId: string | null;
   quotedMessageId: string | null;
   quotedPreview: string | null;
@@ -208,8 +212,8 @@ export interface DashboardStats {
       outbound: number;
       notes: number;
       bot: number;
-      responseRate: number;
-      avgFirstResponseMinutes: number;
+      responseRate: number | null;
+      avgFirstResponseMinutes: number | null;
     };
     conversations: {
       total: number;
@@ -334,7 +338,7 @@ export interface CampaignRecipientInfo {
   deliveredAt: string | null;
   readAt: string | null;
   waMessageId: string | null;
-  contact: { id: string; name: string | null; phone: string | null; avatarUrl: string | null };
+  contact: { id: string; name: string | null; phone: string | null; avatarUrl: string | null; isGroup?: boolean };
 }
 
 export interface WhatsAppSession {

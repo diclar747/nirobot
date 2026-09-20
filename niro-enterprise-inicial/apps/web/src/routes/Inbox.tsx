@@ -1,11 +1,15 @@
 import { ChangeEvent, FormEvent, useCallback, useEffect, useRef, useState } from 'react';
 import { apiDelete, apiGet, apiPatch, apiPost, apiUpload, ApiError } from '../lib/api';
 import { getSocket } from '../lib/socket';
+import { CallAudio } from '../lib/callAudio';
 import { contactLabel, formatPhone, formatTime, initials, isUsablePhone, phoneDigits } from '../lib/format';
 import { CRM_STAGES, deriveStage, statusForStage, tagsForStage, type CrmStage } from '../lib/crmStage';
 import { Modal } from '../components/Modal';
+import { PlyrVideo, WaveAudio } from '../components/MediaPlayers';
+import { StatusStories } from '../components/StatusStories';
 import { AgentsDropPanel, setConversationDragData } from '../components/AgentsDropPanel';
 import { useAlerts } from '../context/AlertContext';
+import { useAuth } from '../context/AuthContext';
 import {
   type AgentPresence,
   type AgentPresenceStatus,
@@ -33,6 +37,7 @@ const DIRECT_CALL_ACTIVE_STATUSES = new Set(['STARTING', 'RINGING', 'CONNECTED']
 type DirectCall = {
   id: string;
   callId: string;
+  audioToken?: string;
   phoneNumber: string;
   accountId: string;
   status: 'STARTING' | 'RINGING' | 'CONNECTED' | 'COMPLETED' | 'NO_ANSWER' | 'FAILED' | 'CANCELLED';
@@ -42,16 +47,20 @@ type DirectCall = {
   endedReason: string | null;
 };
 
-function directCallStatusLabel(status: DirectCall['status']) {
+function directCallStatusLabel(status: DirectCall['status'], endedReason?: string | null) {
   const labels: Record<DirectCall['status'], string> = {
     STARTING: 'Iniciando llamada…',
     RINGING: 'Llamando…',
     CONNECTED: 'Llamada conectada',
     COMPLETED: 'Llamada finalizada',
-    NO_ANSWER: 'Sin respuesta',
+    NO_ANSWER: 'Sin respuesta (no contestó o cortó antes de atender)',
     FAILED: 'Llamada fallida',
     CANCELLED: 'Llamada cancelada'
   };
+  if (status === 'FAILED') {
+    if (endedReason === 'media_timeout' || endedReason === 'media_disconnected') return 'Llamada finalizada: no se recibió el audio del micrófono (revisá el permiso del navegador)';
+    if (endedReason === 'connection_lost' || endedReason === 'disconnect') return 'Llamada finalizada: se perdió la conexión';
+  }
   return labels[status];
 }
 
@@ -292,6 +301,8 @@ export function Inbox() {
               </span>
             </div>
           </div>
+
+          <StatusStories />
 
           <div className="crm-conv-list-items">
             {loadingList && <p style={{ padding: 16, color: 'var(--text-dim)', fontSize: 13 }}>Cargando...</p>}
@@ -638,6 +649,9 @@ function ActiveChatWindow({
   const [recordingSeconds, setRecordingSeconds] = useState(0);
   const [respondingTransfer, setRespondingTransfer] = useState(false);
   const [directCall, setDirectCall] = useState<DirectCall | null>(null);
+  const audioRef = useRef<CallAudio | null>(null);
+  const callIdRef = useRef<string | null>(null);
+  const [callMuted, setCallMuted] = useState(false);
   const [directCallBusy, setDirectCallBusy] = useState(false);
   const [directCallError, setDirectCallError] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -659,6 +673,12 @@ function ActiveChatWindow({
     setDirectCall(null);
     setDirectCallError(null);
     setDirectCallBusy(false);
+    setCallMuted(false);
+    return () => {
+      audioRef.current?.stop(); audioRef.current = null;
+      const id = callIdRef.current; callIdRef.current = null;
+      if (id) void apiPost(`/api/org/wa-calls/direct/${id}/hangup`, {}).catch(() => {});
+    };
   }, [conversation.id]);
 
   useEffect(() => {
@@ -667,7 +687,12 @@ function ActiveChatWindow({
     const poll = window.setInterval(async () => {
       try {
         const result = await apiGet<{ call: DirectCall }>(`/api/org/wa-calls/direct/${directCall.id}`);
-        if (!cancelled) setDirectCall(result.call);
+        if (!cancelled) {
+          setDirectCall(result.call);
+          if (!DIRECT_CALL_ACTIVE_STATUSES.has(result.call.status)) {
+            audioRef.current?.stop(); audioRef.current = null; callIdRef.current = null;
+          }
+        }
       } catch {
         // The server keeps direct calls in memory for a short period; a transient
         // polling error should not interrupt the call already in progress.
@@ -686,12 +711,29 @@ function ActiveChatWindow({
     if (!accepted) return;
     setDirectCallBusy(true);
     setDirectCallError(null);
+    const audio = new CallAudio(message => {
+      setDirectCallError(message);
+      audioRef.current?.stop();
+      if (callIdRef.current) void apiPost(`/api/org/wa-calls/direct/${callIdRef.current}/hangup`, {}).catch(() => {});
+    });
+    audioRef.current = audio;
     try {
+      await audio.prepare();
+      if (audioRef.current !== audio) return;
       const result = await apiPost<{ call: DirectCall }>('/api/org/wa-calls/direct', { conversationId: conversation.id });
+      if (audioRef.current !== audio) {
+        await apiPost(`/api/org/wa-calls/direct/${result.call.id}/hangup`, {});
+        return;
+      }
+      callIdRef.current = result.call.id;
       setDirectCall(result.call);
+      if (!result.call.audioToken) throw new Error('El servidor no habilitó el audio de la llamada');
+      await audio.attach(result.call.id, result.call.audioToken);
       showToast(`📞 ${directCallStatusLabel(result.call.status)} a ${name}`);
     } catch (err) {
-      const message = err instanceof ApiError ? err.message : 'No se pudo iniciar la llamada';
+      audio.stop();
+      if (callIdRef.current) void apiPost(`/api/org/wa-calls/direct/${callIdRef.current}/hangup`, {}).catch(() => {});
+      const message = err instanceof Error ? err.message : 'No se pudo iniciar la llamada';
       setDirectCallError(message);
       showToast(`⚠️ ${message}`);
     } finally {
@@ -705,6 +747,7 @@ function ActiveChatWindow({
     try {
       const result = await apiPost<{ call: DirectCall }>(`/api/org/wa-calls/direct/${directCall.id}/hangup`, {});
       setDirectCall(result.call);
+      audioRef.current?.stop(); audioRef.current = null; callIdRef.current = null;
       showToast('📴 Llamada finalizada');
     } catch (err) {
       const message = err instanceof ApiError ? err.message : 'No se pudo finalizar la llamada';
@@ -743,11 +786,16 @@ function ActiveChatWindow({
   }
 
   useEffect(() => {
+    // Drop the previous chat's messages right away and ignore late responses: otherwise their
+    // attachments are rendered under the new conversation and every media request 404s.
+    let cancelled = false;
+    setMessages([]);
     setLoading(true);
     apiGet<{ messages: Message[] }>(`/api/org/conversations/${conversation.id}`)
-      .then((data) => setMessages(data.messages))
+      .then((data) => { if (!cancelled) setMessages(data.messages); })
       .catch(() => {})
-      .finally(() => setLoading(false));
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
   }, [conversation.id]);
 
   useEffect(() => {
@@ -1004,6 +1052,12 @@ function ActiveChatWindow({
           >
             {directCallBusy ? '⏳' : directCall && DIRECT_CALL_ACTIVE_STATUSES.has(directCall.status) ? '📴' : '📞'}
           </button>
+          {directCall && DIRECT_CALL_ACTIVE_STATUSES.has(directCall.status) && (
+            <button type="button" className="composer-action-btn" aria-label={callMuted ? 'Activar micrófono' : 'Silenciar micrófono'} aria-pressed={callMuted}
+              onClick={() => { audioRef.current?.mute(!callMuted); setCallMuted(!callMuted); }}>
+              {callMuted ? '🔇' : '🎙️'}
+            </button>
+          )}
           <button
             type="button"
             className="composer-action-btn"
@@ -1047,7 +1101,7 @@ function ActiveChatWindow({
             fontSize: 12
           }}
         >
-          <span>{directCallError || (directCall ? `📞 ${directCallStatusLabel(directCall.status)}` : '')}</span>
+          <span>{directCallError || (directCall ? `📞 ${directCallStatusLabel(directCall.status, directCall.endedReason)}` : '')}</span>
           {directCallError && <button type="button" className="composer-action-btn" onClick={() => setDirectCallError(null)} aria-label="Cerrar error">×</button>}
         </div>
       )}
@@ -1274,15 +1328,8 @@ function ActiveChatWindow({
               {/* Bubble Meta (Time, Starred icon, Delivery status) */}
               <div className="chat-bubble-meta" style={m.direction === 'OUTBOUND' ? { alignSelf: 'flex-end' } : {}}>
                 {isStarred && <span title="Mensaje destacado" style={{ color: '#f59e0b', fontSize: 11 }}>⭐</span>}
-                {m.direction === 'NOTE' ? 'Nota interna' : m.direction === 'INBOUND' ? 'Cliente' : m.sender?.name || 'Agente'} · {formatTime(m.createdAt)}
-                {m.direction === 'OUTBOUND' && (
-                  <span
-                    title={m.deliveryStatus === 'failed' ? 'No enviado' : m.deliveryStatus === 'pending' ? 'Enviando…' : 'Enviado'}
-                    style={{ color: m.deliveryStatus === 'failed' ? '#ef4444' : m.deliveryStatus === 'pending' ? '#f59e0b' : '#38bdf8', marginLeft: 4, fontWeight: 800 }}
-                  >
-                    {m.deliveryStatus === 'failed' ? '!' : m.deliveryStatus === 'pending' ? '◷' : '✓✓'}
-                  </span>
-                )}
+                <MessageAuthor message={m} /> · {formatTime(m.createdAt)}
+                {m.direction === 'OUTBOUND' && <MessageTicks status={m.deliveryStatus} />}
               </div>
             </div>
           );
@@ -1717,6 +1764,37 @@ function ShareContactModal({
   );
 }
 
+const MEDIA_PLACEHOLDERS = new Set(['🎤 Audio', '🖼️ Imagen', '🎬 Video', '📄 Documento', '🩿 Sticker', '🎭 Sticker', 'Audio', 'Imagen', 'Video', 'Sticker', 'Documento']);
+
+const AUTHOR_LABELS: Record<string, { icon: string; label: string }> = {
+  bot: { icon: '🤖', label: 'Bot' },
+  ai: { icon: '✨', label: 'Asistente IA' },
+  phone: { icon: '📱', label: 'Desde el teléfono' }
+};
+
+function MessageAuthor({ message }: { message: Message }) {
+  if (message.direction === 'NOTE') return <span className="chat-author">📝 Nota interna{message.sender ? ` · ${message.sender.name}` : ''}</span>;
+  if (message.direction === 'INBOUND') return <span className="chat-author">Cliente</span>;
+  if (message.sender) return <span className="chat-author agent" title="Agente que respondió">👤 {message.sender.name}</span>;
+  if (message.viaCampaign) return <span className="chat-author campaign">📣 Campaña</span>;
+  if (message.viaApi) return <span className="chat-author api">🔌 API</span>;
+  const kind = AUTHOR_LABELS[message.senderKind || 'bot'] || AUTHOR_LABELS.bot;
+  return <span className={`chat-author ${message.senderKind || 'bot'}`}>{kind.icon} {kind.label}</span>;
+}
+
+// Igual que WhatsApp: ✓ enviado, ✓✓ gris entregado, ✓✓ azul leído.
+function MessageTicks({ status }: { status: string }) {
+  const map: Record<string, { text: string; title: string }> = {
+    failed: { text: '!', title: 'No enviado' },
+    pending: { text: '◷', title: 'Enviando…' },
+    sent: { text: '✓', title: 'Enviado' },
+    delivered: { text: '✓✓', title: 'Entregado' },
+    read: { text: '✓✓', title: 'Leído' }
+  };
+  const item = map[status] || map.sent;
+  return <span className={`chat-msg-ticks ${map[status] ? status : 'sent'}`} title={item.title}>{item.text}</span>;
+}
+
 function MessageBody({ message }: { message: Message }) {
   if (message.contentType === 'poll') {
     try {
@@ -1750,6 +1828,11 @@ function MessageBody({ message }: { message: Message }) {
       return <>{message.content}</>;
     }
   }
+  // Con adjunto no hace falta el título de relleno ("🖼️ Imagen", "Sticker", "Video"…), como en WhatsApp Web.
+  if (message.attachment && MEDIA_PLACEHOLDERS.has(message.content.trim())) return null;
+  if (message.contentType.endsWith('-failed') && MEDIA_PLACEHOLDERS.has(message.content.trim())) {
+    return <em className="crm-media-failed">No se pudo descargar el archivo</em>;
+  }
   return <>{message.content}</>;
 }
 
@@ -1763,9 +1846,12 @@ function AttachmentContent({
   onOpenImage?: (url: string, fileName: string) => void;
 }) {
   if (!message.attachment) return null;
-  const url = `/api/org/conversations/${conversationId}/attachments/${message.attachment.id}`;
+  const url = `/api/org/conversations/${message.conversationId || conversationId}/attachments/${message.attachment.id}`;
   const mime = message.attachment.mimeType;
 
+  if (message.contentType === 'sticker' || (mime === 'image/webp' && message.contentType.startsWith('sticker'))) {
+    return <img src={url} alt="" className="crm-msg-sticker" loading="lazy" />;
+  }
   if (mime.startsWith('image/')) {
     return (
       <div className="crm-msg-media-wrap">
@@ -1784,26 +1870,13 @@ function AttachmentContent({
   if (mime.startsWith('video/')) {
     return (
       <div className="crm-msg-media-wrap">
-        <video
-          src={url}
-          controls
-          className="crm-msg-video"
-          preload="metadata"
-          style={{ maxWidth: '100%', maxHeight: 320, borderRadius: 8, marginTop: 4 }}
-        />
+        <PlyrVideo src={url} />
         <a href={url} download={message.attachment.fileName} className="crm-msg-download-btn" title="Descargar">⬇️</a>
       </div>
     );
   }
   if (mime.startsWith('audio/')) {
-    return (
-      <audio
-        src={url}
-        controls
-        className="crm-msg-audio"
-        style={{ width: '100%', minWidth: 220, marginTop: 4 }}
-      />
-    );
+    return <WaveAudio src={url} outbound={message.direction === 'OUTBOUND'} />;
   }
   return (
     <a href={url} target="_blank" rel="noreferrer" className="crm-msg-document">
@@ -2252,6 +2325,10 @@ function EditContactModal({
   onSaved: (updatedContact: Contact) => void;
 }) {
   const { notify } = useAlerts();
+  const { user } = useAuth();
+  const canEditConsent = user ? ['OWNER', 'ADMIN', 'SUPERVISOR'].includes(user.role) : false;
+  const initialConsent = contact.callOptedOutAt ? 'REVOKED' : (contact.callConsentStatus || 'UNKNOWN');
+  const [consent, setConsent] = useState(initialConsent);
   const [name, setName] = useState(contact.name || '');
   const [phone, setPhone] = useState(contact.phone || '');
   const [email, setEmail] = useState(contact.email || '');
@@ -2264,7 +2341,17 @@ function EditContactModal({
       const res = await apiPatch<{ contact: Contact }>(`/api/org/contacts/${contact.id}`, {
         name: name.trim() || null,
         phone: phone.trim() || null,
-        email: email.trim() || null
+        email: email.trim() || null,
+        ...(canEditConsent && consent !== initialConsent
+          ? {
+              callConsentStatus: consent === 'REVOKED' ? 'REVOKED' : consent,
+              callConsentAt: consent === 'GRANTED' ? new Date().toISOString() : null,
+              callConsentSource: `Registrado manualmente por ${user?.name || 'un usuario'}`,
+              // Granting clears any previous opt-out; revoking records it.
+              callOptedOutAt: consent === 'REVOKED' ? new Date().toISOString() : null,
+              callOptOutSource: consent === 'REVOKED' ? `Registrado manualmente por ${user?.name || 'un usuario'}` : null
+            }
+          : {})
       });
       onSaved(res.contact);
     } catch (err) {
@@ -2306,6 +2393,18 @@ function EditContactModal({
             placeholder="Ej: maria@ejemplo.com"
           />
         </div>
+        {canEditConsent && (
+          <div className="field">
+            <label>Consentimiento para llamadas de WhatsApp</label>
+            <select className="input" value={consent} onChange={(e) => setConsent(e.target.value)}>
+              <option value="UNKNOWN">Sin registro (no se le llamará en campañas)</option>
+              <option value="GRANTED">Autorizado a recibir llamadas</option>
+              <option value="DENIED">Rechazó las llamadas</option>
+              <option value="REVOKED">Pidió no recibir más llamadas</option>
+            </select>
+            <small style={{ opacity: 0.7 }}>Solo los contactos autorizados entran en campañas de llamadas. Marcá esta opción únicamente si el cliente aceptó ser llamado.</small>
+          </div>
+        )}
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 10 }}>
           <button type="button" className="btn secondary" onClick={onClose} disabled={saving}>
             Cancelar

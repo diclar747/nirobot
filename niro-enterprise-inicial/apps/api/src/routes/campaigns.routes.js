@@ -8,6 +8,7 @@ const { upload } = require('../middleware/upload');
 const { saveFile } = require('../lib/storage');
 const { extensionFor } = require('../lib/attachments');
 const campaigns = require('../lib/campaigns');
+const whatsapp = require('../lib/whatsapp');
 
 const router = express.Router();
 
@@ -37,6 +38,38 @@ router.get('/', async (req, res, next) => {
   }
 });
 
+router.get('/groups', async (req, res, next) => {
+  try {
+    const groups = await whatsapp.listGroups(req.auth.organizationId, { force: req.query.refresh === '1' });
+    res.json({ groups });
+  } catch (err) {
+    next(err.status ? new HttpError(err.status, err.message) : err);
+  }
+});
+
+// Contactos + etiquetas (del contacto y del CRM/conversaciones) para armar la audiencia.
+router.get('/audience', async (req, res, next) => {
+  try {
+    const organizationId = req.auth.organizationId;
+    const contacts = await prisma.contact.findMany({
+      where: { organizationId, phone: { not: null } },
+      select: {
+        id: true, name: true, phone: true, email: true, tags: true, createdAt: true,
+        conversations: { select: { tags: true } }
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 5000
+    });
+    const rows = contacts.map(({ conversations, ...contact }) => ({
+      ...contact,
+      crmTags: Array.from(new Set(conversations.flatMap((c) => c.tags)))
+    }));
+    res.json({ contacts: rows });
+  } catch (err) {
+    next(err);
+  }
+});
+
 router.post('/', requireRole('OWNER', 'ADMIN', 'SUPERVISOR'), requireCsrf, async (req, res, next) => {
   try {
     const data = createCampaignSchema.parse(req.body);
@@ -45,18 +78,30 @@ router.post('/', requireRole('OWNER', 'ADMIN', 'SUPERVISOR'), requireCsrf, async
       throw new HttpError(400, 'La fecha de programación debe estar en el futuro');
     }
 
-    const recipients = await prisma.contact.findMany({
+    // Grupos de WhatsApp elegidos: se validan contra los grupos reales de la cuenta conectada.
+    let groupTargets = [];
+    if (data.groupJids.length > 0) {
+      const groups = await whatsapp.listGroups(req.auth.organizationId).catch((err) => { throw new HttpError(err.status || 409, err.message); });
+      const byId = new Map(groups.map((group) => [group.id, group]));
+      const unknown = data.groupJids.filter((jid) => !byId.has(jid));
+      if (unknown.length > 0) throw new HttpError(400, 'Alguno de los grupos elegidos ya no está disponible. Actualizá la lista de grupos');
+      groupTargets = data.groupJids.map((jid) => ({ groupJid: jid, groupName: byId.get(jid).name }));
+    }
+
+    const recipients = data.contactIds.length === 0 && data.tagFilter.length === 0 ? [] : await prisma.contact.findMany({
       where: {
         organizationId: req.auth.organizationId,
         phone: { not: null },
         OR: [
           ...(data.contactIds.length > 0 ? [{ id: { in: data.contactIds } }] : []),
-          ...(data.tagFilter.length > 0 ? [{ tags: { hasSome: data.tagFilter } }] : [])
+          ...(data.tagFilter.length > 0
+            ? [{ tags: { hasSome: data.tagFilter } }, { conversations: { some: { tags: { hasSome: data.tagFilter } } } }]
+            : [])
         ]
       },
       select: { id: true }
     });
-    if (recipients.length === 0) {
+    if (recipients.length === 0 && groupTargets.length === 0) {
       throw new HttpError(400, 'Ningún contacto seleccionado tiene un teléfono registrado');
     }
 
@@ -78,7 +123,7 @@ router.post('/', requireRole('OWNER', 'ADMIN', 'SUPERVISOR'), requireCsrf, async
         status: scheduledAt ? 'SCHEDULED' : 'DRAFT',
         createdByUserId: req.auth.userId,
         recipients: {
-          create: recipients.map((c) => ({ contactId: c.id }))
+          create: [...recipients.map((c) => ({ contactId: c.id })), ...groupTargets]
         }
       },
       include: CAMPAIGN_INCLUDE
@@ -92,7 +137,7 @@ router.post('/', requireRole('OWNER', 'ADMIN', 'SUPERVISOR'), requireCsrf, async
       action: 'campaign.created',
       entityType: 'Campaign',
       entityId: campaign.id,
-      metadata: { name: data.name, recipientCount: recipients.length, speedProfile: data.speedProfile, messagesPerHour }
+      metadata: { name: data.name, recipientCount: recipients.length + groupTargets.length, speedProfile: data.speedProfile, messagesPerHour }
     });
 
     res.status(201).json({ campaign: campaigns.sanitizeCampaign(campaign, await campaigns.getCounts(campaign.id)) });
@@ -160,7 +205,9 @@ router.get('/:id', async (req, res, next) => {
         deliveredAt: r.deliveredAt,
         readAt: r.readAt,
         waMessageId: r.waMessageId,
-        contact: { id: r.contact.id, name: r.contact.name, phone: r.contact.phone, avatarUrl: r.contact.avatarUrl }
+        contact: r.contact
+          ? { id: r.contact.id, name: r.contact.name, phone: r.contact.phone, avatarUrl: r.contact.avatarUrl }
+          : { id: r.id, name: r.groupName || 'Grupo', phone: null, avatarUrl: null, isGroup: true }
       }))
     });
   } catch (err) {
@@ -201,6 +248,7 @@ router.post('/:id/pause', requireRole('OWNER', 'ADMIN', 'SUPERVISOR'), requireCs
     });
     if (!campaign) throw new HttpError(404, 'Campaña no encontrada');
 
+    if (campaign.status !== 'SENDING') throw new HttpError(409, 'Solo se puede pausar una campaña que está enviando');
     campaigns.pauseCampaign(campaign.id);
     const updated = await prisma.campaign.update({
       where: { id: campaign.id },
@@ -221,6 +269,7 @@ router.post('/:id/cancel', requireRole('OWNER', 'ADMIN', 'SUPERVISOR'), requireC
     });
     if (!campaign) throw new HttpError(404, 'Campaña no encontrada');
 
+    if (['COMPLETED', 'CANCELLED'].includes(campaign.status)) throw new HttpError(409, 'La campaña ya terminó');
     campaigns.pauseCampaign(campaign.id);
     const updated = await prisma.campaign.update({
       where: { id: campaign.id },
@@ -240,6 +289,9 @@ router.post('/:id/retry-failed', requireRole('OWNER', 'ADMIN', 'SUPERVISOR'), re
       where: { id: req.params.id, organizationId: req.auth.organizationId }
     });
     if (!campaign) throw new HttpError(404, 'Campaña no encontrada');
+    if (!['COMPLETED', 'PAUSED'].includes(campaign.status)) {
+      throw new HttpError(409, 'Solo se pueden reintentar fallidos de una campaña completada o pausada');
+    }
 
     await campaigns.retryFailed(req.auth.organizationId, campaign.id);
     const updated = await prisma.campaign.findUnique({ where: { id: campaign.id }, include: CAMPAIGN_INCLUDE });

@@ -20,6 +20,10 @@ import { ApiPortal } from './routes/ApiPortal';
 import { AiAgents } from './routes/AiAgents';
 import { BotFlow } from './routes/BotFlow';
 import { CallCampaigns } from './routes/CallCampaigns';
+import { StatusPosts } from './routes/StatusPosts';
+import { Billing } from './routes/Billing';
+import { Contacts } from './routes/Contacts';
+import { SuperadminBilling } from './routes/SuperadminBilling';
 
 export function App() {
   return (
@@ -41,9 +45,12 @@ export function App() {
 
               <Route element={<ProtectedRoute roles={['SUPERADMIN']} />}>
                 <Route path="/organizations" element={<SuperadminOrganizations />} />
+                <Route path="/clientes" element={<SuperadminBilling />} />
               </Route>
 
               <Route element={<ProtectedRoute roles={['OWNER', 'ADMIN', 'SUPERVISOR', 'AGENT']} />}>
+                <Route path="/billing" element={<Billing />} />
+                <Route path="/contactos" element={<Contacts />} />
                 <Route path="/inbox" element={<Inbox />} />
               </Route>
 
@@ -70,6 +77,7 @@ export function App() {
               <Route element={<ProtectedRoute roles={['OWNER', 'ADMIN', 'SUPERVISOR']} />}>
                 <Route path="/campaigns" element={<Campaigns />} />
                 <Route path="/llamadas" element={<CallCampaigns />} />
+                <Route path="/estados" element={<StatusPosts />} />
               </Route>
 
               <Route element={<ProtectedRoute roles={['OWNER', 'ADMIN']} />}>
