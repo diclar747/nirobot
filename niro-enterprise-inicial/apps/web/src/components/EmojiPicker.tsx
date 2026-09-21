@@ -20,7 +20,7 @@ export function EmojiPicker({ onPick, onClose, inline = false, keepOpen = false 
       if (target.closest?.('[data-emoji-toggle]')) return; // el botón que lo abre/cierra maneja su propio clic
       if (ref.current && !ref.current.contains(target)) onClose();
     };
-    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') onClose(); };
+    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') { event.stopPropagation(); onClose(); } };
     // el clic que abrió el selector ya pasó: escuchamos en el siguiente ciclo
     const timer = window.setTimeout(() => document.addEventListener('mousedown', onDown), 0);
     document.addEventListener('keydown', onKey);

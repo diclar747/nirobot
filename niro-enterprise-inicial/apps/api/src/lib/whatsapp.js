@@ -1017,10 +1017,13 @@ async function handleInboundMessage(organizationId, sock, waMessage, { historica
   const rawUser = jidUser(rawJid);
   const quoted = extractQuoted(waMessage);
 
+  let surveyHandled = false;
   if (phone && !historical && !fromMe) {
-    await registerInboundResponse(organizationId, phone, caption).catch((err) => {
+    const surveyResult = await registerInboundResponse(organizationId, phone, caption).catch((err) => {
       console.error('[whatsapp] survey response error', err);
+      return null;
     });
+    surveyHandled = Boolean(surveyResult);
   }
 
   // Prefer the real phone, then the external JID. The raw LID fallback also
@@ -1123,7 +1126,15 @@ async function handleInboundMessage(organizationId, sock, waMessage, { historica
     conversation: sanitizeConversation(updated)
   });
 
-  if (historical || fromMe) return;
+  // Audio recibido + opción activa en Configuración → se transcribe en segundo plano y el texto aparece bajo el audio.
+  if (!historical && !fromMe && media && media.kind === 'audio' && mediaBuffer && message.attachment) {
+    require('./aiMedia').autoTranscribeIfEnabled({
+      organizationId, conversationId: conversation.id, messageId: message.id, buffer: mediaBuffer, fileName: media.fileName, mimeType: media.mimeType
+    }).catch(() => {});
+  }
+
+  // Si el cliente contestó la encuesta de una llamada, ya se le respondió: el bot/IA no debe volver a contestarle.
+  if (historical || fromMe || surveyHandled) return;
   // Plan vencido: el mensaje queda guardado, pero el bot y la IA dejan de responder.
   if (await require('./billing').isBlocked(organizationId).catch(() => false)) return;
 

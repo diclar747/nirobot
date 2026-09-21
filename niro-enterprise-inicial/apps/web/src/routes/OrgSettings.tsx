@@ -77,6 +77,7 @@ export function OrgSettings() {
       </StatGrid>
 
       <ProfileCard org={org} isOwner={isOwner} onSaved={(name) => { setOrg({ ...org, name }); setSuccess('Perfil actualizado'); }} onError={setError} />
+      <TranscriptionCard org={org} onSaved={(settings) => { setOrg({ ...org, settings }); setSuccess('Ajustes actualizados'); }} onError={setError} />
       <AiSettingsCard org={org} onSaved={(settings) => { setOrg({ ...org, settings }); setSuccess('Ajustes actualizados'); }} onError={setError} />
       <AiTestCard aiEnabled={!!org.settings?.aiEnabled} />
       <WidgetEmbedCard slug={org.slug} />
@@ -143,6 +144,41 @@ function ProfileCard({
   );
 }
 
+function TranscriptionCard({ org, onSaved, onError }: { org: OwnOrganization; onSaved: (settings: OwnOrganization['settings']) => void; onError: (msg: string | null) => void }) {
+  const enabled = Boolean(org.settings?.autoTranscribeAudio);
+  const configured = org.settings?.niroAiConfigured !== false;
+  const [saving, setSaving] = useState(false);
+
+  async function toggle(next: boolean) {
+    onError(null);
+    setSaving(true);
+    try {
+      const data = await apiPatch<{ settings: OwnOrganization['settings'] }>('/api/org/settings', { autoTranscribeAudio: next });
+      onSaved(data.settings);
+    } catch (err) {
+      onError(err instanceof ApiError ? err.message : 'No se pudo guardar la configuración');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="card">
+      <h3 style={{ marginTop: 0 }}>Transcripción de audios</h3>
+      <p className="muted" style={{ marginTop: -8, marginBottom: 14, fontSize: 13, lineHeight: 1.5 }}>
+        Cuando un cliente te manda un audio, el sistema lo transcribe con Niro IA y muestra el <b>texto debajo del audio</b> en el chat, así lo leés sin necesidad de escucharlo.
+      </p>
+      <label className="transcribe-switch">
+        <input type="checkbox" role="switch" checked={enabled} disabled={saving || !configured} onChange={(e) => toggle(e.target.checked)} />
+        <span className="transcribe-track" />
+        <span><b>Transcribir audios automáticamente</b><small>{enabled ? 'Activado: los audios nuevos se transcriben solos.' : 'Desactivado: podés transcribir un audio puntual con el botón “Transcribir” del chat.'}</small></span>
+      </label>
+      {!configured && <div className="alert error" style={{ marginTop: 12 }}>Falta configurar la API de Niro IA en el servidor, por eso no se puede activar.</div>}
+      <p className="muted" style={{ fontSize: 12, margin: '12px 0 0' }}>Cada audio transcripto consume créditos de Niro IA. Los audios anteriores no se transcriben solos.</p>
+    </div>
+  );
+}
+
 function AiSettingsCard({
   org,
   onSaved,
@@ -202,8 +238,7 @@ function AiSettingsCard({
       <h3 style={{ marginTop: 0 }}>Asistente de IA</h3>
       <p className="muted" style={{ marginTop: -8, marginBottom: 16, fontSize: 13 }}>
         Cuando está activado, NIRO manda la bienvenida, deriva por el menú (si configurás opciones) y después
-        sigue respondiendo con IA hasta que un agente humano toma la conversación. Usa la API de Niro IA
-        (transcribe audios y hace OCR de imágenes automáticamente en WhatsApp).
+        sigue respondiendo con IA hasta que un agente humano toma la conversación.
       </p>
       <div className="field">
         <label htmlFor="welcome">Mensaje de bienvenida</label>

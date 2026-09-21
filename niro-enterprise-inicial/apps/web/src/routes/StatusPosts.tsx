@@ -2,7 +2,7 @@ import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
 import { apiDelete, apiGet, apiPost, apiUpload, ApiError } from '../lib/api';
 import { getSocket } from '../lib/socket';
 import { useAlerts } from '../context/AlertContext';
-import { EmptyState, PageHeader, PageShell, Panel, Pill, StatCard, StatGrid, type Tone } from '../components/PageKit';
+import { EmptyState, PageHeader, Panel, Pill, StatCard, StatGrid, type Tone } from '../components/PageKit';
 import { StatusCampaigns } from '../components/StatusCampaigns';
 import type { Contact } from '../types';
 import '../styles/status-posts.css';
@@ -199,32 +199,47 @@ export function StatusPosts() {
   const previewBg = contentType === 'text' ? color : '#0b1220';
 
   return (
-    <PageShell>
+    <div className="page-shell sp-page">
       <PageHeader
         icon={<Ui name="megaphone" size={24} />}
         title="Estados de WhatsApp"
-        subtitle="Publicá historias de 24 horas desde Nirobot: ahora, programadas o en campañas que cambian solas cada N horas."
-        actions={<Pill tone={metrics?.connected ? 'success' : 'danger'} dot>{metrics?.connected ? 'WhatsApp conectado' : 'WhatsApp desconectado'}</Pill>}
+        subtitle="Creá, programá y gestioná tus publicaciones y campañas desde un solo lugar."
+        actions={<Pill tone={!metrics ? 'neutral' : metrics.connected ? 'success' : 'danger'} dot>{!metrics ? 'Consultando conexión…' : metrics.connected ? 'WhatsApp conectado' : 'WhatsApp desconectado'}</Pill>}
       />
 
-      <div className="sp-seg sp-tabs" role="tablist">
-        <button type="button" className={view === 'posts' ? 'on' : ''} onClick={() => setView('posts')}>Publicaciones</button>
-        <button type="button" className={view === 'campaigns' ? 'on' : ''} onClick={() => setView('campaigns')}>Campañas automáticas</button>
+      <section className="sp-hero" aria-label="Centro de estados">
+        <div>
+          <span className="sp-eyebrow">CENTRO DE ESTADOS</span>
+          <h2>Tu marca, presente cada día.</h2>
+          <p>Compartí novedades al instante o prepará secuencias de contenido para tus próximas campañas.</p>
+          <div className="sp-hero-features">
+            <span><Ui name="clock" size={15} /> Historias de 24 horas</span>
+            <span><Ui name="calendar" size={15} /> Publicación programada</span>
+            <span><Ui name="megaphone" size={15} /> Multicampañas</span>
+          </div>
+        </div>
+        <div className="sp-hero-art" aria-hidden="true"><Ui name="image" size={32} /><Ui name="megaphone" size={36} /><Ui name="video" size={28} /></div>
+      </section>
+
+      <div className="sp-tabs" role="group" aria-label="Vista de estados">
+        <button type="button" aria-pressed={view === 'posts'} className={view === 'posts' ? 'on' : ''} onClick={() => setView('posts')}><Ui name="image" size={19} /><span>Publicaciones<small>Crear estados y ver el historial</small></span></button>
+        <button type="button" aria-pressed={view === 'campaigns'} className={view === 'campaigns' ? 'on' : ''} onClick={() => setView('campaigns')}><Ui name="megaphone" size={19} /><span>Campañas automáticas<small>Organizar secuencias y multicampañas</small></span></button>
       </div>
 
       {view === 'campaigns' && <StatusCampaigns contacts={contacts} />}
 
       {view === 'posts' && <>
       <StatGrid>
-        <StatCard label="Publicados hoy" value={metrics?.metrics.publishedToday ?? '—'} tone="success" />
-        <StatCard label="Programados" value={metrics?.metrics.scheduled ?? '—'} hint={metrics?.metrics.nextScheduledAt ? `Próximo: ${formatDateTime(metrics.metrics.nextScheduledAt)}` : undefined} tone="primary" />
-        <StatCard label="Con error" value={metrics?.metrics.failed ?? '—'} tone="danger" />
+        <StatCard icon={<Ui name="check-circle" />} hint="Actividad de hoy" label="Publicados hoy" value={metrics?.metrics.publishedToday ?? '—'} tone="success" />
+        <StatCard icon={<Ui name="calendar" />} label="Programados" value={metrics?.metrics.scheduled ?? '—'} hint={metrics?.metrics.nextScheduledAt ? `Próximo: ${formatDateTime(metrics.metrics.nextScheduledAt)}` : 'Sin publicaciones pendientes'} tone="primary" />
+        <StatCard icon={<Ui name="alert" />} hint="Publicaciones que requieren atención" label="Con error" value={metrics?.metrics.failed ?? '—'} tone="danger" />
       </StatGrid>
 
-      <Panel title="Crear estado">
+      <Panel title="Crear estado" actions={<Pill tone="primary">Nueva publicación</Pill>}>
+        <p className="sp-section-intro">Elegí el contenido, definí tu audiencia y decidí cuándo compartirlo.</p>
         <form className="sp-composer" onSubmit={submit}>
           <div className="sp-form">
-            <div className="sp-seg" role="tablist">
+            <div className="sp-seg" role="group" aria-label="Formato del estado">
               <button type="button" className={contentType === 'text' ? 'on' : ''} onClick={() => { setContentType('text'); setFile(null); }}>Aa Texto</button>
               <button type="button" className={contentType === 'image' ? 'on' : ''} onClick={() => { setContentType('image'); setFile(null); }}><Ui name="image" size={14} /> Imagen</button>
               <button type="button" className={contentType === 'video' ? 'on' : ''} onClick={() => { setContentType('video'); setFile(null); }}><Ui name="video" size={14} /> Video</button>
@@ -259,7 +274,7 @@ export function StatusPosts() {
             )}
 
             <fieldset className="sp-group">
-              <legend>Audiencia</legend>
+              <legend>01 · Audiencia</legend>
               <div className="sp-seg small">
                 <button type="button" className={audienceType === 'ALL' ? 'on' : ''} onClick={() => setAudienceType('ALL')}>Todos</button>
                 <button type="button" className={audienceType === 'TAG' ? 'on' : ''} onClick={() => setAudienceType('TAG')}>Por etiqueta</button>
@@ -292,7 +307,7 @@ export function StatusPosts() {
             </fieldset>
 
             <fieldset className="sp-group">
-              <legend>Cuándo</legend>
+              <legend>02 · Publicación</legend>
               <div className="sp-seg small">
                 <button type="button" className={mode === 'NOW' ? 'on' : ''} onClick={() => setMode('NOW')}>Ahora</button>
                 <button type="button" className={mode === 'SCHEDULED' ? 'on' : ''} onClick={() => setMode('SCHEDULED')}>Programar</button>
@@ -308,17 +323,20 @@ export function StatusPosts() {
           </div>
 
           <div className="sp-phone" aria-label="Vista previa">
+            <div className="sp-preview-heading"><Ui name="phone" size={16} /><span>Vista previa del estado</span></div>
             <div className="sp-phone-screen" style={{ background: previewBg }}>
+              <div className="sp-story-header" aria-hidden="true"><i /><span>Mi estado<small>Vista previa</small></span></div>
               {contentType === 'text' && <p className="sp-phone-text">{text || 'Tu texto aparecerá aquí'}</p>}
               {contentType === 'image' && (filePreview ? <img src={filePreview} alt="Vista previa" /> : <span className="sp-phone-hint">Elegí una imagen</span>)}
               {contentType === 'video' && (filePreview ? <video src={filePreview} controls muted playsInline /> : <span className="sp-phone-hint">Elegí un video</span>)}
               {contentType !== 'text' && caption && <p className="sp-phone-caption">{caption}</p>}
             </div>
+            <p className="sp-preview-note">Así se verá tu contenido.<br />Visible durante 24 horas después de publicar.</p>
           </div>
         </form>
       </Panel>
 
-      <Panel title="Historial" flush>
+      <Panel title="Historial de publicaciones" actions={<Pill>{posts.length} publicaciones</Pill>} flush>
         {loading ? (
           <p className="sp-loading">Cargando…</p>
         ) : posts.length === 0 ? (
@@ -354,6 +372,6 @@ export function StatusPosts() {
         )}
       </Panel>
       </>}
-    </PageShell>
+    </div>
   );
 }

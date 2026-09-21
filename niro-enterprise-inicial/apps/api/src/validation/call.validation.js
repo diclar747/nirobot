@@ -21,7 +21,11 @@ const createCallCampaignSchema = z.object({
   surveyQuestion: z.string().trim().max(300).optional().nullable(),
   surveyResponseMethod: z.enum(['WHATSAPP', 'FORM']).default('WHATSAPP'),
   surveyExpiresAt: z.string().datetime({ offset: true }).optional().nullable(),
-  surveyOptions: z.array(z.object({ key: z.string().trim().min(1).max(10), label: z.string().trim().min(1).max(120) })).max(10).default([])
+  surveyOptions: z.array(z.object({
+    key: z.string().trim().min(1).max(10), label: z.string().trim().min(1).max(120),
+    replyMessage: z.string().trim().max(1000).optional().nullable(),
+    action: z.enum(['NONE', 'INTERESTED', 'FOLLOW_UP', 'OPT_OUT']).default('NONE')
+  })).max(10).default([])
 }).superRefine((data, ctx) => {
   if (data.contactIds.length === 0 && data.tagFilter.length === 0) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['contactIds'], message: 'Seleccioná contactos o al menos una etiqueta' });

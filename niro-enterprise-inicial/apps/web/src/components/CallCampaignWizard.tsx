@@ -23,6 +23,20 @@ const TYPES = [
   { key: 'SURVEY', label: 'Encuesta' }, { key: 'INSTITUTIONAL', label: 'Institucional' }
 ];
 
+type SurveyAction = 'NONE' | 'INTERESTED' | 'FOLLOW_UP' | 'OPT_OUT';
+interface SurveyOption { key: string; label: string; action: SurveyAction; replyMessage: string }
+const ACTIONS: { key: SurveyAction; label: string }[] = [
+  { key: 'NONE', label: 'Solo responder' },
+  { key: 'INTERESTED', label: 'Marcar como interesado (CRM)' },
+  { key: 'FOLLOW_UP', label: 'Contactar más adelante (etiqueta)' },
+  { key: 'OPT_OUT', label: 'No volver a llamar' }
+];
+const DEFAULT_OPTIONS: SurveyOption[] = [
+  { key: '1', label: 'Sí, deseo información', action: 'INTERESTED', replyMessage: '¡Muchas gracias por tu interés! 🙌 Te vamos a mantener informado con más detalles muy pronto.' },
+  { key: '2', label: 'No, gracias', action: 'OPT_OUT', replyMessage: 'Gracias por tu respuesta. Entendido: de ahora en más no vas a recibir más llamadas nuestras. ¡Que tengas un excelente día!' },
+  { key: '3', label: 'Contactarme más adelante', action: 'FOLLOW_UP', replyMessage: '¡Perfecto! Te contactaremos más adelante. Muchas gracias por tu interés.' }
+];
+
 const CRM_STAGES = ['Abiertas', 'Pendientes', 'Clientes', 'Interesados', 'Cerradas'];
 const isAllowed = (c: AudContact) => c.callConsentStatus === 'GRANTED' && !c.callOptedOutAt;
 const formatPhone = (p: string | null) => (p ? (/^\d{8,}$/.test(p) ? `+${p}` : p) : 'Sin teléfono');
@@ -57,7 +71,9 @@ export function CallCampaignWizard({ accounts, audios, onClose, onCreated }: { a
   const [windowTo, setWindowTo] = useState('');
   const [surveyEnabled, setSurveyEnabled] = useState(false);
   const [question, setQuestion] = useState('¿Desea recibir más información?');
-  const [options, setOptions] = useState([{ key: '1', label: 'Sí, deseo información' }, { key: '2', label: 'No, gracias' }, { key: '3', label: 'Contactarme más adelante' }]);
+  const [options, setOptions] = useState<SurveyOption[]>(DEFAULT_OPTIONS);
+  const [suggesting, setSuggesting] = useState(false);
+  const [suggestNote, setSuggestNote] = useState<string | null>(null);
   const [confirmed, setConfirmed] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -135,6 +151,15 @@ export function CallCampaignWizard({ accounts, audios, onClose, onCreated }: { a
     if (target === 4 && !confirmed) { setError('Confirmá que revisaste el resumen.'); return false; }
     return true;
   }
+  async function suggestReplies() {
+    setSuggesting(true); setSuggestNote(null); setError(null);
+    try {
+      const res = await apiPost<{ replies: { key: string; action: SurveyAction; replyMessage: string }[]; usedAi: boolean }>('/api/org/wa-calls/survey/suggest-replies', { question, options: options.filter((o) => o.key.trim() && o.label.trim()).map(({ key, label }) => ({ key, label })) });
+      setOptions((cur) => cur.map((o) => { const r = res.replies.find((x) => x.key === o.key); return r ? { ...o, action: r.action, replyMessage: r.replyMessage } : o; }));
+      setSuggestNote(res.usedAi ? 'Respuestas redactadas con IA. Revisalas y editalas si querés.' : 'Se cargaron respuestas sugeridas. Editalas a tu gusto.');
+    } catch (err) { setError(err instanceof ApiError ? err.message : 'No se pudieron sugerir respuestas'); }
+    finally { setSuggesting(false); }
+  }
   const next = () => { setError(null); if (validate(step)) setStep((s) => Math.min(STEPS.length, s + 1)); };
   const back = () => { setError(null); setStep((s) => Math.max(1, s - 1)); };
 
@@ -151,7 +176,7 @@ export function CallCampaignWizard({ accounts, audios, onClose, onCreated }: { a
         maxAttempts: Number(maxAttempts), pauseBetweenSeconds: Number(pause), answerTimeoutSeconds: Number(answerTimeout), retryDelaySeconds: Number(retryDelay),
         allowedFrom: windowFrom || null, allowedTo: windowTo || null,
         surveyEnabled, surveyQuestion: surveyEnabled ? question.trim() : null, surveyResponseMethod: 'WHATSAPP',
-        surveyOptions: surveyEnabled ? options.filter((o) => o.key.trim() && o.label.trim()) : []
+        surveyOptions: surveyEnabled ? options.filter((o) => o.key.trim() && o.label.trim()).map((o) => ({ key: o.key.trim(), label: o.label.trim(), action: o.action, replyMessage: o.replyMessage.trim() || null })) : []
       });
       onCreated();
     } catch (err) { setError(err instanceof ApiError ? err.message : 'No se pudo crear la campaña'); setBusy(false); }
@@ -255,10 +280,24 @@ export function CallCampaignWizard({ accounts, audios, onClose, onCreated }: { a
             <label className="cc-attest" style={{ marginTop: 16 }}><input type="checkbox" checked={surveyEnabled} onChange={(e) => setSurveyEnabled(e.target.checked)} /> <span><b>Enviar una encuesta por WhatsApp después de la llamada</b><br /><small>La respuesta queda asociada al contacto y a la llamada.</small></span></label>
             {surveyEnabled && (
               <div className="cc-survey">
+                <div className="cc-survey-intro"><Ui name="info" size={16} /><span>Cuando el cliente conteste con el número de una opción, el sistema <b>le responde solo</b> con el mensaje que definas y aplica la acción elegida.</span></div>
                 <div className="field"><label>Pregunta</label><input className="input" value={question} onChange={(e) => setQuestion(e.target.value)} maxLength={300} /></div>
+                <div className="cc-survey-ai"><button type="button" className="btn secondary small" onClick={suggestReplies} disabled={suggesting}><Ui name="sparkles" size={14} /> {suggesting ? 'Redactando…' : 'Sugerir respuestas con IA'}</button>{suggestNote && <small>{suggestNote}</small>}</div>
                 {options.map((o, i) => (
-                  <div className="cc-option" key={i}><input className="input" value={o.key} maxLength={10} onChange={(e) => setOptions((cur) => cur.map((x, j) => (j === i ? { ...x, key: e.target.value } : x)))} aria-label="Número de opción" /><input className="input" value={o.label} maxLength={120} onChange={(e) => setOptions((cur) => cur.map((x, j) => (j === i ? { ...x, label: e.target.value } : x)))} aria-label="Texto de la opción" /><button type="button" className="btn secondary small" onClick={() => setOptions((cur) => cur.filter((_, j) => j !== i))} disabled={options.length <= 2} aria-label="Quitar"><Ui name="x" size={14} /></button></div>))}
-                <button type="button" className="btn secondary small" onClick={() => setOptions((cur) => [...cur, { key: String(cur.length + 1), label: '' }])} disabled={options.length >= 10}><Ui name="plus" size={14} /> Agregar opción</button>
+                  <div className="cc-option-card" key={i}>
+                    <div className="cc-option">
+                      <input className="input" value={o.key} maxLength={10} onChange={(e) => setOptions((cur) => cur.map((x, j) => (j === i ? { ...x, key: e.target.value } : x)))} aria-label="Número de opción" />
+                      <input className="input" value={o.label} maxLength={120} onChange={(e) => setOptions((cur) => cur.map((x, j) => (j === i ? { ...x, label: e.target.value } : x)))} aria-label="Texto de la opción" placeholder="Texto de la opción" />
+                      <button type="button" className="btn secondary small" onClick={() => setOptions((cur) => cur.filter((_, j) => j !== i))} disabled={options.length <= 2} aria-label="Quitar opción"><Ui name="x" size={14} /></button>
+                    </div>
+                    <div className="cc-option-reply">
+                      <label><span>Si elige esta opción</span>
+                        <select className="input" value={o.action} onChange={(e) => setOptions((cur) => cur.map((x, j) => (j === i ? { ...x, action: e.target.value as SurveyAction } : x)))}>{ACTIONS.map((a) => <option key={a.key} value={a.key}>{a.label}</option>)}</select></label>
+                      <label><span>Respuesta automática por WhatsApp</span>
+                        <textarea className="input" rows={2} maxLength={1000} value={o.replyMessage} onChange={(e) => setOptions((cur) => cur.map((x, j) => (j === i ? { ...x, replyMessage: e.target.value } : x)))} placeholder="Si lo dejás vacío se usa un mensaje de agradecimiento por defecto." /></label>
+                    </div>
+                  </div>))}
+                <button type="button" className="btn secondary small" onClick={() => setOptions((cur) => [...cur, { key: String(cur.length + 1), label: '', action: 'NONE', replyMessage: '' }])} disabled={options.length >= 10}><Ui name="plus" size={14} /> Agregar opción</button>
               </div>)}
           </section>
         )}

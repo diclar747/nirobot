@@ -56,6 +56,58 @@ async function visibilityWhere(req) {
   };
 }
 
+
+// ---- No leídos (como WhatsApp Web) ----
+// Un mensaje ENTRANTE es "no leído" si llegó después de la última vez que ESTE usuario abrió esa conversación.
+// Sin registro previo (usuario nuevo) se cuenta desde que se creó el usuario, para no llenarlo de historial viejo.
+async function unreadByConversation(userId, conversationIds) {
+  if (conversationIds.length === 0) return new Map();
+  const user = await prisma.user.findUnique({ where: { id: userId }, select: { createdAt: true } });
+  const baseline = user?.createdAt || new Date(0);
+  const rows = await prisma.$queryRaw`
+    SELECT m."conversationId" AS id, COUNT(*)::int AS n
+    FROM "Message" m
+    LEFT JOIN "ConversationRead" r ON r."conversationId" = m."conversationId" AND r."userId" = ${userId}
+    WHERE m."conversationId" = ANY(${conversationIds}) AND m."direction" = 'INBOUND'
+      AND m."createdAt" > COALESCE(r."lastReadAt", ${baseline})
+    GROUP BY m."conversationId"`;
+  return new Map(rows.map((row) => [row.id, Number(row.n)]));
+}
+
+async function lastMessageByConversation(conversationIds) {
+  if (conversationIds.length === 0) return new Map();
+  const rows = await prisma.$queryRaw`
+    SELECT DISTINCT ON (m."conversationId") m."conversationId" AS id, m."content", m."direction", m."contentType", m."createdAt"
+    FROM "Message" m
+    WHERE m."conversationId" = ANY(${conversationIds}) AND m."direction" <> 'NOTE'
+    ORDER BY m."conversationId", m."createdAt" DESC`;
+  return new Map(rows.map((row) => [row.id, { content: String(row.content || '').slice(0, 120), direction: row.direction, contentType: row.contentType, at: row.createdAt }]));
+}
+
+router.get('/unread-summary', async (req, res, next) => {
+  try {
+    const visible = await prisma.conversation.findMany({ where: { organizationId: req.auth.organizationId, ...(await visibilityWhere(req)), status: { not: 'CLOSED' } }, select: { id: true }, take: 1000 });
+    const map = await unreadByConversation(req.auth.userId, visible.map((c) => c.id));
+    let messages = 0;
+    for (const n of map.values()) messages += n;
+    res.json({ conversations: map.size, messages });
+  } catch (err) { next(err); }
+});
+
+router.post('/:id/read', requireCsrf, async (req, res, next) => {
+  try {
+    const conversation = await loadVisibleConversation(req, req.params.id);
+    if (!conversation) throw new HttpError(404, 'Conversación no encontrada');
+    await prisma.conversationRead.upsert({
+      where: { conversationId_userId: { conversationId: conversation.id, userId: req.auth.userId } },
+      update: { lastReadAt: new Date() },
+      create: { conversationId: conversation.id, userId: req.auth.userId }
+    });
+    emitToUser(req.auth.userId, 'conversation:read', { conversationId: conversation.id }); // otras pestañas/dispositivos del mismo usuario
+    res.json({ ok: true });
+  } catch (err) { next(err); }
+});
+
 router.get('/', async (req, res, next) => {
   try {
     const { status, priority, departmentId, q, tag } = req.query;
@@ -91,7 +143,9 @@ router.get('/', async (req, res, next) => {
       take: 100
     });
 
-    res.json({ conversations: conversations.map(sanitizeConversation) });
+    const ids = conversations.map((c) => c.id);
+    const [unread, last] = await Promise.all([unreadByConversation(req.auth.userId, ids), lastMessageByConversation(ids)]);
+    res.json({ conversations: conversations.map((c) => ({ ...sanitizeConversation(c), unreadCount: unread.get(c.id) || 0, lastMessage: last.get(c.id) || null })) });
   } catch (err) {
     next(err);
   }
@@ -102,12 +156,26 @@ router.post('/', requireCsrf, async (req, res, next) => {
     const data = createConversationSchema.parse(req.body);
 
     let contactId = data.contactId;
+    let chosenContact;
     if (contactId) {
-      const contact = await prisma.contact.findFirst({ where: { id: contactId, organizationId: req.auth.organizationId } });
-      if (!contact) throw new HttpError(404, 'Contacto no encontrado');
+      chosenContact = await prisma.contact.findFirst({ where: { id: contactId, organizationId: req.auth.organizationId } });
+      if (!chosenContact) throw new HttpError(404, 'Contacto no encontrado');
     } else {
-      const contact = await prisma.contact.create({ data: { ...data.newContact, organizationId: req.auth.organizationId } });
-      contactId = contact.id;
+      chosenContact = await prisma.contact.create({ data: { ...data.newContact, organizationId: req.auth.organizationId } });
+      contactId = chosenContact.id;
+    }
+
+    // Un contacto con teléfono se atiende por WhatsApp: sin canal, el chat quedaba "manual" y lo que se escribía nunca salía.
+    const channel = data.channel || (chosenContact.phone ? 'whatsapp' : 'manual');
+
+    // Si ya hay un chat abierto con ese contacto se abre ese, en vez de duplicarlo.
+    if (channel === 'whatsapp' && data.contactId) {
+      const existing = await prisma.conversation.findFirst({
+        where: { organizationId: req.auth.organizationId, contactId, channel: 'whatsapp', status: { not: 'CLOSED' } },
+        orderBy: { updatedAt: 'desc' },
+        include: CONVERSATION_INCLUDE
+      });
+      if (existing) return res.status(200).json({ conversation: sanitizeConversation(existing), existing: true });
     }
 
     if (data.departmentId) {
@@ -121,7 +189,9 @@ router.post('/', requireCsrf, async (req, res, next) => {
         contactId,
         subject: data.subject,
         departmentId: data.departmentId,
-        channel: data.channel || 'manual'
+        channel,
+        // El chat que inicia una persona queda a su nombre (el bot y la IA no se meten).
+        ...(channel === 'whatsapp' ? { assignedToId: req.auth.userId } : {})
       },
       include: CONVERSATION_INCLUDE
     });
@@ -135,7 +205,8 @@ router.post('/', requireCsrf, async (req, res, next) => {
     });
 
     let finalConversation = conversation;
-    if (!data.departmentId) {
+    // La bienvenida automática es para clientes que escriben primero, no para chats iniciados por un agente.
+    if (!data.departmentId && channel !== 'whatsapp') {
       const settings = await prisma.organizationSettings.findUnique({ where: { organizationId: req.auth.organizationId } });
       const flowResult = runBotFlow(settings?.botFlow, { content: '', contact: conversation.contact, conversation, isNewConversation: true });
       if (flowResult) {

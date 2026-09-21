@@ -34,8 +34,20 @@ function sanitizeOrgUser(user, whatsappProfile = null) {
     mustChangePassword: user.mustChangePassword,
     createdAt: user.createdAt,
     permissions: require('../lib/permissions').effectivePermissions(user),
+    departments: (user.memberships || []).map((m) => ({ id: m.department.id, name: m.department.name })),
     whatsapp: whatsappProfile
   };
+}
+
+// Reemplaza las áreas (departamentos) de un usuario por la lista indicada.
+async function setUserDepartments(organizationId, userId, departmentIds) {
+  const unique = Array.from(new Set(departmentIds));
+  const valid = unique.length ? await prisma.department.findMany({ where: { organizationId, id: { in: unique } }, select: { id: true } }) : [];
+  if (valid.length !== unique.length) throw new HttpError(404, 'Alguna de las áreas elegidas ya no existe');
+  await prisma.$transaction([
+    prisma.departmentMember.deleteMany({ where: { userId, department: { organizationId } } }),
+    ...(valid.length ? [prisma.departmentMember.createMany({ data: valid.map((d) => ({ departmentId: d.id, userId })), skipDuplicates: true })] : [])
+  ]);
 }
 
 function sanitizeSettings(settings) {
@@ -43,6 +55,8 @@ function sanitizeSettings(settings) {
     welcomeMessage: settings.welcomeMessage,
     systemPrompt: settings.systemPrompt,
     aiEnabled: settings.aiEnabled,
+    autoTranscribeAudio: Boolean(settings.autoTranscribeAudio),
+    niroAiConfigured: require('../lib/niroAi').isConfigured(),
     menuOptions: settings.menuOptions,
     botFlow: settings.botFlow || null
   };
@@ -136,6 +150,7 @@ router.get('/users', requireRole('OWNER', 'ADMIN', 'SUPERVISOR'), async (req, re
     const [users, callAccount] = await Promise.all([
       prisma.user.findMany({
         where: { organizationId: req.auth.organizationId },
+        include: { memberships: { include: { department: { select: { id: true, name: true } } } } },
         orderBy: { createdAt: 'asc' }
       }),
       prisma.callAccount.findFirst({
@@ -189,6 +204,8 @@ router.post('/users', requireRole('OWNER', 'ADMIN'), requireCsrf, async (req, re
       throw err;
     }
 
+    if (data.departmentIds && data.departmentIds.length > 0) await setUserDepartments(req.auth.organizationId, user.id, data.departmentIds);
+
     await audit(prisma, {
       organizationId: req.auth.organizationId,
       actorUserId: req.auth.userId,
@@ -198,7 +215,8 @@ router.post('/users', requireRole('OWNER', 'ADMIN'), requireCsrf, async (req, re
       metadata: { role: data.role, email: data.email }
     });
 
-    res.status(201).json({ user: sanitizeOrgUser(user), temporaryPassword: data.password ? undefined : temporaryPassword });
+    const withAreas = await prisma.user.findUnique({ where: { id: user.id }, include: { memberships: { include: { department: { select: { id: true, name: true } } } } } });
+    res.status(201).json({ user: sanitizeOrgUser(withAreas || user), temporaryPassword: data.password ? undefined : temporaryPassword });
   } catch (err) {
     next(err);
   }
@@ -206,7 +224,10 @@ router.post('/users', requireRole('OWNER', 'ADMIN'), requireCsrf, async (req, re
 
 router.patch('/users/:id', requireRole('OWNER', 'ADMIN'), requireCsrf, async (req, res, next) => {
   try {
-    const data = updateUserSchema.parse(req.body);
+    const parsed = updateUserSchema.parse(req.body);
+    const departmentIds = parsed.departmentIds;
+    delete parsed.departmentIds;
+    const data = parsed;
     const target = await prisma.user.findFirst({ where: { id: req.params.id, organizationId: req.auth.organizationId } });
     if (!target) throw new HttpError(404, 'Usuario no encontrado');
 
@@ -238,7 +259,11 @@ router.patch('/users/:id', requireRole('OWNER', 'ADMIN'), requireCsrf, async (re
     // Reactivar a un usuario también ocupa un puesto del plan.
     if (data.active === true && target.active === false) await require('../lib/billing').assertCanAddUser(req.auth.organizationId);
 
-    const user = await prisma.user.update({ where: { id: target.id }, data });
+    const user = await prisma.user.update({ where: { id: target.id }, data, include: { memberships: { include: { department: { select: { id: true, name: true } } } } } });
+    if (departmentIds) {
+      await setUserDepartments(req.auth.organizationId, target.id, departmentIds);
+      user.memberships = (await prisma.departmentMember.findMany({ where: { userId: target.id }, include: { department: { select: { id: true, name: true } } } }));
+    }
     await audit(prisma, {
       organizationId: req.auth.organizationId,
       actorUserId: req.auth.userId,

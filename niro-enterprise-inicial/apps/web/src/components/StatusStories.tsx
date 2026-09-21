@@ -72,6 +72,11 @@ export function StatusStories() {
   const [loaded, setLoaded] = useState(false);
   const [seen, setSeen] = useState<Set<string>>(() => loadSeen());
   const [viewer, setViewer] = useState<{ group: number; item: number } | null>(null);
+  const listRef = useRef<HTMLDivElement | null>(null);
+  const trackRef = useRef<HTMLDivElement | null>(null);
+  const [loop, setLoop] = useState(false);       // hay más estados que espacio: se duplica la fila para que dé la vuelta sin cortes
+  const pausedRef = useRef(false);               // el mouse encima / foco / toque detienen el movimiento
+  const viewerOpenRef = useRef(false);
 
   const load = useCallback(() => {
     apiGet<{ groups: StoryGroup[] }>('/api/org/statuses')
@@ -93,6 +98,49 @@ export function StatusStories() {
       window.clearInterval(timer);
     };
   }, [load]);
+
+  // ¿Entran todos los estados? Si no, la fila se mueve sola (carrusel).
+  useEffect(() => {
+    const list = listRef.current;
+    const track = trackRef.current;
+    if (!list || !track) return;
+    const measure = () => setLoop(track.scrollWidth > list.clientWidth + 6);
+    measure();
+    const observer = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(measure) : null;
+    observer?.observe(list);
+    return () => observer?.disconnect();
+  }, [groups]);
+
+  useEffect(() => { viewerOpenRef.current = viewer !== null; }, [viewer]);
+
+  // Movimiento lento y continuo hacia la izquierda; se detiene con el mouse encima y sigue al sacarlo.
+  useEffect(() => {
+    const list = listRef.current;
+    const track = trackRef.current;
+    if (!list || !track || !loop) return;
+    if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return;
+    const SPEED = 26; // píxeles por segundo
+    let raf = 0;
+    let last = performance.now();
+    let pos = list.scrollLeft;
+    let wasPaused = true;
+    const step = (now: number) => {
+      const dt = Math.min(64, now - last);
+      last = now;
+      if (pausedRef.current || viewerOpenRef.current || document.hidden) {
+        wasPaused = true;
+      } else {
+        if (wasPaused) { pos = list.scrollLeft; wasPaused = false; } // retoma desde donde quedó (incluye lo que se movió a mano)
+        pos += (SPEED * dt) / 1000;
+        const half = track.offsetWidth;
+        if (half > 0 && pos >= half) pos -= half; // vuelta completa sin salto visible
+        list.scrollLeft = pos;
+      }
+      raf = requestAnimationFrame(step);
+    };
+    raf = requestAnimationFrame(step);
+    return () => cancelAnimationFrame(raf);
+  }, [loop, groups.length]);
 
   const markSeen = useCallback((id: string) => {
     setSeen((prev) => {
@@ -124,20 +172,34 @@ export function StatusStories() {
       {loaded && groups.length === 0 ? (
         <p className="stories-empty">Aún no hay estados de tus contactos. Aparecen aquí durante 24 horas.</p>
       ) : (
-        <div className="stories-strip-list">
-          {groups.map((group, index) => {
-            const unseen = group.items.some((item) => !seen.has(item.id));
-            return (
-              <button type="button" key={group.key} className="story-chip" onClick={() => openGroup(index)} title={group.name}>
-                <span className={`story-ring ${unseen ? 'unseen' : 'seen'}`}>
-                  <span className="story-ring-inner">
-                    <StoryAvatar group={group} size={46} />
-                  </span>
-                </span>
-                <span className="story-chip-name">{group.fromMe ? 'Mi estado' : group.name.split(' ')[0]}</span>
-              </button>
-            );
-          })}
+        <div
+          className={`stories-strip-list ${loop ? 'is-carousel' : ''}`}
+          ref={listRef}
+          onMouseEnter={() => { pausedRef.current = true; }}
+          onMouseLeave={() => { pausedRef.current = false; }}
+          onWheel={(e) => { if (loop && listRef.current) listRef.current.scrollLeft += e.deltaY + e.deltaX; }}
+          onFocusCapture={() => { pausedRef.current = true; }}
+          onBlurCapture={() => { pausedRef.current = false; }}
+          onTouchStart={() => { pausedRef.current = true; }}
+          onTouchEnd={() => { window.setTimeout(() => { pausedRef.current = false; }, 1500); }}
+        >
+          {[false, true].map((hidden) => (hidden && !loop ? null : (
+            <div className="stories-track" key={hidden ? 'copy' : 'main'} ref={hidden ? undefined : trackRef} aria-hidden={hidden || undefined}>
+              {groups.map((group, index) => {
+                const unseen = group.items.some((item) => !seen.has(item.id));
+                return (
+                  <button type="button" key={`${hidden ? 'c' : 'm'}-${group.key}`} className="story-chip" onClick={() => openGroup(index)} title={group.name} tabIndex={hidden ? -1 : undefined}>
+                    <span className={`story-ring ${unseen ? 'unseen' : 'seen'}`}>
+                      <span className="story-ring-inner">
+                        <StoryAvatar group={group} size={46} />
+                      </span>
+                    </span>
+                    <span className="story-chip-name">{group.fromMe ? 'Mi estado' : group.name.split(' ')[0]}</span>
+                  </button>
+                );
+              })}
+            </div>
+          )))}
         </div>
       )}
       {viewer && groups[viewer.group] && (

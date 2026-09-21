@@ -1,7 +1,6 @@
 import { FormEvent, useEffect, useState } from 'react';
 import { apiGet, apiPatch, apiPost, ApiError } from '../lib/api';
 import type { OrgUser, UserRole } from '../types';
-import { ORG_ROLES } from '../types';
 import { Modal } from '../components/Modal';
 import { useAuth } from '../context/AuthContext';
 import { EmptyState, LoadingRows, PageHeader, PageShell, Panel, PersonCell, Pill, StatCard, StatGrid, type Tone } from '../components/PageKit';
@@ -9,6 +8,7 @@ import { IconUsers } from '../components/icons';
 import { Link } from 'react-router-dom';
 import type { SeatInfo } from '../components/BillingGate';
 import type { PermissionDef } from '../lib/permissions';
+import type { Department } from '../types';
 import { Ui } from '../components/Ui';
 
 const ROLE_LABEL: Record<UserRole, string> = {
@@ -26,6 +26,32 @@ const ROLE_TONE: Record<UserRole, Tone> = {
   SUPERVISOR: 'warning',
   AGENT: 'success'
 };
+
+// Roles que se pueden asignar a un empleado. El propietario es la cuenta principal (una sola) y el superadmin
+// pertenece a la plataforma: ninguno de los dos se crea desde acá.
+const ASSIGNABLE_ROLES: { key: UserRole; label: string; help: string }[] = [
+  { key: 'AGENT', label: 'Agente', help: 'Atiende los chats de sus áreas.' },
+  { key: 'SUPERVISOR', label: 'Supervisor', help: 'Como agente, y además ve todos los chats, reportes y usuarios.' },
+  { key: 'ADMIN', label: 'Administrador', help: 'Acceso total a la cuenta (usuarios, configuración y plan).' }
+];
+
+function AreaPicker({ departments, value, onChange }: { departments: Department[]; value: string[]; onChange: (ids: string[]) => void }) {
+  if (departments.length === 0) {
+    return <div className="area-empty">Todavía no hay áreas. <Link to="/departments">Creá la primera</Link> (por ejemplo Caja, Depósito, Soporte, Recursos Humanos) y después asignale personas.</div>;
+  }
+  return (
+    <div className="area-picker" role="group" aria-label="Áreas del usuario">
+      {departments.map((d) => {
+        const on = value.includes(d.id);
+        return (
+          <button type="button" key={d.id} className={`area-chip ${on ? 'on' : ''}`} onClick={() => onChange(on ? value.filter((x) => x !== d.id) : [...value, d.id])} aria-pressed={on}>
+            {on && <Ui name="check" size={13} />} {d.name}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
 
 function formatWhatsAppPhone(value: string | null | undefined) {
   const digits = String(value || '').replace(/\D/g, '');
@@ -132,6 +158,7 @@ export function OrgUsers() {
                 <tr>
                   <th>Usuario</th>
                   <th>Rol</th>
+                  <th>Áreas</th>
                   <th>Estado</th>
                   <th></th>
                 </tr>
@@ -148,6 +175,9 @@ export function OrgUsers() {
                     </td>
                     <td>
                       <Pill tone={ROLE_TONE[u.role]}>{ROLE_LABEL[u.role]}</Pill>
+                    </td>
+                    <td>
+                      {['OWNER', 'ADMIN', 'SUPERVISOR'].includes(u.role) ? <span className="area-all">Todas</span> : (u.departments || []).length === 0 ? <span className="area-none">Sin área</span> : <span className="area-list">{(u.departments || []).map((d) => <span key={d.id} className="area-tag">{d.name}</span>)}</span>}
                     </td>
                     <td>
                       <Pill tone={u.active ? 'success' : 'danger'} dot>
@@ -228,16 +258,20 @@ function CreateUserModal({
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [role, setRole] = useState<UserRole>('AGENT');
+  const [departments, setDepartments] = useState<Department[]>([]);
+  const [departmentIds, setDepartmentIds] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
-  const roleOptions = ORG_ROLES.filter((r) => r !== 'OWNER' || canGrantOwner);
+  const roleOptions = ASSIGNABLE_ROLES;
+  void canGrantOwner;
+  useEffect(() => { apiGet<{ departments: Department[] }>('/api/org/departments').then((d) => setDepartments(d.departments)).catch(() => {}); }, []);
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     setError(null);
     setSubmitting(true);
     try {
-      const data = await apiPost<{ temporaryPassword?: string }>('/api/org/users', { name, email, role });
+      const data = await apiPost<{ temporaryPassword?: string }>('/api/org/users', { name, email, role, ...(role === 'AGENT' ? { departmentIds } : {}) });
       onCreated(data.temporaryPassword ? { email, temporaryPassword: data.temporaryPassword } : null);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'No se pudo crear el usuario');
@@ -269,12 +303,20 @@ function CreateUserModal({
           <label htmlFor="user-role">Rol</label>
           <select id="user-role" className="input" value={role} onChange={(e) => setRole(e.target.value as UserRole)}>
             {roleOptions.map((r) => (
-              <option key={r} value={r}>
-                {r}
+              <option key={r.key} value={r.key}>
+                {r.label}
               </option>
             ))}
           </select>
+          <small className="area-help">{roleOptions.find((r) => r.key === role)?.help}</small>
         </div>
+        {role === 'AGENT' && (
+          <div className="field">
+            <label>Áreas donde trabaja</label>
+            <AreaPicker departments={departments} value={departmentIds} onChange={setDepartmentIds} />
+            <small className="area-help">Verá los chats de estas áreas y los que le asignen. Podés cambiarlo cuando quieras.</small>
+          </div>
+        )}
         <button className="btn" type="submit" disabled={submitting} style={{ width: '100%', justifyContent: 'center' }}>
           {submitting ? 'Creando…' : 'Crear usuario'}
         </button>
@@ -297,23 +339,26 @@ function EditUserModal({
   const [name, setName] = useState(user.name);
   const [role, setRole] = useState<UserRole>(user.role);
   const [active, setActive] = useState(user.active);
+  const [departments, setDepartments] = useState<Department[]>([]);
+  const [departmentIds, setDepartmentIds] = useState<string[]>((user.departments || []).map((d) => d.id));
   const [defs, setDefs] = useState<PermissionDef[]>([]);
   const [perms, setPerms] = useState<Record<string, boolean>>(() => ({ ...(user.permissions || {}) }));
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const restrictable = role === 'AGENT' || role === 'SUPERVISOR';
-  useEffect(() => { apiGet<{ permissions: PermissionDef[] }>('/api/org/permissions').then((r) => setDefs(r.permissions)).catch(() => {}); }, []);
+  useEffect(() => { apiGet<{ permissions: PermissionDef[] }>('/api/org/permissions').then((r) => setDefs(r.permissions)).catch(() => {}); apiGet<{ departments: Department[] }>('/api/org/departments').then((r) => setDepartments(r.departments)).catch(() => {}); }, []);
   const isOn = (key: string) => perms[key] !== false;
   const disabledCount = defs.filter((d) => !isOn(d.key)).length;
   const groups = Array.from(new Set(defs.map((d) => d.group)));
-  const roleOptions = ORG_ROLES.filter((r) => r !== 'OWNER' || canGrantOwner || user.role === 'OWNER');
+  const roleOptions: { key: UserRole; label: string }[] = user.role === 'OWNER' ? [{ key: 'OWNER', label: 'Propietario' }] : ASSIGNABLE_ROLES;
+  void canGrantOwner;
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     setError(null);
     setSubmitting(true);
     try {
-      await apiPatch(`/api/org/users/${user.id}`, { name, role, active, ...(restrictable && defs.length ? { permissions: Object.fromEntries(defs.map((d) => [d.key, isOn(d.key)])) } : {}) });
+      await apiPatch(`/api/org/users/${user.id}`, { name, role, active, ...(restrictable ? { departmentIds } : {}), ...(restrictable && defs.length ? { permissions: Object.fromEntries(defs.map((d) => [d.key, isOn(d.key)])) } : {}) });
       onSaved();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'No se pudo guardar el usuario');
@@ -334,12 +379,19 @@ function EditUserModal({
           <label htmlFor="edit-role">Rol</label>
           <select id="edit-role" className="input" value={role} onChange={(e) => setRole(e.target.value as UserRole)}>
             {roleOptions.map((r) => (
-              <option key={r} value={r}>
-                {r}
+              <option key={r.key} value={r.key}>
+                {r.label}
               </option>
             ))}
           </select>
         </div>
+        {restrictable && (
+          <div className="field">
+            <label>Áreas donde trabaja</label>
+            <AreaPicker departments={departments} value={departmentIds} onChange={setDepartmentIds} />
+            <small className="area-help">Verá los chats de estas áreas y los que le asignen.</small>
+          </div>
+        )}
         <div className="field" style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
           <input id="edit-active" type="checkbox" checked={active} onChange={(e) => setActive(e.target.checked)} />
           <label htmlFor="edit-active" style={{ textTransform: 'none', fontSize: 14 }}>

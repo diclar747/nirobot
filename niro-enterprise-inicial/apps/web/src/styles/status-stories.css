@@ -36,3 +36,11 @@
 .story-nav-prev { left: 0; }
 .story-nav-next { right: 0; width: 67%; }
 @media (max-width: 480px) { .story-card { width: 100vw; height: 100dvh; border-radius: 0; } }
+
+/* Carrusel automático de estados */
+.stories-strip-list { display: flex; gap: 0; }
+.stories-track { display: flex; flex-shrink: 0; gap: 12px; padding-right: 12px; }
+.stories-strip-list.is-carousel { overflow-x: hidden; scrollbar-width: none; -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 22px, #000 calc(100% - 22px), transparent 100%); mask-image: linear-gradient(90deg, transparent 0, #000 22px, #000 calc(100% - 22px), transparent 100%); }
+.stories-strip-list.is-carousel::-webkit-scrollbar { display: none; }
+.stories-strip-list.is-carousel .story-chip { transition: transform .15s ease; }
+.stories-strip-list.is-carousel .story-chip:hover { transform: translateY(-2px) scale(1.06); }

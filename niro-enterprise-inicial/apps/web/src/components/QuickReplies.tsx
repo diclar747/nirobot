@@ -34,20 +34,35 @@ function Highlight({ text, query }: { text: string; query: string }) {
 }
 
 /** Lista desplegable que aparece al escribir "/" en el chat. */
-export function QuickReplyPopover({ items, query, activeIndex, context, canManage, onPick, onManage, onCreate, onHover, loaded }: {
+export function QuickReplyPopover({ items, query, activeIndex, context, canManage, onPick, onManage, onCreate, onHover, onClose, loaded }: {
   items: QuickReply[]; query: string; activeIndex: number; context: TemplateContext; canManage: boolean; loaded: boolean;
-  onPick: (reply: QuickReply) => void; onManage: () => void; onCreate: (shortcut?: string) => void; onHover: (index: number) => void;
+  onPick: (reply: QuickReply) => void; onManage: () => void; onCreate: (shortcut?: string) => void; onHover: (index: number) => void; onClose: () => void;
 }) {
   const listRef = useRef<HTMLDivElement | null>(null);
+  const rootRef = useRef<HTMLDivElement | null>(null);
+
+  // Clic afuera (fuera de la lista, de la barra de escribir y del botón ⚡) = cerrar.
+  useEffect(() => {
+    const onDown = (event: MouseEvent) => {
+      const target = event.target as Element;
+      if (rootRef.current?.contains(target) || target.closest?.('[data-qr-keep]')) return;
+      onClose();
+    };
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, [onClose]);
   useEffect(() => {
     listRef.current?.querySelector<HTMLElement>('[data-active="true"]')?.scrollIntoView({ block: 'nearest' });
   }, [activeIndex, items]);
 
   return (
-    <div className="qr-popover" role="listbox" aria-label="Respuestas rápidas" onMouseDown={(e) => e.preventDefault()}>
+    <div ref={rootRef} className="qr-popover" role="listbox" aria-label="Respuestas rápidas" onMouseDown={(e) => e.preventDefault()}>
       <div className="qr-head">
         <span><Ui name="zap" size={16} /> Respuestas rápidas</span>
-        {canManage && <button type="button" onClick={onManage}><Ui name="settings" size={14} /> Gestionar</button>}
+        <span className="qr-head-actions">
+          {canManage && <button type="button" onClick={onManage}><Ui name="settings" size={14} /> Gestionar</button>}
+          <button type="button" className="qr-close" onClick={onClose} aria-label="Cerrar respuestas rápidas" title="Cerrar (Esc)"><Ui name="x" size={16} /></button>
+        </span>
       </div>
       <div className="qr-list" ref={listRef}>
         {items.map((reply, index) => (

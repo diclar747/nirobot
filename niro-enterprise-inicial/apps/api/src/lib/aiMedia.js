@@ -36,4 +36,26 @@ async function extractMessageImage(organizationId, messageId, buffer, fileName, 
   }
 }
 
-module.exports = { transcribeMessageAudio, extractMessageImage };
+/**
+ * Si la organización activó "transcribir audios automáticamente", transcribe el audio recién llegado
+ * y avisa en vivo al chat para que el texto aparezca debajo del audio. Nunca lanza.
+ */
+async function autoTranscribeIfEnabled({ organizationId, conversationId, messageId, buffer, fileName, mimeType }) {
+  try {
+    if (!buffer || !niroAi.isConfigured()) return null;
+    const settings = await prisma.organizationSettings.findUnique({ where: { organizationId }, select: { autoTranscribeAudio: true } });
+    if (!settings || !settings.autoTranscribeAudio) return null;
+    if (await require('./billing').isBlocked(organizationId).catch(() => false)) return null; // plan vencido: no se gasta IA
+    const text = await transcribeMessageAudio(organizationId, messageId, buffer, fileName, mimeType);
+    if (!text) return null;
+    const { MESSAGE_INCLUDE, sanitizeMessage } = require('./conversations');
+    const full = await prisma.message.findUnique({ where: { id: messageId }, include: MESSAGE_INCLUDE });
+    if (full) require('./realtime').emitToOrg(organizationId, 'message:updated', { conversationId, message: sanitizeMessage(full) });
+    return text;
+  } catch (err) {
+    console.error('[ai-media] transcripción automática falló:', err.message || err);
+    return null;
+  }
+}
+
+module.exports = { transcribeMessageAudio, extractMessageImage, autoTranscribeIfEnabled };

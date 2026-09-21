@@ -44,6 +44,7 @@ const updateOrgSettingsSchema = z
     welcomeMessage: z.string().min(1).max(2000).optional(),
     systemPrompt: z.string().max(8000).optional(),
     aiEnabled: z.boolean().optional(),
+    autoTranscribeAudio: z.boolean().optional(),
     menuOptions: z.array(menuOptionSchema).max(10).optional(),
     botFlow: botFlowSchema.optional()
   })
@@ -53,7 +54,8 @@ const createUserSchema = z.object({
   name: z.string().min(2).max(120),
   email: z.string().email(),
   role: z.enum(ORG_ROLES),
-  password: z.string().min(10).optional()
+  password: z.string().min(10).optional(),
+  departmentIds: z.array(z.string().min(1)).max(50).optional()
 });
 
 const updateUserSchema = z
@@ -61,7 +63,8 @@ const updateUserSchema = z
     name: z.string().min(2).max(120).optional(),
     role: z.enum(ORG_ROLES).optional(),
     active: z.boolean().optional(),
-    permissions: z.record(z.string(), z.boolean()).optional()
+    permissions: z.record(z.string(), z.boolean()).optional(),
+    departmentIds: z.array(z.string().min(1)).max(50).optional()
   })
   .refine((data) => Object.keys(data).length > 0, { message: 'No hay cambios para aplicar' });
 

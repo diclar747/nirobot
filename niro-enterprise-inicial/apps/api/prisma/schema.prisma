@@ -121,6 +121,7 @@ model OrganizationSettings {
   aiEnabled      Boolean      @default(false)
   menuOptions    Json         @default("[]")
   botFlow        Json         @default("{}")
+  autoTranscribeAudio Boolean @default(false)
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 }
 
@@ -149,6 +150,7 @@ model User {
   pushSubscriptions  PushSubscription[]
   permissions        Json?
   quickReplies       QuickReply[]
+  conversationReads  ConversationRead[]
 }
 
 model Department {
@@ -227,6 +229,7 @@ model Conversation {
 
   @@index([organizationId, status, updatedAt])
   @@index([tags], type: Gin)
+  reads          ConversationRead[]
 }
 
 model Message {
@@ -510,6 +513,8 @@ model CallSurveyOption {
   surveyId  String
   optionKey String
   optionLabel String
+  replyMessage String?
+  action    String   @default("AUTO")
   survey    CallSurvey @relation(fields: [surveyId], references: [id], onDelete: Cascade)
 
   @@unique([surveyId, optionKey])
@@ -868,4 +873,18 @@ model QuickReply {
 
   @@unique([organizationId, shortcut])
   @@index([organizationId, usageCount])
+}
+
+
+// Hasta cuándo leyó cada usuario cada conversación (mensajes entrantes posteriores = no leídos).
+model ConversationRead {
+  id             String       @id @default(cuid())
+  conversationId String
+  userId         String
+  lastReadAt     DateTime     @default(now())
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([conversationId, userId])
+  @@index([userId])
 }

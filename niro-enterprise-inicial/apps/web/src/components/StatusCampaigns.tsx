@@ -2,7 +2,7 @@ import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
 import { apiGet, apiPost, apiUpload, ApiError } from '../lib/api';
 import { getSocket } from '../lib/socket';
 import { useAlerts } from '../context/AlertContext';
-import { EmptyState, Panel, Pill, type Tone } from './PageKit';
+import { EmptyState, Panel, Pill, StatCard, StatGrid, type Tone } from './PageKit';
 import type { Contact } from '../types';
 import { Ui } from './Ui';
 
@@ -143,7 +143,13 @@ export function StatusCampaigns({ contacts }: { contacts: Contact[] }) {
 
   return (
     <>
-      <Panel title="Nueva campaña de estados">
+      <StatGrid>
+        <StatCard label="Campañas activas" value={campaigns.filter((c) => c.status === 'active').length} hint="Secuencias en marcha" icon={<Ui name="megaphone" />} tone="success" />
+        <StatCard label="En pausa" value={campaigns.filter((c) => c.status === 'paused').length} hint="Listas para reanudar" icon={<Ui name="clock" />} tone="warning" />
+        <StatCard label="Completadas" value={campaigns.filter((c) => c.status === 'completed').length} hint="Secuencias finalizadas" icon={<Ui name="check-circle" />} tone="primary" />
+      </StatGrid>
+      <Panel title="Nueva campaña de estados" actions={<Pill tone="violet">Publicación automática</Pill>}>
+        <p className="sp-section-intro">Prepará una secuencia de textos, imágenes o videos. Podés crear varias campañas y gestionar cada una por separado.</p>
         <form className="sp-form" onSubmit={submit}>
           <label className="field">
             <span>Nombre de la campaña</span>
@@ -169,7 +175,7 @@ export function StatusCampaigns({ contacts }: { contacts: Contact[] }) {
           </label>
 
           <fieldset className="sp-group">
-            <legend>Audiencia</legend>
+            <legend>01 · Audiencia</legend>
             <div className="sp-seg small">
               <button type="button" className={audienceType === 'ALL' ? 'on' : ''} onClick={() => setAudienceType('ALL')}>Todos</button>
               <button type="button" className={audienceType === 'TAG' ? 'on' : ''} onClick={() => setAudienceType('TAG')}>Por etiqueta</button>
@@ -188,7 +194,7 @@ export function StatusCampaigns({ contacts }: { contacts: Contact[] }) {
           </fieldset>
 
           <fieldset className="sp-group">
-            <legend>Publicaciones ({items.length}/{maxItems}) — salen en este orden</legend>
+            <legend>02 · Secuencia ({items.length}/{maxItems}) — salen en este orden</legend>
             <ol className="sc-items">
               {items.map((item, index) => (
                 <li key={item.key}>
@@ -239,7 +245,7 @@ export function StatusCampaigns({ contacts }: { contacts: Contact[] }) {
         </form>
       </Panel>
 
-      <Panel title="Campañas" flush>
+      <Panel title="Mis campañas" actions={<Pill>{campaigns.length} campañas</Pill>} flush>
         {campaigns.length === 0 ? (
           <EmptyState icon={<Ui name="megaphone" size={28} />} title="Todavía no hay campañas" text="Creá una y los estados se publicarán solos en el intervalo que elijas." />
         ) : (
@@ -257,7 +263,7 @@ export function StatusCampaigns({ contacts }: { contacts: Contact[] }) {
                       {c.status === 'active' && c.nextAt ? ` · próximo ${formatDateTime(c.nextAt)}` : ''}
                       {c.status === 'paused' ? ' · en pausa' : ''}
                     </small>
-                    <span className="sc-bar" role="progressbar" aria-valuenow={percent} aria-valuemin={0} aria-valuemax={100}><i style={{ width: `${percent}%` }} /></span>
+                    <span className="sc-bar" role="progressbar" aria-label={`Progreso de ${c.name}`} aria-valuenow={percent} aria-valuemin={0} aria-valuemax={100}><i style={{ width: `${percent}%` }} /></span>
                   </span>
                   <Pill tone={meta.tone}>{meta.label}</Pill>
                   <span className="sp-actions">

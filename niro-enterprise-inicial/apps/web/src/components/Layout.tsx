@@ -7,6 +7,8 @@ import { NiroMascot } from './NiroMascot';
 import { WhatsAppConnectModal } from './WhatsAppConnectModal';
 import { NotificationBell } from './NotificationBell';
 import { BillingGate } from './BillingGate';
+import { NotificationsProvider } from '../context/NotificationsContext';
+import { NotificationCenter, NotificationSettingsModal, NotificationToasts } from './NotificationCenter';
 import { can, isAdminRole } from '../lib/permissions';
 import { apiGet } from '../lib/api';
 import { getSocket } from '../lib/socket';
@@ -41,6 +43,7 @@ export function Layout() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => localStorage.getItem('niro_sidebar_collapsed') === 'true');
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [unreadConversationsCount, setUnreadConversationsCount] = useState(0);
+  const [showNotifSettings, setShowNotifSettings] = useState(false);
   const appShellRef = useRef<HTMLDivElement>(null);
   const whatsappLogoutRef = useRef(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -82,8 +85,9 @@ export function Layout() {
       .catch(() => {});
 
     const refreshOpenCount = () => {
-      apiGet<{ conversations: { status: string }[] }>('/api/org/conversations?status=OPEN')
-        .then((res) => setUnreadConversationsCount(res.conversations?.length || 0))
+      // Chats con mensajes sin leer (para este usuario), no chats abiertos.
+      apiGet<{ conversations: number }>('/api/org/conversations/unread-summary')
+        .then((res) => setUnreadConversationsCount(res.conversations || 0))
         .catch(() => {});
     };
     refreshOpenCount();
@@ -99,12 +103,14 @@ export function Layout() {
     socket.on('message:new', refreshOpenCount);
     socket.on('conversation:new', refreshOpenCount);
     socket.on('conversation:updated', refreshOpenCount);
+    socket.on('conversation:read', refreshOpenCount);
 
     return () => {
       socket.off('whatsapp:status', onStatus);
       socket.off('message:new', refreshOpenCount);
       socket.off('conversation:new', refreshOpenCount);
       socket.off('conversation:updated', refreshOpenCount);
+      socket.off('conversation:read', refreshOpenCount);
     };
   }, [logout, navigate, user]);
 
@@ -172,6 +178,7 @@ export function Layout() {
   const isAdmin = isAdminRole(user);
 
   return (
+    <NotificationsProvider>
     <div ref={appShellRef} className={`modern-app-shell ${sidebarCollapsed ? 'sidebar-collapsed' : ''}`}>
       {/* SIDEBAR */}
       <aside className={`modern-sidebar ${sidebarCollapsed ? 'collapsed' : ''}`}>
@@ -517,6 +524,7 @@ export function Layout() {
                 )}
               </svg>
             </button>
+            {!isSuperadmin && <NotificationCenter onOpenSettings={() => setShowNotifSettings(true)} />}
             <NotificationBell />
 
             {/* Theme Toggle Button (Sun / Moon) */}
@@ -580,6 +588,15 @@ export function Layout() {
                   >
                     <Ui name="settings" size={16} /> Configuración
                   </button>
+                  {!isSuperadmin && (
+                    <button
+                      type="button"
+                      className="dropdown-item"
+                      onClick={() => { setShowUserMenu(false); setShowNotifSettings(true); }}
+                    >
+                      <Ui name="bell" size={16} /> Sonidos y notificaciones
+                    </button>
+                  )}
                   <button
                     type="button"
                     className="dropdown-item"
@@ -612,6 +629,9 @@ export function Layout() {
       {showWhatsAppModal && (
         <WhatsAppConnectModal onClose={() => setShowWhatsAppModal(false)} />
       )}
+      {!isSuperadmin && <NotificationToasts />}
+      {showNotifSettings && <NotificationSettingsModal onClose={() => setShowNotifSettings(false)} />}
     </div>
+    </NotificationsProvider>
   );
 }

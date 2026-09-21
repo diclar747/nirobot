@@ -11,6 +11,8 @@ import { EmojiPicker } from '../components/EmojiPicker';
 import { QuickReplyManager, QuickReplyPopover, useQuickReplies } from '../components/QuickReplies';
 import { detectSlash, fillTemplate, rankReplies, type QuickReply } from '../lib/quickReplies';
 import { can } from '../lib/permissions';
+import { useNotifications } from '../context/NotificationsContext';
+import { useLocation } from 'react-router-dom';
 import { StatusStories } from '../components/StatusStories';
 import { AgentsDropPanel, setConversationDragData } from '../components/AgentsDropPanel';
 import { useAlerts } from '../context/AlertContext';
@@ -141,7 +143,8 @@ export function Inbox() {
   const upsertConversation = useCallback((conversation: Conversation) => {
     setConversations((prev) => {
       const idx = prev.findIndex((c) => c.id === conversation.id);
-      const next = idx === -1 ? [conversation, ...prev] : prev.map((c) => (c.id === conversation.id ? conversation : c));
+      const merged: Conversation = idx === -1 ? conversation : { ...conversation, unreadCount: conversation.unreadCount ?? prev[idx].unreadCount, lastMessage: conversation.lastMessage ?? prev[idx].lastMessage };
+      const next = idx === -1 ? [merged, ...prev] : prev.map((c) => (c.id === conversation.id ? merged : c));
       return [...next].sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
     });
   }, []);
@@ -168,6 +171,36 @@ export function Inbox() {
     const id = setTimeout(loadConversations, search ? 300 : 0);
     return () => clearTimeout(id);
   }, [loadConversations, search]);
+
+  // --- No leídos ---
+  const selectedIdRef = useRef<string | null>(null);
+  const markConversationRead = useCallback((id: string) => {
+    setConversations((prev) => (prev.some((c) => c.id === id && (c.unreadCount || 0) > 0) ? prev.map((c) => (c.id === id ? { ...c, unreadCount: 0 } : c)) : prev));
+    apiPost(`/api/org/conversations/${id}/read`).catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    const socket = getSocket();
+    const onMessageNew = ({ conversationId, message }: { conversationId: string; message: Message }) => {
+      if (message.direction === 'NOTE') return;
+      const watching = selectedIdRef.current === conversationId && document.hasFocus() && !document.hidden;
+      if (message.direction === 'INBOUND' && watching) { markConversationRead(conversationId); }
+      setConversations((prev) => {
+        if (!prev.some((c) => c.id === conversationId)) return prev; // chat nuevo: lo trae conversation:new
+        const next = prev.map((c) => (c.id === conversationId ? {
+          ...c,
+          updatedAt: message.createdAt,
+          unreadCount: message.direction === 'INBOUND' && !watching ? (c.unreadCount || 0) + 1 : c.unreadCount || 0,
+          lastMessage: { content: (message.content || '').slice(0, 120), direction: message.direction, contentType: message.contentType, at: message.createdAt }
+        } : c));
+        return [...next].sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+      });
+    };
+    const onRead = ({ conversationId }: { conversationId: string }) => setConversations((prev) => prev.map((c) => (c.id === conversationId ? { ...c, unreadCount: 0 } : c)));
+    socket.on('message:new', onMessageNew);
+    socket.on('conversation:read', onRead);
+    return () => { socket.off('message:new', onMessageNew); socket.off('conversation:read', onRead); };
+  }, [markConversationRead]);
 
   useEffect(() => {
     const socket = getSocket();
@@ -212,6 +245,30 @@ export function Inbox() {
   });
 
   const selected = filteredConversations.find((c) => c.id === selectedId) || filteredConversations[0] || null;
+
+  // Abrir un chat lo marca como leído (y también al volver a esta pestaña con el chat abierto).
+  useEffect(() => {
+    selectedIdRef.current = selected?.id ?? null;
+    if (!selected) return;
+    if (document.hasFocus() && !document.hidden) markConversationRead(selected.id);
+    const onFocus = () => markConversationRead(selected.id);
+    window.addEventListener('focus', onFocus);
+    return () => window.removeEventListener('focus', onFocus);
+  }, [selected?.id, markConversationRead]);
+
+  // Le avisamos al centro de notificaciones qué chat estoy mirando (para no notificar lo que ya veo).
+  const { setActiveConversation } = useNotifications();
+  useEffect(() => {
+    setActiveConversation(selected?.id ?? null);
+    return () => setActiveConversation(null);
+  }, [selected?.id, setActiveConversation]);
+
+  // Clic en una notificación (o enlace ?conversation=…) estando ya en el inbox: abre ese chat.
+  const location = useLocation();
+  useEffect(() => {
+    const id = new URLSearchParams(location.search).get('conversation');
+    if (id) setSelectedId(id);
+  }, [location.key, location.search]);
 
   const gridTemplate = leftCollapsed
     ? rightCollapsed
@@ -314,7 +371,7 @@ export function Inbox() {
               return (
                 <div
                   key={c.id}
-                  className={`crm-conv-item ${isSelected ? 'active' : ''}`}
+                  className={`crm-conv-item ${isSelected ? 'active' : ''} ${(c.unreadCount || 0) > 0 ? 'unread' : ''}`}
                   onClick={() => setSelectedId(c.id)}
                   draggable
                   onDragStart={(e) => setConversationDragData(e, c.id)}
@@ -335,13 +392,14 @@ export function Inbox() {
                           <Ui name="phone" size={12} /> {formatPhone(c.contact.phone)}
                         </span>
                       ) : null}
-                      <span style={{ color: 'var(--text-dim)', fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        {c.subject || 'Sin asunto'}
+                      <span className="crm-conv-lastmsg">
+                        {c.lastMessage ? `${c.lastMessage.direction === 'OUTBOUND' ? 'Tú: ' : ''}${c.lastMessage.content || 'Adjunto'}` : c.subject || 'Sin mensajes todavía'}
                       </span>
                     </div>
 
                     <div style={{ marginTop: 4, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                       <StageBadge conversation={c} />
+                      {(c.unreadCount || 0) > 0 && <span className="crm-unread-pill" title={`${c.unreadCount} mensaje(s) sin leer`}>{(c.unreadCount || 0) > 99 ? '99+' : c.unreadCount}</span>}
                       {c.assignedTo && (
                         <span style={{ fontSize: 10.5, color: 'var(--text-dim)' }}>
                           <Ui name="user" size={12} /> {c.assignedTo.name.split(' ')[0]}
@@ -378,6 +436,7 @@ export function Inbox() {
               >
                 <Avatar contact={c.contact} />
                 <i className="crm-conv-rail-dot" style={{ background: stageDotColor(c) }} />
+                {(c.unreadCount || 0) > 0 && <span className="crm-rail-unread">{(c.unreadCount || 0) > 9 ? '9+' : c.unreadCount}</span>}
               </button>
             ))}
             {!loadingList && filteredConversations.length === 0 && <span className="crm-conv-rail-empty">Sin chats</span>}
@@ -667,6 +726,11 @@ function ActiveChatWindow({
   const [extendedEmojiFor, setExtendedEmojiFor] = useState<Message | null>(null);
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const chatInputRef = useRef<HTMLTextAreaElement | null>(null);
+  const handledTransferId = useRef(new Set<string>());
+  const [autoTranscribe, setAutoTranscribe] = useState(false);
+  useEffect(() => {
+    apiGet<{ organization: { settings: { autoTranscribeAudio?: boolean } | null } }>('/api/org').then((r) => setAutoTranscribe(Boolean(r.organization.settings?.autoTranscribeAudio))).catch(() => {});
+  }, []);
 
   function insertEmojiInComposer(emoji: string) {
     const input = chatInputRef.current;
@@ -691,7 +755,8 @@ function ActiveChatWindow({
   const quickContext = { name: conversation.contact.name, phone: conversation.contact.phone, email: conversation.contact.email, agent: me?.name, company: me?.organization?.name };
   const slash = detectSlash(content, caret);
   const slashKey = slash ? `${slash.start}:${slash.query}` : null;
-  const qrOpen = !recording && (qrForced || (slash !== null && slashKey !== qrDismissed));
+  const qrOpen = !recording && !qrManager && (qrForced || (slash !== null && slashKey !== qrDismissed));
+  const closeQuick = () => { setQrForced(false); setQrDismissed(slashKey); };
   const qrItems = rankReplies(quick.items, qrForced && !slash ? '' : slash?.query || '').slice(0, 40);
   const canManageQuick = can(me, 'quickReplies');
 
@@ -728,7 +793,7 @@ function ActiveChatWindow({
       if (event.key === 'ArrowUp') { event.preventDefault(); setQrIndex((i) => (i - 1 + qrItems.length) % qrItems.length); return; }
       if (event.key === 'Enter' || event.key === 'Tab') { event.preventDefault(); pickQuickReply(qrItems[qrIndex]); return; }
     }
-    if (qrOpen && event.key === 'Escape') { event.preventDefault(); setQrForced(false); setQrDismissed(slashKey); return; }
+    if (qrOpen && event.key === 'Escape') { event.preventDefault(); closeQuick(); return; }
     if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); handleSendMessage(); }
   }
   const [recordingSeconds, setRecordingSeconds] = useState(0);
@@ -1050,6 +1115,7 @@ function ActiveChatWindow({
         `/api/org/conversations/${conversation.id}/transfer-response`,
         { action }
       );
+      if (lastTransferNote) handledTransferId.current.add(lastTransferNote.id); // se oculta al instante, sin esperar al servidor
       onConversationChange(res.conversation);
     } catch (e) {
       console.error(e);
@@ -1060,10 +1126,11 @@ function ActiveChatWindow({
 
   const cleanPhone = isUsablePhone(conversation.contact.phone) ? phoneDigits(conversation.contact.phone) : null;
 
-  // Check if latest message is a transfer note
-  const lastTransferNote = messages
-    .filter((m) => m.direction === 'NOTE' && m.content.includes('[TRANSFERENCIA]'))
-    .slice(-1)[0];
+  // El aviso Aceptar/Rechazar existe solo mientras la transferencia está pendiente: desaparece apenas
+  // alguien la acepta o la rechaza (queda como nota en el historial) y solo lo ve a quien se le transfirió.
+  const lastTransferIndex = messages.reduce((found, m, i) => (m.direction === 'NOTE' && m.content.includes('[TRANSFERENCIA]') ? i : found), -1);
+  const transferResolved = lastTransferIndex >= 0 && messages.slice(lastTransferIndex + 1).some((m) => m.direction === 'NOTE' && (m.content.includes('aceptó la transferencia') || m.content.includes('rechazó la transferencia')));
+  const lastTransferNote = lastTransferIndex >= 0 && !transferResolved && !handledTransferId.current.has(messages[lastTransferIndex].id) && conversation.assignedTo?.id === me?.id ? messages[lastTransferIndex] : undefined;
 
   return (
     <>
@@ -1387,6 +1454,7 @@ function ActiveChatWindow({
                   </div>
                 )}
                 <AttachmentContent message={m} conversationId={conversation.id} onOpenImage={onOpenImage} />
+                {m.attachment?.mimeType.startsWith('audio/') && <AudioTranscript message={m} autoEnabled={autoTranscribe} conversationId={conversation.id} />}
                 <MessageBody message={m} />
               </div>
 
@@ -1527,8 +1595,9 @@ function ActiveChatWindow({
           type="button"
           className={`composer-action-btn ${qrOpen ? 'recording' : ''}`}
           style={qrOpen ? { background: 'var(--primary-soft)', color: '#10b981' } : undefined}
+          data-qr-keep
           onMouseDown={(e) => e.preventDefault()}
-          onClick={() => { setQrForced((v) => !v); chatInputRef.current?.focus(); }}
+          onClick={() => { setQrDismissed(null); setQrForced((v) => !v); chatInputRef.current?.focus(); }}
           title="Respuestas rápidas (o escribí / en el chat)"
           aria-label="Respuestas rápidas"
         >
@@ -1550,6 +1619,7 @@ function ActiveChatWindow({
 
         <textarea
           ref={chatInputRef}
+          data-qr-keep
           className="crm-chat-textarea"
           rows={1}
           placeholder={
@@ -1569,9 +1639,9 @@ function ActiveChatWindow({
 
         {qrOpen && (
           <QuickReplyPopover items={qrItems} query={qrForced && !slash ? '' : slash?.query || ''} activeIndex={qrIndex} context={quickContext} canManage={canManageQuick} loaded={quick.loaded}
-            onPick={pickQuickReply} onHover={setQrIndex}
-            onManage={() => { setQrForced(false); setQrManager({ startNew: false }); }}
-            onCreate={(shortcut) => { setQrForced(false); setQrManager({ startNew: true, shortcut }); }} />
+            onPick={pickQuickReply} onHover={setQrIndex} onClose={closeQuick}
+            onManage={() => { closeQuick(); setQrManager({ startNew: false }); }}
+            onCreate={(shortcut) => { closeQuick(); setQrManager({ startNew: true, shortcut }); }} />
         )}
 
         <button className="btn-send-message" type="submit" disabled={sending || recording || !content.trim()}>
@@ -1934,6 +2004,44 @@ function MessageBody({ message }: { message: Message }) {
     return <em className="crm-media-failed">No se pudo descargar el archivo</em>;
   }
   return <>{message.content}</>;
+}
+
+/** Texto del audio debajo del reproductor (transcripción con Niro IA). */
+function AudioTranscript({ message, autoEnabled, conversationId }: { message: Message; autoEnabled: boolean; conversationId: string }) {
+  const { notify } = useAlerts();
+  const [busy, setBusy] = useState(false);
+  const [expanded, setExpanded] = useState(false);
+  const [now, setNow] = useState(() => Date.now());
+  const text = message.transcription?.trim() || '';
+  const waiting = autoEnabled && message.direction === 'INBOUND' && !text && now - new Date(message.createdAt).getTime() < 90000;
+
+  // Mientras se transcribe, revisamos el reloj para pasar a "Transcribir" si tarda demasiado.
+  useEffect(() => {
+    if (!waiting) return;
+    const t = window.setTimeout(() => setNow(Date.now()), 5000);
+    return () => window.clearTimeout(t);
+  }, [waiting, now]);
+
+  async function transcribe() {
+    setBusy(true);
+    try { await apiPost(`/api/org/conversations/${conversationId}/messages/${message.id}/ai-read`, {}); }
+    catch (err) { notify(err instanceof ApiError ? err.message : 'No se pudo transcribir el audio', { tone: 'error' }); }
+    finally { setBusy(false); }
+  }
+
+  if (text) {
+    const long = text.length > 220;
+    return (
+      <div className="audio-transcript">
+        <div className="audio-transcript-head"><span><Ui name="sparkles" size={12} /> Transcripción</span>
+          <button type="button" onClick={() => { navigator.clipboard?.writeText(text); notify('Texto copiado', { tone: 'success' }); }} title="Copiar texto"><Ui name="copy" size={13} /></button></div>
+        <p className={long && !expanded ? 'clamped' : ''}>{text}</p>
+        {long && <button type="button" className="audio-transcript-more" onClick={() => setExpanded((v) => !v)}>{expanded ? 'Ver menos' : 'Ver todo'}</button>}
+      </div>
+    );
+  }
+  if (waiting || busy) return <div className="audio-transcript pending"><span className="audio-transcript-dots"><i /><i /><i /></span> Transcribiendo…</div>;
+  return <button type="button" className="audio-transcript-btn" onClick={transcribe}><Ui name="note" size={13} /> Transcribir</button>;
 }
 
 function AttachmentContent({
@@ -2779,138 +2887,130 @@ function CreateOrderModal({
    NEW CONVERSATION MODAL
    ========================================================= */
 function NewConversationModal({ onClose, onCreated }: { onClose: () => void; onCreated: (c: Conversation) => void }) {
+  const { notify } = useAlerts();
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<Contact[]>([]);
+  const [searching, setSearching] = useState(false);
   const [selectedContact, setSelectedContact] = useState<Contact | null>(null);
   const [creatingNew, setCreatingNew] = useState(false);
   const [newName, setNewName] = useState('');
   const [newPhone, setNewPhone] = useState('');
-  const [newEmail, setNewEmail] = useState('');
-  const [subject, setSubject] = useState('');
+  const [firstMessage, setFirstMessage] = useState('');
   const [departmentId, setDepartmentId] = useState('');
   const [departments, setDepartments] = useState<Department[]>([]);
   const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    apiGet<{ departments: Department[] }>('/api/org/departments')
-      .then((data) => setDepartments(data.departments))
-      .catch(() => setDepartments([]));
+    apiGet<{ departments: Department[] }>('/api/org/departments').then((data) => setDepartments(data.departments)).catch(() => setDepartments([]));
   }, []);
 
   useEffect(() => {
-    if (!query.trim() || selectedContact) {
-      setResults([]);
-      return;
-    }
+    if (!query.trim() || selectedContact) { setResults([]); return; }
+    setSearching(true);
     const id = setTimeout(() => {
-      apiGet<{ contacts: Contact[] }>(`/api/org/contacts?q=${encodeURIComponent(query.trim())}`)
-        .then((data) => setResults(data.contacts))
-        .catch(() => setResults([]));
+      apiGet<{ contacts: Contact[] }>(`/api/org/contacts?q=${encodeURIComponent(query.trim())}&limit=8`)
+        .then((data) => setResults(data.contacts.filter((c) => c.phone)))
+        .catch(() => setResults([]))
+        .finally(() => setSearching(false));
     }, 250);
     return () => clearTimeout(id);
   }, [query, selectedContact]);
 
+  const phoneDigitsNew = newPhone.replace(/\D/g, '');
+  const canSubmit = Boolean(selectedContact) || (creatingNew && phoneDigitsNew.length >= 8);
+
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
+    if (!canSubmit || submitting) return;
     setSubmitting(true);
+    setError(null);
     try {
-      const body: Record<string, unknown> = {
-        subject: subject || undefined,
-        departmentId: departmentId || undefined
-      };
+      const body: Record<string, unknown> = { departmentId: departmentId || undefined, channel: 'whatsapp' };
       if (selectedContact) body.contactId = selectedContact.id;
-      else if (creatingNew) body.newContact = { name: newName || undefined, phone: newPhone || undefined, email: newEmail || undefined };
+      else body.newContact = { name: newName.trim() || undefined, phone: phoneDigitsNew };
 
-      const data = await apiPost<{ conversation: Conversation }>('/api/org/conversations', body);
+      const data = await apiPost<{ conversation: Conversation; existing?: boolean }>('/api/org/conversations', body);
+      if (data.existing) notify(`Ya tenías un chat con ${contactLabel(data.conversation.contact)}: lo abrimos.`, { tone: 'info' });
+      if (firstMessage.trim()) {
+        try { await apiPost(`/api/org/conversations/${data.conversation.id}/messages`, { content: firstMessage.trim(), type: 'outbound' }); }
+        catch { notify('El chat se creó, pero no se pudo enviar el primer mensaje. Escribilo desde el chat.', { tone: 'warning' }); }
+      }
       onCreated(data.conversation);
     } catch (err) {
-      console.error(err);
+      setError(err instanceof ApiError ? err.message : 'No se pudo crear el chat. Revisá los datos e intentá de nuevo.');
     } finally {
       setSubmitting(false);
     }
   }
 
   return (
-    <Modal title="Nueva Conversación" onClose={onClose}>
+    <Modal title="Nuevo chat de WhatsApp" onClose={onClose}>
       <form onSubmit={handleSubmit}>
+        <p style={{ margin: '0 0 14px', fontSize: 13, color: 'var(--text-muted)', lineHeight: 1.5 }}>
+          Iniciá una conversación con un cliente. Se abre un chat de WhatsApp <b>a tu nombre</b> y podés escribir el primer mensaje ahora mismo.
+        </p>
+
         {!creatingNew && (
           <div className="field">
-            <label>Contacto</label>
+            <label>¿Con quién querés hablar?</label>
             {selectedContact ? (
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'var(--bg-surface-2)', padding: '8px 12px', borderRadius: 10 }}>
-                <span>{contactLabel(selectedContact)}</span>
-                <button type="button" className="btn secondary small" onClick={() => setSelectedContact(null)}>
-                  Cambiar
-                </button>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, background: 'var(--bg-surface-2)', padding: '10px 12px', borderRadius: 10 }}>
+                <span style={{ display: 'flex', flexDirection: 'column' }}><b>{contactLabel(selectedContact)}</b><small style={{ color: 'var(--text-muted)' }}>{formatPhone(selectedContact.phone)}</small></span>
+                <button type="button" className="btn secondary small" onClick={() => setSelectedContact(null)}>Cambiar</button>
               </div>
             ) : (
               <>
-                <input
-                  className="input"
-                  placeholder="Buscar por nombre, teléfono o email…"
-                  value={query}
-                  onChange={(e) => setQuery(e.target.value)}
-                />
+                <input className="input" placeholder="Buscar por nombre o teléfono…" value={query} onChange={(e) => setQuery(e.target.value)} autoFocus />
                 {results.length > 0 && (
-                  <div style={{ border: '1px solid var(--border-color)', borderRadius: 10, marginTop: 6, overflow: 'hidden' }}>
+                  <div style={{ border: '1px solid var(--border-color)', borderRadius: 10, marginTop: 6, overflow: 'hidden', maxHeight: 220, overflowY: 'auto' }}>
                     {results.map((c) => (
-                      <div
-                        key={c.id}
-                        onClick={() => setSelectedContact(c)}
-                        style={{ padding: '8px 12px', cursor: 'pointer', borderBottom: '1px solid var(--border-color)' }}
-                      >
-                        {contactLabel(c)}
-                      </div>
+                      <button type="button" key={c.id} onClick={() => setSelectedContact(c)} style={{ display: 'flex', width: '100%', alignItems: 'center', gap: 10, padding: '9px 12px', border: 0, borderBottom: '1px solid var(--border-color)', background: 'transparent', color: 'inherit', cursor: 'pointer', textAlign: 'left' }}>
+                        <Avatar contact={c} size={32} />
+                        <span style={{ display: 'flex', flexDirection: 'column' }}><b style={{ fontSize: 13.5 }}>{contactLabel(c)}</b><small style={{ color: 'var(--text-muted)' }}>{formatPhone(c.phone)}</small></span>
+                      </button>
                     ))}
                   </div>
                 )}
+                {query.trim() && !searching && results.length === 0 && <small style={{ display: 'block', marginTop: 6, color: 'var(--text-muted)' }}>No hay contactos con esa búsqueda. Podés cargarlo como contacto nuevo.</small>}
               </>
             )}
           </div>
         )}
 
         {!selectedContact && (
-          <button type="button" className="btn secondary small" onClick={() => setCreatingNew((v) => !v)} style={{ marginBottom: 14 }}>
-            {creatingNew ? 'Buscar contacto existente' : '+ Cargar contacto nuevo'}
+          <button type="button" className="btn secondary small" onClick={() => { setCreatingNew((v) => !v); setError(null); }} style={{ marginBottom: 14 }}>
+            {creatingNew ? 'Buscar entre mis contactos' : '+ Cargar contacto nuevo'}
           </button>
         )}
 
         {creatingNew && !selectedContact && (
           <>
+            <div className="field"><label>Nombre (opcional)</label><input className="input" value={newName} onChange={(e) => setNewName(e.target.value)} autoFocus /></div>
             <div className="field">
-              <label>Nombre</label>
-              <input className="input" value={newName} onChange={(e) => setNewName(e.target.value)} />
-            </div>
-            <div className="field">
-              <label>Teléfono</label>
-              <input className="input" value={newPhone} onChange={(e) => setNewPhone(e.target.value)} />
-            </div>
-            <div className="field">
-              <label>Email</label>
-              <input type="email" className="input" value={newEmail} onChange={(e) => setNewEmail(e.target.value)} />
+              <label>Número de WhatsApp</label>
+              <input className="input" value={newPhone} onChange={(e) => setNewPhone(e.target.value)} placeholder="595981123456" inputMode="tel" />
+              <small style={{ color: 'var(--text-muted)' }}>Con código de país y sin el +. Ej.: 595981123456</small>
             </div>
           </>
         )}
 
         <div className="field">
-          <label>Asunto</label>
-          <input className="input" value={subject} onChange={(e) => setSubject(e.target.value)} />
+          <label>Primer mensaje (opcional)</label>
+          <textarea className="input" rows={3} value={firstMessage} onChange={(e) => setFirstMessage(e.target.value)} placeholder="Hola, te escribo de…" maxLength={4000} />
         </div>
 
         <div className="field">
-          <label>Departamento</label>
+          <label>Departamento (opcional)</label>
           <select className="input" value={departmentId} onChange={(e) => setDepartmentId(e.target.value)}>
-            <option value="">Sin asignar</option>
-            {departments.map((d) => (
-              <option key={d.id} value={d.id}>
-                {d.name}
-              </option>
-            ))}
+            <option value="">Sin departamento</option>
+            {departments.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
           </select>
         </div>
 
-        <button className="btn" type="submit" disabled={submitting} style={{ width: '100%', justifyContent: 'center' }}>
-          {submitting ? 'Creando…' : 'Crear conversación'}
+        {error && <div className="alert error" style={{ marginBottom: 10 }}>{error}</div>}
+        <button className="btn" type="submit" disabled={!canSubmit || submitting} style={{ width: '100%', justifyContent: 'center' }}>
+          {submitting ? 'Creando…' : firstMessage.trim() ? 'Crear chat y enviar mensaje' : 'Abrir chat'}
         </button>
       </form>
     </Modal>

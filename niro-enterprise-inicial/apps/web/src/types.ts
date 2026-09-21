@@ -22,6 +22,7 @@ export interface OrgUser {
   mustChangePassword: boolean;
   createdAt: string;
   permissions?: Record<string, boolean>;
+  departments?: { id: string; name: string }[];
   whatsapp?: {
     name: string | null;
     phone: string | null;
@@ -85,6 +86,8 @@ export interface OrgSettings {
   welcomeMessage: string;
   systemPrompt: string;
   aiEnabled: boolean;
+  autoTranscribeAudio?: boolean;
+  niroAiConfigured?: boolean;
   menuOptions: MenuOption[];
   botFlow?: BotFlow | null;
 }
@@ -133,6 +136,8 @@ export interface Conversation {
   contact: Contact;
   department: { id: string; name: string } | null;
   assignedTo: { id: string; name: string; email: string } | null;
+  unreadCount?: number;
+  lastMessage?: { content: string; direction: string; contentType: string; at: string } | null;
 }
 
 export interface MessageAttachment {

@@ -168,3 +168,92 @@ describe('Aislamiento multiempresa en conversaciones', () => {
     expect(contactsRes.body.contacts.every((c) => c.id !== cB.body.conversation.contact.id)).toBe(true);
   });
 });
+
+describe('Nuevo chat iniciado por un agente', () => {
+  test('un contacto con teléfono abre un chat de WhatsApp a nombre de quien lo inicia, sin bienvenida del bot', async () => {
+    const org = await createOrganization(prisma, { slug: `nc-${Date.now()}` });
+    await prisma.organization.update({ where: { id: org.id }, data: { trialEndsAt: new Date(Date.now() + 3600000) } });
+    await prisma.organizationSettings.update({ where: { organizationId: org.id }, data: { aiEnabled: true, welcomeMessage: 'Hola, bienvenido' } });
+    const owner = await createUser(prisma, { organizationId: org.id, email: `nc${Date.now()}@t.test`, role: 'OWNER' });
+    const contact = await prisma.contact.create({ data: { organizationId: org.id, name: 'Ana', phone: '595981000001' } });
+    const { agent, csrfToken } = await loginAgent(app, owner.email);
+
+    const created = await agent.post('/api/org/conversations').set('X-CSRF-Token', csrfToken).send({ contactId: contact.id });
+    expect(created.status).toBe(201);
+    expect(created.body.conversation.channel).toBe('whatsapp');
+    expect(created.body.conversation.assignedTo.id).toBe(owner.id);
+    expect(await prisma.message.count({ where: { conversationId: created.body.conversation.id } })).toBe(0); // no se le manda "bienvenida" al cliente
+
+    // pedir otro chat con el mismo contacto abre el existente, no lo duplica
+    const again = await agent.post('/api/org/conversations').set('X-CSRF-Token', csrfToken).send({ contactId: contact.id });
+    expect(again.status).toBe(200);
+    expect(again.body.existing).toBe(true);
+    expect(again.body.conversation.id).toBe(created.body.conversation.id);
+    expect(await prisma.conversation.count({ where: { contactId: contact.id } })).toBe(1);
+  });
+
+  test('un contacto nuevo sin teléfono queda como chat manual', async () => {
+    const org = await createOrganization(prisma, { slug: `nc2-${Date.now()}` });
+    const owner = await createUser(prisma, { organizationId: org.id, email: `nc2${Date.now()}@t.test`, role: 'OWNER' });
+    const { agent, csrfToken } = await loginAgent(app, owner.email);
+    const res = await agent.post('/api/org/conversations').set('X-CSRF-Token', csrfToken).send({ newContact: { name: 'Sin teléfono' } });
+    expect(res.status).toBe(201);
+    expect(res.body.conversation.channel).toBe('manual');
+  });
+});
+
+describe('Mensajes no leídos (como WhatsApp Web)', () => {
+  async function setup() {
+    const org = await createOrganization(prisma, { slug: `ur-${Date.now()}` });
+    await prisma.organization.update({ where: { id: org.id }, data: { trialEndsAt: new Date(Date.now() + 3600000) } });
+    const owner = await createUser(prisma, { organizationId: org.id, email: `ur${Date.now()}@t.test`, role: 'OWNER' });
+    const contact = await prisma.contact.create({ data: { organizationId: org.id, name: 'Ana', phone: '595981000009' } });
+    const conv = await prisma.conversation.create({ data: { organizationId: org.id, contactId: contact.id, channel: 'whatsapp' } });
+    return { org, owner, contact, conv, session: await loginAgent(app, owner.email) };
+  }
+  const inbound = (conv, content, createdAt = new Date()) => prisma.message.create({ data: { conversationId: conv.id, direction: 'INBOUND', content, createdAt } });
+
+  test('cuenta los entrantes nuevos, muestra el último mensaje y se limpia al abrir el chat', async () => {
+    const { conv, session } = await setup();
+    await inbound(conv, 'Hola'); await inbound(conv, '¿Tienen stock?');
+    await prisma.message.create({ data: { conversationId: conv.id, direction: 'OUTBOUND', content: 'respuesta mía', createdAt: new Date(Date.now() - 5000) } });
+
+    let list = await session.agent.get('/api/org/conversations');
+    expect(list.body.conversations[0].unreadCount).toBe(2);
+    expect(list.body.conversations[0].lastMessage).toMatchObject({ content: '¿Tienen stock?', direction: 'INBOUND' });
+    expect((await session.agent.get('/api/org/conversations/unread-summary')).body).toEqual({ conversations: 1, messages: 2 });
+
+    const read = await session.agent.post(`/api/org/conversations/${conv.id}/read`).set('X-CSRF-Token', session.csrfToken);
+    expect(read.status).toBe(200);
+    list = await session.agent.get('/api/org/conversations');
+    expect(list.body.conversations[0].unreadCount).toBe(0);
+    expect((await session.agent.get('/api/org/conversations/unread-summary')).body.conversations).toBe(0);
+
+    await new Promise((r) => setTimeout(r, 20));
+    await inbound(conv, 'Sigo esperando');
+    expect((await session.agent.get('/api/org/conversations')).body.conversations[0].unreadCount).toBe(1);
+  });
+
+  test('cada usuario tiene su propio conteo y un usuario nuevo no hereda el historial', async () => {
+    const { org, owner, conv, session } = await setup();
+    await prisma.user.update({ where: { id: owner.id }, data: { createdAt: new Date(Date.now() - 2 * 3600 * 1000) } }); // usuario antiguo
+    await inbound(conv, 'mensaje viejo', new Date(Date.now() - 3600 * 1000));
+    const late = await createUser(prisma, { organizationId: org.id, email: `late${Date.now()}@t.test`, role: 'OWNER' });
+    const lateSession = await loginAgent(app, late.email);
+    await inbound(conv, 'mensaje nuevo');
+
+    expect((await session.agent.get('/api/org/conversations')).body.conversations[0].unreadCount).toBe(2);   // el primero ve ambos
+    expect((await lateSession.agent.get('/api/org/conversations')).body.conversations[0].unreadCount).toBe(1); // el nuevo solo lo posterior a su alta
+    await session.agent.post(`/api/org/conversations/${conv.id}/read`).set('X-CSRF-Token', session.csrfToken);
+    expect((await lateSession.agent.get('/api/org/conversations')).body.conversations[0].unreadCount).toBe(1); // leer yo no lo marca leído para otro
+  });
+
+  test('no se puede marcar leída una conversación de otra organización', async () => {
+    const a = await setup();
+    const other = await createOrganization(prisma, { slug: `ur2-${Date.now()}` });
+    await prisma.organization.update({ where: { id: other.id }, data: { trialEndsAt: new Date(Date.now() + 3600000) } });
+    const u = await createUser(prisma, { organizationId: other.id, email: `x${Date.now()}@t.test`, role: 'OWNER' });
+    const s = await loginAgent(app, u.email);
+    expect((await s.agent.post(`/api/org/conversations/${a.conv.id}/read`).set('X-CSRF-Token', s.csrfToken)).status).toBe(404);
+  });
+});

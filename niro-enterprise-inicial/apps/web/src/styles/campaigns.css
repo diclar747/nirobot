@@ -1014,3 +1014,9 @@
 .cc-review-list { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; } .cc-review-list span { padding: 4px 10px; border-radius: 999px; background: var(--bg-surface); border: 1px solid var(--border-color); font-size: 12.5px; }
 @media (max-width: 800px) { .cc-rules { grid-template-columns: 1fr 1fr; } }
 @media (max-width: 560px) { .cc-rules { grid-template-columns: 1fr; } }
+
+.cc-survey-intro { display: flex; gap: 8px; align-items: flex-start; padding: 10px 12px; border-radius: 10px; background: var(--primary-soft); color: var(--text-muted); font-size: 13px; line-height: 1.45; }
+.cc-survey-ai { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; } .cc-survey-ai small { color: var(--text-muted); font-size: 12px; }
+.cc-option-card { display: grid; gap: 8px; padding: 12px; border: 1px solid var(--border-color); border-radius: 12px; background: var(--bg-surface-2); }
+.cc-option-reply { display: grid; grid-template-columns: minmax(180px, .8fr) 1.6fr; gap: 10px; } .cc-option-reply label { display: grid; gap: 4px; } .cc-option-reply label span { color: var(--text-dim); font-size: 11.5px; font-weight: 700; }
+@media (max-width: 700px) { .cc-option-reply { grid-template-columns: 1fr; } }

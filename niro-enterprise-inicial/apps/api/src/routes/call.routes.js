@@ -312,6 +312,40 @@ router.post('/consent', requireRole('OWNER', 'ADMIN', 'SUPERVISOR'), requireCsrf
   } catch (err) { next(err); }
 });
 
+// Sugiere qué acción y qué respuesta automática darle a cada opción de la encuesta.
+// Con IA (si está configurada) redacta mensajes a medida; si no, usa textos por defecto según el sentido de la opción.
+
+router.post('/survey/suggest-replies', requireCsrf, async (req, res, next) => {
+  try {
+    const question = String(req.body?.question || '').slice(0, 300);
+    const options = (Array.isArray(req.body?.options) ? req.body.options : []).slice(0, 10)
+      .map((o) => ({ key: String(o?.key || '').slice(0, 10), label: String(o?.label || '').slice(0, 120) })).filter((o) => o.key && o.label);
+    if (options.length === 0) throw new HttpError(400, 'Agregá al menos una opción');
+    const { DEFAULT_REPLIES, guessAction } = require('../lib/callSurveys');
+    const replies = options.map((o) => { const action = guessAction(o.label); return { key: o.key, action, replyMessage: DEFAULT_REPLIES[action] }; });
+    let usedAi = false;
+    const niroAi = require('../lib/niroAi');
+    if (niroAi.isConfigured()) {
+      try {
+        const prompt = `Una empresa de Paraguay hizo una llamada y luego envió por WhatsApp esta encuesta: "${question}". Opciones: ${options.map((o) => `${o.key}) ${o.label}`).join(' | ')}. ` +
+          'Redactá, para cada opción, la respuesta automática breve (1 a 2 oraciones), cordial y en español rioplatense, con como máximo un emoji. ' +
+          'Si la opción es rechazar, agradecé y confirmá que no se le va a llamar más. Si pide contacto más adelante, confirmá que se lo contactará luego. Si acepta, agradecé y prometé mantenerlo informado. ' +
+          'Respondé SOLO un JSON: [{"key":"1","reply":"..."}]';
+        const response = await niroAi.chatCompletion([{ role: 'system', content: 'Sos un asistente de atención al cliente. Respondés únicamente JSON válido.' }, { role: 'user', content: prompt }]);
+        const match = String(response.content || '').match(/\[[\s\S]*\]/);
+        const parsed = match ? JSON.parse(match[0]) : [];
+        for (const item of parsed) {
+          const target = replies.find((r) => r.key === String(item.key));
+          if (target && typeof item.reply === 'string' && item.reply.trim().length >= 5) target.replyMessage = item.reply.trim().slice(0, 500);
+        }
+        usedAi = parsed.length > 0;
+        await require('../lib/aiUsage').recordAiUsage(req.auth.organizationId, require('../lib/aiUsage').KINDS.CHAT_TEST, response.cost).catch(() => {});
+      } catch (err) { console.warn('[call-survey] sugerencia con IA falló, se usan textos por defecto:', err.message || err); }
+    }
+    res.json({ replies, usedAi });
+  } catch (err) { next(err); }
+});
+
 router.post('/campaigns', requireCsrf, async (req, res, next) => {
   try {
     const data = createCallCampaignSchema.parse(req.body);
@@ -353,7 +387,7 @@ router.post('/campaigns', requireCsrf, async (req, res, next) => {
           surveyQuestion: data.surveyQuestion || null, surveyResponseMethod: data.surveyResponseMethod,
           surveyExpiresAt: data.surveyExpiresAt ? new Date(data.surveyExpiresAt) : null, createdByUserId: req.auth.userId,
           recipients: { create: accepted.map(({ contact, phone }) => ({ contactId: contact.id, phoneNumber: phone })) },
-          ...(data.surveyEnabled ? { survey: { create: { question: data.surveyQuestion, responseMethod: data.surveyResponseMethod, expiresAt: data.surveyExpiresAt ? new Date(data.surveyExpiresAt) : null, options: { create: data.surveyOptions.map((option) => ({ optionKey: option.key, optionLabel: option.label })) } } } } : {})
+          ...(data.surveyEnabled ? { survey: { create: { question: data.surveyQuestion, responseMethod: data.surveyResponseMethod, expiresAt: data.surveyExpiresAt ? new Date(data.surveyExpiresAt) : null, options: { create: data.surveyOptions.map((option) => ({ optionKey: option.key, optionLabel: option.label, replyMessage: option.replyMessage || null, action: option.action || 'NONE' })) } } } } : {})
         },
         include: CAMPAIGN_INCLUDE
       });
