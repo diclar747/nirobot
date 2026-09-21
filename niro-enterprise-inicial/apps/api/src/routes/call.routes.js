@@ -272,6 +272,46 @@ router.get('/campaigns', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+// Contactos para armar la audiencia de llamadas: nombre, número, etapa CRM, etiquetas y estado de consentimiento.
+router.get('/audience', async (req, res, next) => {
+  try {
+    const organizationId = req.auth.organizationId;
+    const contacts = await prisma.contact.findMany({
+      where: { organizationId, phone: { not: null } },
+      select: {
+        id: true, name: true, phone: true, email: true, tags: true, avatarUrl: true,
+        callConsentStatus: true, callOptedOutAt: true,
+        conversations: { select: { tags: true }, orderBy: { updatedAt: 'desc' }, take: 3 }
+      },
+      orderBy: [{ name: { sort: 'asc', nulls: 'last' } }, { createdAt: 'desc' }],
+      take: 5000
+    });
+    res.json({
+      contacts: contacts.map(({ conversations, ...c }) => ({ ...c, crmTags: Array.from(new Set(conversations.flatMap((cv) => cv.tags))) }))
+    });
+  } catch (err) { next(err); }
+});
+
+// Registro de consentimiento en bloque. Es una declaración del operador (queda con fecha, usuario y fuente):
+// solo supervisores/administradores, nunca sobre contactos que pidieron no ser llamados, y exige confirmación explícita.
+router.post('/consent', requireRole('OWNER', 'ADMIN', 'SUPERVISOR'), requireCsrf, async (req, res, next) => {
+  try {
+    const ids = Array.isArray(req.body?.contactIds) ? req.body.contactIds.filter((id) => typeof id === 'string').slice(0, 5000) : [];
+    if (ids.length === 0) throw new HttpError(400, 'Seleccioná al menos un contacto');
+    if (req.body?.confirm !== true) throw new HttpError(400, 'Tenés que confirmar que estos contactos aceptaron ser llamados');
+    const operator = await prisma.user.findUnique({ where: { id: req.auth.userId }, select: { name: true } });
+    const source = String(req.body?.source || 'Declaración del operador').trim().slice(0, 120);
+    const where = { organizationId: req.auth.organizationId, id: { in: ids }, callOptedOutAt: null, NOT: { callConsentStatus: 'GRANTED' } };
+    const skippedOptedOut = await prisma.contact.count({ where: { organizationId: req.auth.organizationId, id: { in: ids }, callOptedOutAt: { not: null } } });
+    const result = await prisma.contact.updateMany({
+      where,
+      data: { callConsentStatus: 'GRANTED', callConsentAt: new Date(), callConsentSource: `${source} · ${operator?.name || 'operador'}` }
+    });
+    await writeCallAudit({ organizationId: req.auth.organizationId, userId: req.auth.userId, action: 'call.consent.granted', entityType: 'Contact', entityId: null, details: { granted: result.count, requested: ids.length, skippedOptedOut, source } });
+    res.json({ granted: result.count, skippedOptedOut, alreadyGranted: ids.length - result.count - skippedOptedOut });
+  } catch (err) { next(err); }
+});
+
 router.post('/campaigns', requireCsrf, async (req, res, next) => {
   try {
     const data = createCallCampaignSchema.parse(req.body);
