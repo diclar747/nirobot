@@ -783,6 +783,18 @@ async function connectSession(organizationId, options = {}) {
     }
   });
 
+  // Cada persona que abre un estado nuestro genera un recibo de lectura sobre status@broadcast.
+  sock.ev.on('message-receipt.update', (updates) => {
+    for (const update of updates || []) {
+      const key = update && update.key;
+      const receipt = update && update.receipt;
+      if (!key || !key.id || !whatsappStatus.isStatusBroadcast(key.remoteJid) || !key.fromMe || !receipt || !receipt.userJid) continue;
+      const seenAt = receipt.readTimestamp || receipt.playedTimestamp;
+      if (!seenAt) continue; // solo "entregado": todavía no lo abrió
+      handleOwnStatusView(organizationId, sock, { waMessageId: key.id, userJid: receipt.userJid, seenAt }).catch((err) => console.error('[whatsapp] status view error', err));
+    }
+  });
+
   sock.ev.on('messages.update', (updates) => {
     const campaigns = require('./campaigns');
     for (const update of updates) {
@@ -1227,7 +1239,33 @@ async function handleInboundMessage(organizationId, sock, waMessage, { historica
   }
 }
 
+// Vista de un estado propio: resuelve quién es (los LID se traducen a teléfono cuando se puede) y la registra.
+async function handleOwnStatusView(organizationId, sock, { waMessageId, userJid, seenAt }) {
+  const phone = phoneFromJid(await resolvePhoneJid(sock, userJid));
+  const seconds = Number(seenAt && typeof seenAt === 'object' && 'toNumber' in seenAt ? seenAt.toNumber() : seenAt);
+  await require('./statusViews').recordStatusActivity(organizationId, {
+    waMessageId, viewerJid: userJid, phone, viewedAt: Number.isFinite(seconds) && seconds > 0 ? new Date(seconds * 1000) : new Date()
+  });
+}
+
+// "Me gusta" (reacción con emoji) de alguien a un estado propio. Quitar la reacción llega con el texto vacío.
+async function handleOwnStatusReaction(organizationId, sock, item) {
+  const reactionKey = item.reaction && item.reaction.key ? item.reaction.key : {};
+  const viewerJid = reactionKey.participant || reactionKey.participantAlt || (reactionKey.remoteJid && !whatsappStatus.isStatusBroadcast(reactionKey.remoteJid) ? reactionKey.remoteJid : null);
+  if (!viewerJid || !item.key.id) return;
+  const phone = phoneFromJid(await resolvePhoneJid(sock, viewerJid));
+  const emoji = item.reaction && item.reaction.text ? item.reaction.text : null;
+  const seconds = Number(item.reaction && item.reaction.senderTimestampMs ? Number(item.reaction.senderTimestampMs) / 1000 : 0);
+  await require('./statusViews').recordStatusActivity(organizationId, {
+    waMessageId: item.key.id, viewerJid, phone, hasReaction: true, reaction: emoji, reactedAt: seconds > 0 ? new Date(seconds * 1000) : new Date()
+  });
+}
+
 async function handleInboundReaction(organizationId, sock, item) {
+  if (item.key && whatsappStatus.isStatusBroadcast(item.key.remoteJid)) {
+    if (item.key.fromMe) await handleOwnStatusReaction(organizationId, sock, item);
+    return;
+  }
   const rawJid = item.key.remoteJid;
   if (!rawJid || !isRealPersonJid(rawJid)) return;
   const resolvedJid = await resolvePhoneJid(sock, rawJid);

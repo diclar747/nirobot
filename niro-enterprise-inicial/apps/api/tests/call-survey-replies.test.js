@@ -104,4 +104,26 @@ describe('Encuesta posterior a la llamada: respuestas automáticas', () => {
     expect(res.body.replies[1].replyMessage).toMatch(/no vas a recibir más llamadas/i);
     expect((await session.agent.post('/api/org/wa-calls/survey/suggest-replies').set('X-CSRF-Token', session.csrfToken).send({ options: [] })).status).toBe(400);
   });
+  test('la etapa del CRM elegida en la opción mueve la conversación (y acepta solo etapas válidas)', async () => {
+    const { org, contacts, session, campaignId } = await setup();
+    jest.spyOn(whatsapp, 'sendText').mockResolvedValue('WA1');
+    await prisma.callSurveyOption.updateMany({ where: { survey: { campaignId }, optionKey: '1' }, data: { crmStage: 'clientes' } });
+    await prisma.callSurveyOption.updateMany({ where: { survey: { campaignId }, optionKey: '3' }, data: { crmStage: 'cerradas' } });
+
+    await registerInboundResponse(org.id, '595981000001', '1');
+    const cliente = await prisma.conversation.findFirst({ where: { contactId: contacts.interesado.id } });
+    expect(cliente.tags).toContain('Clientes');
+    expect(cliente.tags).not.toContain('Interesados'); // la etapa elegida gana sobre el valor por defecto
+
+    await registerInboundResponse(org.id, '595981000003', '3');
+    const cerrada = await prisma.conversation.findFirst({ where: { contactId: contacts.luego.id } });
+    expect(cerrada.tags).toContain('Cerradas');
+    expect(cerrada.status).toBe('CLOSED');
+
+    const bad = await session.agent.post('/api/org/wa-calls/campaigns').set('X-CSRF-Token', session.csrfToken).send({
+      name: 'X', accountId: 'a', audioId: 'b', contactIds: ['c'], surveyEnabled: true, surveyQuestion: 'q',
+      surveyOptions: [{ key: '1', label: 'a', crmStage: 'inexistente' }, { key: '2', label: 'b' }]
+    });
+    expect(bad.status).toBe(400);
+  });
 });

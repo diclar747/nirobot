@@ -19,6 +19,14 @@ function guessAction(label) {
 }
 
 const STAGE_TAGS = ['Abiertas', 'Pendientes', 'Clientes', 'Interesados', 'Cerradas'];
+// Etapa del embudo (CRM) elegida por opción; "Marcar como interesado" sin etapa explícita sigue yendo a Interesados.
+const STAGES = {
+  abiertas: { tag: 'Abiertas', status: 'OPEN' },
+  pendientes: { tag: 'Pendientes', status: 'PENDING' },
+  clientes: { tag: 'Clientes', status: null },
+  interesados: { tag: 'Interesados', status: null },
+  cerradas: { tag: 'Cerradas', status: 'CLOSED' }
+};
 
 // Aplica la acción de la opción sobre el contacto (baja de llamadas, interesado en el CRM, seguimiento).
 function resolveOption(option) {
@@ -32,12 +40,15 @@ async function applyOptionAction(organizationId, contact, rawOption) {
   } else if (option.action === 'INTERESTED' || option.action === 'FOLLOW_UP') {
     const tag = option.action === 'INTERESTED' ? 'interesado' : 'contactar-mas-adelante';
     if (!contact.tags.includes(tag)) await prisma.contact.update({ where: { id: contact.id }, data: { tags: { set: [...contact.tags, tag] } } });
-    if (option.action === 'INTERESTED') {
-      const conversation = await prisma.conversation.findFirst({ where: { organizationId, contactId: contact.id }, orderBy: { updatedAt: 'desc' } });
-      if (conversation) {
-        const tags = [...conversation.tags.filter((t) => !STAGE_TAGS.includes(t)), 'Interesados'];
-        await prisma.conversation.update({ where: { id: conversation.id }, data: { tags } });
-      }
+  }
+  const stage = STAGES[option.crmStage] || (option.action === 'INTERESTED' ? STAGES.interesados : null);
+  if (stage) {
+    const conversation = await prisma.conversation.findFirst({ where: { organizationId, contactId: contact.id }, orderBy: { updatedAt: 'desc' } });
+    if (conversation) {
+      const tags = [...conversation.tags.filter((t) => !STAGE_TAGS.includes(t)), stage.tag];
+      const { CONVERSATION_INCLUDE, sanitizeConversation } = require('./conversations');
+      const updated = await prisma.conversation.update({ where: { id: conversation.id }, data: { tags, ...(stage.status ? { status: stage.status } : {}) }, include: CONVERSATION_INCLUDE });
+      emitToOrg(organizationId, 'conversation:updated', { conversation: sanitizeConversation(updated) });
     }
   }
 }

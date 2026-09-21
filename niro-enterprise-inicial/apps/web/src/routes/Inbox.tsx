@@ -12,11 +12,14 @@ import { QuickReplyManager, QuickReplyPopover, useQuickReplies } from '../compon
 import { detectSlash, fillTemplate, rankReplies, type QuickReply } from '../lib/quickReplies';
 import { can } from '../lib/permissions';
 import { useNotifications } from '../context/NotificationsContext';
-import { useLocation } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { StatusStories } from '../components/StatusStories';
 import { AgentsDropPanel, setConversationDragData } from '../components/AgentsDropPanel';
 import { useAlerts } from '../context/AlertContext';
 import { useAuth } from '../context/AuthContext';
+import { useOutcome } from '../context/OutcomeContext';
+import { RichText } from '../components/RichText';
+import { PRESENCE_COLOR, PRESENCE_LABEL } from '../lib/presence';
 import {
   type AgentPresence,
   type AgentPresenceStatus,
@@ -30,6 +33,19 @@ import {
 type ConvFilterTab = 'all' | 'clients' | 'internal';
 
 const QUICK_REACTIONS = ['👍', '❤️', '😂', '😮', '😢', '🙏'];
+
+// Agrupa las reacciones por emoji: "❤️ 2" en vez de dos chips iguales. La propia siempre puede quitarse.
+function groupReactions(mine: string | null, others: Array<{ emoji: string; from: string }>) {
+  const groups = new Map<string, { emoji: string; count: number; mine: boolean; who: string[] }>();
+  const add = (emoji: string, isMine: boolean, who: string) => {
+    const g = groups.get(emoji) || { emoji, count: 0, mine: false, who: [] };
+    g.count += 1; g.mine = g.mine || isMine; g.who.push(who);
+    groups.set(emoji, g);
+  };
+  if (mine) add(mine, true, 'vos');
+  others.forEach((r) => add(r.emoji, false, r.from === 'customer' ? 'el cliente' : 'un agente'));
+  return Array.from(groups.values()).map((g) => ({ ...g, title: `Reacción de ${g.who.join(' y ')}` }));
+}
 const DIRECT_CALL_ACTIVE_STATUSES = new Set(['STARTING', 'RINGING', 'CONNECTED']);
 
 type DirectCall = {
@@ -91,6 +107,12 @@ function StageBadge({ conversation }: { conversation: Conversation }) {
 }
 
 export function Inbox() {
+  const navigate = useNavigate();
+  function openConversation(id: string) {
+    setSelectedId(id);
+    setMobileInfo(false);
+    navigate(`/inbox?conversation=${encodeURIComponent(id)}`);
+  }
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [loadingList, setLoadingList] = useState(true);
   const [tab, setTab] = useState<ConvFilterTab>('all');
@@ -100,6 +122,8 @@ export function Inbox() {
   const [selectedId, setSelectedId] = useState<string | null>(
     () => new URLSearchParams(window.location.search).get('conversation')
   );
+  const [mobileInfo, setMobileInfo] = useState(false);
+  const drafts = useRef(new Map<string, { text: string; mode: 'outbound' | 'note' | 'inbound' }>());
   const [showNew, setShowNew] = useState(false);
   const [showTransferModal, setShowTransferModal] = useState(false);
   const [showOrderModal, setShowOrderModal] = useState(false);
@@ -116,7 +140,13 @@ export function Inbox() {
   });
   const [error, setError] = useState<string | null>(null);
   const [leftCollapsed, setLeftCollapsed] = useState(false);
-  const [rightCollapsed, setRightCollapsed] = useState(false);
+  const [rightCollapsed, setRightCollapsed] = useState(() => window.matchMedia('(max-width: 1200px)').matches);
+  useEffect(() => {
+    const mobile = window.matchMedia('(max-width: 860px)');
+    const resetPanels = () => { if (mobile.matches) { setLeftCollapsed(false); setRightCollapsed(true); setMobileInfo(false); } };
+    mobile.addEventListener('change', resetPanels);
+    return () => mobile.removeEventListener('change', resetPanels);
+  }, []);
   const [lightboxImage, setLightboxImage] = useState<{ url: string; fileName: string } | null>(null);
   const [incomingTransfer, setIncomingTransfer] = useState<{ conversation: Conversation; fromAgent: string; note: string | null } | null>(null);
   const [respondingTransfer, setRespondingTransfer] = useState(false);
@@ -157,7 +187,7 @@ export function Inbox() {
       if (search.trim()) params.set('q', search.trim());
       const data = await apiGet<{ conversations: Conversation[] }>(`/api/org/conversations?${params.toString()}`);
       setConversations(data.conversations);
-      if (data.conversations.length > 0 && !selectedId) {
+      if (data.conversations.length > 0 && !selectedId && !window.matchMedia('(max-width: 860px)').matches) {
         setSelectedId(data.conversations[0].id);
       }
     } catch (err) {
@@ -211,10 +241,17 @@ export function Inbox() {
       setIncomingTransfer(payload);
     };
     socket.on('conversation:new', onNew);
+    // Dejó de ser visible para mí (p. ej. se la transfirieron a otro agente): sale de la lista.
+    const onHidden = ({ conversationId }: { conversationId: string }) => {
+      setConversations((prev) => prev.filter((c) => c.id !== conversationId));
+      setSelectedId((current) => (current === conversationId ? null : current));
+    };
+    socket.on('conversation:hidden', onHidden);
     socket.on('conversation:updated', onUpdated);
     socket.on('transfer:incoming', onTransferIncoming);
     return () => {
       socket.off('conversation:new', onNew);
+      socket.off('conversation:hidden', onHidden);
       socket.off('conversation:updated', onUpdated);
       socket.off('transfer:incoming', onTransferIncoming);
     };
@@ -229,12 +266,12 @@ export function Inbox() {
         { action }
       );
       upsertConversation(res.conversation);
-      if (action === 'accept') setSelectedId(res.conversation.id);
+      if (action === 'accept') openConversation(res.conversation.id);
+      setIncomingTransfer(null);
     } catch (err) {
-      console.error(err);
+      notify(err instanceof ApiError ? err.message : 'No se pudo responder a la transferencia. Volvé a intentar.', { tone: 'error' });
     } finally {
       setRespondingTransfer(false);
-      setIncomingTransfer(null);
     }
   }
 
@@ -268,6 +305,7 @@ export function Inbox() {
   useEffect(() => {
     const id = new URLSearchParams(location.search).get('conversation');
     if (id) setSelectedId(id);
+    else if (window.matchMedia('(max-width: 860px)').matches) setSelectedId(null);
   }, [location.key, location.search]);
 
   const gridTemplate = leftCollapsed
@@ -279,7 +317,7 @@ export function Inbox() {
     : '320px 1fr 340px';
 
   return (
-    <div className="crm-inbox-grid" style={{ gridTemplateColumns: gridTemplate }}>
+    <div className={`crm-inbox-grid ${selectedId ? 'mobile-chat-open' : 'mobile-list-open'} ${mobileInfo ? 'mobile-info-open' : ''}`} style={{ gridTemplateColumns: gridTemplate }}>
       {/* =========================================================
           COLUMN 1: CONVERSATIONS LIST
           ========================================================= */}
@@ -372,7 +410,11 @@ export function Inbox() {
                 <div
                   key={c.id}
                   className={`crm-conv-item ${isSelected ? 'active' : ''} ${(c.unreadCount || 0) > 0 ? 'unread' : ''}`}
-                  onClick={() => setSelectedId(c.id)}
+                  onClick={() => openConversation(c.id)}
+                  role="button"
+                  tabIndex={0}
+                  aria-label={`Abrir conversación con ${contactLabel(c.contact)}`}
+                  onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); openConversation(c.id); } }}
                   draggable
                   onDragStart={(e) => setConversationDragData(e, c.id)}
                 >
@@ -430,7 +472,7 @@ export function Inbox() {
                 type="button"
                 key={c.id}
                 className={`crm-conv-rail-avatar ${selected?.id === c.id ? 'active' : ''}`}
-                onClick={() => setSelectedId(c.id)}
+                onClick={() => openConversation(c.id)}
                 title={`${contactLabel(c.contact)}${c.contact.phone ? ` · ${formatPhone(c.contact.phone)}` : ''}`}
                 aria-label={contactLabel(c.contact)}
               >
@@ -448,8 +490,16 @@ export function Inbox() {
           COLUMN 2: ACTIVE CHAT WINDOW
           ========================================================= */}
       <div className="crm-chat-column">
+        <div className="mobile-chat-navigation">
+          <button type="button" onClick={() => { setSelectedId(null); setMobileInfo(false); setLeftCollapsed(false); navigate('/inbox', { replace: true }); }}><Ui name="chevron-left" size={20} /> Chats</button>
+          <span>Conversación</span>
+          <button type="button" onClick={() => { setMobileInfo(true); setRightCollapsed(false); }}>Contacto <Ui name="user" size={18} /></button>
+        </div>
         {selected ? (
           <ActiveChatWindow
+            key={selected.id}
+            draft={drafts.current.get(selected.id)}
+            onDraftChange={(draft) => { drafts.current.set(selected.id, draft); }}
             conversation={selected}
             onConversationChange={upsertConversation}
             onOpenTransfer={() => setShowTransferModal(true)}
@@ -458,7 +508,7 @@ export function Inbox() {
             leftCollapsed={leftCollapsed}
             onToggleLeft={() => setLeftCollapsed((v) => !v)}
             rightCollapsed={rightCollapsed}
-            onToggleRight={() => setRightCollapsed((v) => !v)}
+            onToggleRight={() => { if (window.matchMedia('(max-width: 860px)').matches) { setMobileInfo(true); setRightCollapsed(false); } else setRightCollapsed((v) => !v); }}
             starredIds={starredIds}
             onToggleStar={toggleStarMessage}
             onOpenForward={(m) => setForwardMessage(m)}
@@ -484,11 +534,12 @@ export function Inbox() {
             onOpenTransfer={() => setShowTransferModal(true)}
             onOpenOrder={() => setShowOrderModal(true)}
             onEditContact={() => setEditingContact(selected.contact)}
-            onClose={() => setRightCollapsed(true)}
+            onClose={() => { setRightCollapsed(true); setMobileInfo(false); }}
           />
         )
       )}
 
+      {mobileInfo && <button type="button" className="mobile-info-backdrop" aria-label="Cerrar información del contacto" onClick={() => setMobileInfo(false)} />}
       {/* Incoming transfer banner */}
       {incomingTransfer && (
         <div className="crm-transfer-banner">
@@ -685,6 +736,8 @@ function LightboxModal({ url, fileName, onClose }: { url: string; fileName: stri
    ACTIVE CHAT WINDOW (Column 2) - WHATSAPP WEB STYLE
    ========================================================= */
 function ActiveChatWindow({
+  draft,
+  onDraftChange,
   conversation,
   onConversationChange,
   onOpenTransfer,
@@ -699,6 +752,8 @@ function ActiveChatWindow({
   onOpenForward,
   showToast
 }: {
+  draft?: { text: string; mode: 'outbound' | 'note' | 'inbound' };
+  onDraftChange: (draft: { text: string; mode: 'outbound' | 'note' | 'inbound' }) => void;
   conversation: Conversation;
   onConversationChange: (c: Conversation) => void;
   onOpenTransfer: () => void;
@@ -716,11 +771,13 @@ function ActiveChatWindow({
   const { confirm, notify } = useAlerts();
   const [messages, setMessages] = useState<Message[]>([]);
   const [loading, setLoading] = useState(true);
-  const [content, setContent] = useState('');
-  const [mode, setMode] = useState<'outbound' | 'note' | 'inbound'>('outbound');
+  const [content, setContent] = useState(draft?.text || '');
+  const [mode, setMode] = useState<'outbound' | 'note' | 'inbound'>(draft?.mode || 'outbound');
+  useEffect(() => { onDraftChange({ text: content, mode }); }, [content, mode, onDraftChange]);
   const [sending, setSending] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [changingStage, setChangingStage] = useState(false);
+  const { patchConversation } = useOutcome();
   const [replyTo, setReplyTo] = useState<Message | null>(null);
   const [menuOpenFor, setMenuOpenFor] = useState<string | null>(null);
   const [extendedEmojiFor, setExtendedEmojiFor] = useState<Message | null>(null);
@@ -794,7 +851,7 @@ function ActiveChatWindow({
       if (event.key === 'Enter' || event.key === 'Tab') { event.preventDefault(); pickQuickReply(qrItems[qrIndex]); return; }
     }
     if (qrOpen && event.key === 'Escape') { event.preventDefault(); closeQuick(); return; }
-    if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); handleSendMessage(); }
+    if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing && !window.matchMedia('(pointer: coarse)').matches) { event.preventDefault(); handleSendMessage(); }
   }
   const [recordingSeconds, setRecordingSeconds] = useState(0);
   const [respondingTransfer, setRespondingTransfer] = useState(false);
@@ -923,11 +980,9 @@ function ActiveChatWindow({
     const nextTags = tagsForStage(conversation.tags, stage);
     const nextStatus = statusForStage(stage);
     try {
-      const res = await apiPatch<{ conversation: Conversation }>(`/api/org/conversations/${conversation.id}`, {
-        tags: nextTags,
-        ...(nextStatus ? { status: nextStatus } : {})
-      });
-      onConversationChange(res.conversation);
+      // Pasar a "Cerradas" cierra la conversación: pide cómo terminó (venta, perdida, cotización…).
+      const res = await patchConversation(conversation, { tags: nextTags, ...(nextStatus ? { status: nextStatus } : {}) });
+      if (res) onConversationChange(res.conversation);
     } catch (err) {
       console.error(err);
     } finally {
@@ -982,6 +1037,7 @@ function ActiveChatWindow({
   async function handleSendMessage(textToSend?: string) {
     const messageContent = (textToSend || content).trim();
     if (!messageContent || sending) return;
+    if (!navigator.onLine) { notify('Sin conexión. Tu borrador sigue aquí; volvé a enviarlo cuando tengas Internet.', { tone: 'error' }); return; }
     setSending(true);
     try {
       const res = await apiPost<{ message: Message }>(`/api/org/conversations/${conversation.id}/messages`, {
@@ -995,7 +1051,7 @@ function ActiveChatWindow({
       if (!textToSend) setContent('');
       setReplyTo(null);
     } catch (err) {
-      console.error(err);
+      notify(err instanceof ApiError ? err.message : 'No se pudo enviar. Tu borrador sigue aquí para reintentar.', { tone: 'error' });
     } finally {
       setSending(false);
     }
@@ -1312,7 +1368,7 @@ function ActiveChatWindow({
           const isMenuOpen = menuOpenFor === m.id;
 
           return (
-            <div key={m.id} className={`chat-bubble-container ${m.direction.toLowerCase()}`}>
+            <div key={m.id} className={`chat-bubble-container ${m.direction.toLowerCase()}${mine || otherReactions.length > 0 ? ' has-reactions' : ''}`}>
               {/* WhatsApp Web Hover Action Bar */}
               <div className="crm-msg-actions">
                 {/* Quick WhatsApp Reaction Bar */}
@@ -1458,22 +1514,22 @@ function ActiveChatWindow({
                 <MessageBody message={m} />
               </div>
 
-              {/* Reaction Chips (WhatsApp Web Style) */}
+              {/* Reacciones: chips sobre el borde inferior de la burbuja; el mismo emoji de varias personas se agrupa con contador */}
               {(mine || otherReactions.length > 0) && (
-                <div className="crm-reaction-row">
-                  {mine && (
-                    <span
-                      className="crm-reaction-chip mine"
-                      title="Tu reacción (clic para quitar)"
-                      onClick={() => handleReact(m, null)}
+                <div className="crm-reaction-row" role="group" aria-label="Reacciones">
+                  {groupReactions(mine, otherReactions).map((g) => (
+                    <button
+                      key={g.emoji}
+                      type="button"
+                      className={`crm-reaction-chip${g.mine ? ' mine' : ''}`}
+                      title={g.mine ? 'Tu reacción (clic para quitar)' : g.title}
+                      aria-label={`${g.emoji} ${g.title}`}
+                      disabled={!g.mine}
+                      onClick={() => g.mine && handleReact(m, null)}
                     >
-                      {mine}
-                    </span>
-                  )}
-                  {otherReactions.map((r, idx) => (
-                    <span key={idx} className="crm-reaction-chip" title={`Reacción del ${r.from === 'customer' ? 'cliente' : 'agente'}`}>
-                      {r.emoji}
-                    </span>
+                      <span className="crm-reaction-emoji">{g.emoji}</span>
+                      {g.count > 1 && <span className="crm-reaction-count">{g.count}</span>}
+                    </button>
                   ))}
                 </div>
               )}
@@ -1627,7 +1683,7 @@ function ActiveChatWindow({
               ? 'Escribir nota interna para el equipo...'
               : recording
                 ? `Grabando nota de voz… ${String(Math.floor(recordingSeconds / 60)).padStart(2, '0')}:${String(recordingSeconds % 60).padStart(2, '0')}`
-                : 'Escribe un mensaje…  ( / para respuestas rápidas )'
+                : 'Escribí un mensaje…'
           }
           value={content}
           onChange={(e) => { setContent(e.target.value); setCaret(e.target.selectionStart ?? e.target.value.length); setQrForced(false); }}
@@ -1644,7 +1700,7 @@ function ActiveChatWindow({
             onCreate={(shortcut) => { closeQuick(); setQrManager({ startNew: true, shortcut }); }} />
         )}
 
-        <button className="btn-send-message" type="submit" disabled={sending || recording || !content.trim()}>
+        <button className="btn-send-message" aria-label="Enviar mensaje" type="submit" disabled={sending || recording || !content.trim()}>
           <Ui name="send" />
         </button>
       </form>
@@ -2003,7 +2059,7 @@ function MessageBody({ message }: { message: Message }) {
   if (message.contentType.endsWith('-failed') && MEDIA_PLACEHOLDERS.has(message.content.trim())) {
     return <em className="crm-media-failed">No se pudo descargar el archivo</em>;
   }
-  return <>{message.content}</>;
+  return <RichText text={message.content} />;
 }
 
 /** Texto del audio debajo del reproductor (transcripción con Niro IA). */
@@ -2197,10 +2253,8 @@ function ContactInfoPanel({
   async function handleMarkResolved() {
     setResolving(true);
     try {
-      const res = await apiPatch<{ conversation: Conversation }>(`/api/org/conversations/${conversation.id}`, {
-        status: 'RESOLVED'
-      });
-      onConversationChange(res.conversation);
+      const res = await patchConversation(conversation, { status: 'RESOLVED' });
+      if (res) onConversationChange(res.conversation);
     } catch (err) {
       console.error(err);
     } finally {
@@ -2209,6 +2263,7 @@ function ContactInfoPanel({
   }
 
   const [changingStage, setChangingStage] = useState(false);
+  const { patchConversation, registerOutcome } = useOutcome();
   const currentStage = deriveStage(conversation);
 
   async function handleStageChange(e: ChangeEvent<HTMLSelectElement>) {
@@ -2218,11 +2273,9 @@ function ContactInfoPanel({
     const nextTags = tagsForStage(conversation.tags, stage);
     const nextStatus = statusForStage(stage);
     try {
-      const res = await apiPatch<{ conversation: Conversation }>(`/api/org/conversations/${conversation.id}`, {
-        tags: nextTags,
-        ...(nextStatus ? { status: nextStatus } : {})
-      });
-      onConversationChange(res.conversation);
+      // Pasar a "Cerradas" cierra la conversación: pide cómo terminó (venta, perdida, cotización…).
+      const res = await patchConversation(conversation, { tags: nextTags, ...(nextStatus ? { status: nextStatus } : {}) });
+      if (res) onConversationChange(res.conversation);
     } catch (err) {
       console.error(err);
     } finally {
@@ -2368,6 +2421,14 @@ function ContactInfoPanel({
         <button
           type="button"
           className="crm-quick-action-btn"
+          onClick={() => { void registerOutcome(conversation); }}
+          title="Registrá una cotización enviada, una venta u otro avance sin cerrar el chat"
+        >
+          <Ui name="chart" size={18} /> Registrar gestión
+        </button>
+        <button
+          type="button"
+          className="crm-quick-action-btn"
           onClick={handleMarkResolved}
           disabled={resolving || conversation.status === 'RESOLVED'}
         >
@@ -2383,7 +2444,7 @@ function ContactInfoPanel({
         )}
         {notes.map((note) => (
           <div key={note.id} style={{ fontSize: 12.5, color: 'var(--text-main)', background: 'var(--bg-surface-2)', padding: '8px 10px', borderRadius: 10, marginBottom: 8 }}>
-            {note.content}
+            <RichText text={note.content} />
             <div style={{ fontSize: 10, color: 'var(--text-dim)', marginTop: 4 }}>
               {(note.sender && note.sender.name) || 'Agente'} · {formatTime(note.createdAt)}
             </div>
@@ -2629,20 +2690,6 @@ function EditContactModal({
 /* =========================================================
    TRANSFER CHAT MODAL
    ========================================================= */
-const PRESENCE_COLOR: Record<AgentPresenceStatus, string> = {
-  available: '#10b981',
-  busy: '#ef4444',
-  away: '#f59e0b',
-  offline: '#64748b'
-};
-
-const PRESENCE_LABEL: Record<AgentPresenceStatus, string> = {
-  available: 'Disponible',
-  busy: 'Ocupado',
-  away: 'Ausente',
-  offline: 'Desconectado'
-};
-
 function TransferConversationModal({
   conversation,
   onClose,
@@ -2652,6 +2699,7 @@ function TransferConversationModal({
   onClose: () => void;
   onTransferred: (c: Conversation) => void;
 }) {
+  const { notify } = useAlerts();
   const [agents, setAgents] = useState<OrgUser[]>([]);
   const [presence, setPresence] = useState<AgentPresence[]>([]);
   const [departments, setDepartments] = useState<Department[]>([]);
@@ -2688,7 +2736,7 @@ function TransferConversationModal({
       });
       onTransferred(res.conversation);
     } catch (err) {
-      console.error(err);
+      notify(err instanceof ApiError ? err.message : 'No se pudo transferir. Volvé a intentar.', { tone: 'error' });
     } finally {
       setSubmitting(false);
     }
@@ -2758,7 +2806,7 @@ function TransferConversationModal({
         <button
           type="submit"
           className="btn"
-          disabled={submitting}
+          disabled={submitting || (!selectedAgentId && !selectedDeptId)}
           style={{ width: '100%', justifyContent: 'center', marginTop: 10 }}
         >
           {submitting ? 'Transfiriendo...' : <>Confirmar Transferencia <Ui name="arrow-right" size={14} /></>}

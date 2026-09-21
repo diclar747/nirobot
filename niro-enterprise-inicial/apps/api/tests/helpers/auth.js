@@ -14,10 +14,10 @@ async function createOrganization(prisma, { slug, name, maxUsers } = {}) {
   });
 }
 
-async function createUser(prisma, { organizationId, email, role = 'AGENT', password = DEFAULT_PASSWORD, active = true }) {
+async function createUser(prisma, { organizationId, email, role = 'AGENT', password = DEFAULT_PASSWORD, active = true, autoChat = false }) {
   const passwordHash = await hashPassword(password);
   return prisma.user.create({
-    data: { organizationId: organizationId ?? null, name: email.split('@')[0], email, role, passwordHash, active }
+    data: { organizationId: organizationId ?? null, name: email.split('@')[0], email, role, passwordHash, active, autoChat }
   });
 }
 

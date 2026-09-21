@@ -10,6 +10,7 @@ import { PageHeader, Pill } from '../components/PageKit';
 import { IconLayers } from '../components/icons';
 import type { Conversation, OrgUser, Department, Message } from '../types';
 import { Ui } from '../components/Ui';
+import { useOutcome } from '../context/OutcomeContext';
 
 export function CrmBoard() {
   const navigate = useNavigate();
@@ -18,6 +19,7 @@ export function CrmBoard() {
   const [error, setError] = useState<string | null>(null);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [moving, setMoving] = useState<string | null>(null);
+  const { patchConversation } = useOutcome();
   const [selectedForDetail, setSelectedForDetail] = useState<Conversation | null>(null);
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
@@ -69,16 +71,15 @@ export function CrmBoard() {
     setMoving(conversation.id);
     const nextTags = tagsForStage(conversation.tags, stage);
     const nextStatus = statusForStage(stage);
-    upsertConversation({ ...conversation, tags: nextTags, status: nextStatus || conversation.status });
+    // Pasar a "Cerradas" pide cómo terminó (venta, perdida, cotización…): la tarjeta no se mueve hasta confirmarlo.
+    const closing = Boolean(nextStatus && ['RESOLVED', 'CLOSED'].includes(nextStatus) && !['RESOLVED', 'CLOSED'].includes(conversation.status));
+    if (!closing) upsertConversation({ ...conversation, tags: nextTags, status: nextStatus || conversation.status });
     try {
-      const res = await apiPatch<{ conversation: Conversation }>(`/api/org/conversations/${conversation.id}`, {
-        tags: nextTags,
-        ...(nextStatus ? { status: nextStatus } : {})
-      });
-      upsertConversation(res.conversation);
+      const res = await patchConversation(conversation, { tags: nextTags, ...(nextStatus ? { status: nextStatus } : {}) });
+      if (res) upsertConversation(res.conversation);
     } catch (err) {
       console.error(err);
-      upsertConversation(conversation);
+      if (!closing) upsertConversation(conversation);
     } finally {
       setMoving(null);
     }
@@ -304,6 +305,7 @@ function ContactDetailModal({
   const [newNote, setNewNote] = useState('');
   const [savingNote, setSavingNote] = useState(false);
   const [updating, setUpdating] = useState(false);
+  const { patchConversation } = useOutcome();
 
   const contact = conversation.contact;
   const currentStage = deriveStage(conversation);
@@ -341,11 +343,8 @@ function ContactDetailModal({
     const nextTags = tagsForStage(conversation.tags, stage);
     const nextStatus = statusForStage(stage);
     try {
-      const res = await apiPatch<{ conversation: Conversation }>(`/api/org/conversations/${conversation.id}`, {
-        tags: nextTags,
-        ...(nextStatus ? { status: nextStatus } : {})
-      });
-      onConversationChange(res.conversation);
+      const res = await patchConversation(conversation, { tags: nextTags, ...(nextStatus ? { status: nextStatus } : {}) });
+      if (res) onConversationChange(res.conversation);
     } catch (err) {
       console.error(err);
     } finally {

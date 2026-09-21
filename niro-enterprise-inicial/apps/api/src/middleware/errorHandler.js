@@ -13,7 +13,7 @@ function errorHandler(err, _req, res, _next) {
     return res.status(400).json({ error: err.message });
   }
   if (err && typeof err.status === 'number') {
-    return res.status(err.status).json({ error: err.message });
+    return res.status(err.status).json({ error: err.message, ...(typeof err.code === 'string' ? { code: err.code } : {}), ...(err.data && typeof err.data === 'object' ? { data: err.data } : {}) });
   }
   console.error('[NIRO API]', err);
   res.status(500).json({ error: 'Error interno del servidor' });

@@ -1,0 +1,1 @@
+ALTER TABLE "CallSurveyOption" ADD COLUMN IF NOT EXISTS "crmStage" TEXT;

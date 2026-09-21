@@ -1,0 +1,18 @@
+{
+  "offline": true,
+  "privateRequestsNetworkOnly": true,
+  "updateWaitsForConsent": true,
+  "manifestErrors": [],
+  "installability": {
+    "installabilityErrors": []
+  },
+  "caches": [
+    {
+      "name": "niro-public-8c3411eb4bee",
+      "urls": [
+        "/offline.html",
+        "/icons/niro-192.png"
+      ]
+    }
+  ]
+}

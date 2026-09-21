@@ -6,6 +6,7 @@ const PERMISSIONS = [
   { key: 'campaigns',      group: 'Envíos',     label: 'Campañas de WhatsApp',      description: 'Crear, iniciar y ver campañas masivas y a grupos.' },
   { key: 'statuses',       group: 'Envíos',     label: 'Estados de WhatsApp',       description: 'Publicar y programar estados.' },
   { key: 'calls',          group: 'Envíos',     label: 'Llamadas',                  description: 'Campañas de llamadas y audios.' },
+  { key: 'sms',            group: 'Envíos',     label: 'SMS',                       description: 'Enviar SMS masivos, ver el saldo y comprar recargas.' },
   { key: 'contacts',       group: 'Contactos',  label: 'Contactos',                 description: 'Ver el directorio de contactos y sincronizar el teléfono.' },
   { key: 'contactsExport', group: 'Contactos',  label: 'Descargar contactos',       description: 'Exportar todos los contactos a CSV.' },
   { key: 'contactsDelete', group: 'Contactos',  label: 'Eliminar contactos',        description: 'Borrar contactos y sus conversaciones.' },
@@ -14,6 +15,7 @@ const PERMISSIONS = [
   { key: 'quickReplies',   group: 'Atención',   label: 'Crear y editar respuestas rápidas', description: 'Crear plantillas para el chat (usarlas siempre se puede).' },
   { key: 'transferChats',  group: 'Atención',   label: 'Transferir chats',          description: 'Pasar conversaciones a otro agente o departamento.' },
   { key: 'reports',        group: 'Gestión',    label: 'Reportes',                  description: 'Ver reportes y métricas.' },
+  { key: 'management',     group: 'Gestión',    label: 'Gestión de ventas',         description: 'Ver la gestión (ventas, cotizaciones, cierres). Sin admin, solo ve la suya.' },
   { key: 'bot',            group: 'Automatización', label: 'Bot de flujos',         description: 'Ver y editar el flujo del bot.' },
   { key: 'aiAgents',       group: 'Automatización', label: 'Agentes de IA',         description: 'Configurar y probar agentes de IA.' },
   { key: 'developers',     group: 'Automatización', label: 'API y desarrolladores', description: 'Portal de API y webhooks.' }

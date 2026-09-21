@@ -67,3 +67,10 @@
 @media (max-width:1180px) { .call-stat-grid { grid-template-columns:repeat(3,minmax(0,1fr)); } }
 @media (max-width:900px) { .call-stat-grid { grid-template-columns:repeat(2,minmax(0,1fr)); } .call-library-grid { grid-template-columns:1fr; } .call-hero { align-items:flex-start; flex-direction:column; padding:19px; } }
 @media (max-width:640px) { .call-page { padding:18px 14px 28px; } .call-page-header { align-items:stretch; flex-direction:column; gap:12px; } .call-header-actions { width:100%; justify-content:stretch; } .call-header-actions .btn { flex:1 1 auto; } .call-form-grid,.call-form-grid.compact,.call-picker-tools,.call-contact-picker { grid-template-columns:1fr; } .call-audio-row { align-items:flex-start; flex-wrap:wrap; } .call-audio-row audio { width:100%; } .call-account-row { align-items:flex-start; flex-wrap:wrap; } .call-account-provider { margin-left:21px; } }
+
+.call-campaign-card { position:relative; }
+.call-campaign-card.selected { border-color:var(--primary); box-shadow:0 0 0 2px var(--primary-soft), var(--shadow-app); }
+.call-card-check { position:absolute; left:12px; top:15px; z-index:2; }
+.call-campaign-card.has-select .call-card-top { padding-left:26px; }
+.call-card-schedule { color:var(--primary-text); font-size:11px; font-weight:700; }
+.call-card-footer>div { flex-wrap:wrap; justify-content:flex-end; }

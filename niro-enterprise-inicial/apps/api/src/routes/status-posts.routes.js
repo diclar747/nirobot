@@ -68,7 +68,23 @@ router.get('/', async (req, res, next) => {
       orderBy: { createdAt: 'desc' },
       take: limit
     });
-    res.json({ posts: rows.map(posts.sanitizePost) });
+    // Cuántas personas vieron y reaccionaron a cada estado publicado.
+    const ids = rows.map((row) => row.waMessageId).filter(Boolean);
+    const grouped = ids.length ? await prisma.whatsappStatusView.groupBy({ by: ['waMessageId'], where: { organizationId: req.auth.organizationId, waMessageId: { in: ids } }, _count: { viewedAt: true, reaction: true } }) : [];
+    const counts = new Map(grouped.map((row) => [row.waMessageId, { viewCount: row._count.viewedAt, reactionCount: row._count.reaction }]));
+    res.json({ posts: rows.map((row) => ({ ...posts.sanitizePost(row), viewCount: counts.get(row.waMessageId)?.viewCount || 0, reactionCount: counts.get(row.waMessageId)?.reactionCount || 0 })) });
+  } catch (err) { next(err); }
+});
+
+// Quién vio (y quién reaccionó a) un estado publicado: la misma lista que muestra el teléfono, ordenada por lo más reciente.
+router.get('/:id/views', async (req, res, next) => {
+  try {
+    const post = await prisma.whatsappStatusPost.findFirst({ where: { id: req.params.id, organizationId: req.auth.organizationId }, select: { id: true, waMessageId: true, audienceCount: true, publishedAt: true, expiresAt: true } });
+    if (!post) throw new HttpError(404, 'Publicación no encontrada');
+    if (!post.waMessageId) return res.json({ views: [], counts: { views: 0, reactions: 0 }, audienceCount: post.audienceCount });
+    const statusViews = require('../lib/statusViews');
+    const rows = await prisma.whatsappStatusView.findMany({ where: { organizationId: req.auth.organizationId, waMessageId: post.waMessageId }, orderBy: [{ viewedAt: { sort: 'desc', nulls: 'last' } }, { createdAt: 'desc' }] });
+    res.json({ views: rows.map(statusViews.sanitizeView), counts: await statusViews.countsFor(req.auth.organizationId, post.waMessageId), audienceCount: post.audienceCount, publishedAt: post.publishedAt, expiresAt: post.expiresAt });
   } catch (err) { next(err); }
 });
 

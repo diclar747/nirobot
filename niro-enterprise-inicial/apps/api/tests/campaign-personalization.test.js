@@ -10,6 +10,19 @@ beforeEach(async () => { await resetDb(); jest.restoreAllMocks(); });
 describe('Variables de personalización', () => {
   const ana = { name: 'Ana María Paz', phone: '595981000001', email: 'ana@mail.com' };
 
+  test('acepta también llaves simples {nombre} y no toca otras llaves', () => {
+    expect(p('hola {nombre}', ana)).toBe('hola Ana');
+    expect(p('hola {Nombre|amigo}, {telefono}', ana)).toBe('hola Ana, 595981000001');
+    expect(p('json {"a":1} {otra}', ana)).toBe('json {"a":1} {otra}');
+    expect(findUnknownVariables('hola {nombre}')).toEqual([]);
+  });
+
+  test('un contacto guardado solo con su número no tiene nombre: cae al respaldo', () => {
+    const solo = { name: '595981234567', phone: '595981234567' };
+    expect(p('hola {{nombre}}', solo)).toBe('hola cliente');
+    expect(p('hola {nombre|amigo}', solo)).toBe('hola amigo');
+  });
+
   test('reemplaza nombre, nombre completo, teléfono y email (con espacios y mayúsculas)', () => {
     expect(p('Hola {{nombre}} ({{ Nombre_Completo }}) · {{telefono}} · {{EMAIL}}', ana)).toBe('Hola Ana (Ana María Paz) · 595981000001 · ana@mail.com');
   });

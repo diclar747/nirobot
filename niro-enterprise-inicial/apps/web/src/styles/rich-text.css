@@ -1,0 +1,12 @@
+/* Texto de mensajes: como en WhatsApp (saltos de línea, listas, links y formato) */
+.rich-text { white-space: pre-wrap; overflow-wrap: anywhere; word-break: normal; }
+.rich-text strong { font-weight: 700; }
+.rich-text s { opacity: .85; }
+.rich-text code { padding: 1px 5px; border-radius: 5px; background: rgba(127, 127, 127, .22); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .92em; }
+.rich-text pre { display: block; margin: 6px 0; padding: 8px 10px; overflow-x: auto; border-radius: 9px; background: rgba(0, 0, 0, .22); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .9em; line-height: 1.45; white-space: pre-wrap; }
+.rich-link { color: #7dd3fc; font-weight: 600; text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 2px; word-break: break-all; }
+.rich-link:hover { color: #bae6fd; text-decoration-thickness: 2px; }
+.chat-bubble.inbound .rich-link { color: var(--primary-text, #38bdf8); }
+.chat-bubble.outbound .rich-link { color: #fff; }
+.chat-bubble.note .rich-link { color: inherit; }
+.rich-link-icon { display: inline-block; margin-right: 4px; vertical-align: -2px; flex: none; }

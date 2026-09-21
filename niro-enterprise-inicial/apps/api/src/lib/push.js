@@ -122,6 +122,10 @@ async function notifyNewInboundMessage({ organizationId, conversation, contactLa
       await sendToAgent(organizationId, conversation.assignedToId, payload);
     } else {
       await sendToOrgManagers(organizationId, payload);
+      // Sin asignar: también a los agentes que ven ese chat (auto chat, o miembros del área a la que fue enviado).
+      const { seeing } = await require('./chatAccess').agentAudience(organizationId, conversation);
+      const targets = seeing.filter((id) => !isUserOnline(organizationId, id));
+      if (targets.length) await sendToUsers(targets, payload);
     }
   } catch (err) {
     console.error('[push] notifyNewInboundMessage falló:', err.message || err);

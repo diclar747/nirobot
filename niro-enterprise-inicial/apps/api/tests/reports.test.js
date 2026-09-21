@@ -17,7 +17,8 @@ describe('Reportes', () => {
     const { agent, csrfToken } = await loginAgent(app, owner.email);
 
     const c1 = await agent.post('/api/org/conversations').set('X-CSRF-Token', csrfToken).send({ newContact: { name: 'C1' } });
-    await agent.patch(`/api/org/conversations/${c1.body.conversation.id}`).set('X-CSRF-Token', csrfToken).send({ status: 'RESOLVED' });
+    // Cerrar por la API exige indicar el resultado (ver management.test.js); acá solo se necesita una conversación resuelta.
+    await prisma.conversation.update({ where: { id: c1.body.conversation.id }, data: { status: 'RESOLVED' } });
     await agent.post('/api/org/conversations').set('X-CSRF-Token', csrfToken).send({ newContact: { name: 'C2' } });
 
     await agent

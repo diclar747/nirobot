@@ -106,4 +106,52 @@ webhook.post('/winsap', async (req, res) => {
   }
 });
 
+// Pago de una recarga de SMS (mismo procesador Winsap): acredita el saldo apenas se confirma el pago.
+webhook.post('/winsap-sms', async (req, res) => {
+  try {
+    const sms = require('../lib/sms');
+    const signed = billing.verifySignature(req.rawBody, req.get('x-winsap-signature'));
+    if (req.get('x-winsap-signature') && !signed) return res.status(401).json({ error: 'Firma inválida' });
+    const ref = billing.pickReference(req.body);
+    const purchase = await sms.findPurchase(ref);
+    if (!purchase) { console.warn('[sms] webhook de pago sin recarga asociada', JSON.stringify(req.body).slice(0, 300)); return res.status(202).json({ ok: true }); }
+    if (purchase.status === 'paid') return res.json({ ok: true });
+    const event = String(req.body?.event || '');
+    const looksPaid = !event || event === 'payment.paid' || ref.status === 'paid';
+    if (!looksPaid) return res.json({ ok: true });
+    if (signed) {
+      await sms.activatePurchase(purchase, { winsapPaymentId: ref.paymentId != null ? String(ref.paymentId) : null, paymentMethod: ref.method, raw: req.body });
+    } else {
+      // Sin firma válida no se acredita a ciegas: se confirma contra la API de Winsap.
+      await sms.syncPendingPurchases(purchase.organizationId);
+    }
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[sms] webhook de pago error', err);
+    res.status(500).json({ error: 'Error procesando el webhook' });
+  }
+});
+
+// Confirmaciones de entrega del proveedor de SMS. La URL lleva un token que solo conoce quien la registró.
+webhook.post('/sms-delivery', async (req, res) => {
+  try {
+    if (!require('../lib/smsProvider').verifyWebhookToken(req.query.token)) return res.status(401).json({ error: 'Token inválido' });
+    const body = (req.body && typeof req.body.data === 'object' && req.body.data) || req.body || {};
+    const messageId = body.message_id || body.messageId || body.id;
+    const raw = String(body.status || (req.body && req.body.event) || '').toLowerCase();
+    if (!messageId) return res.status(202).json({ ok: true });
+    const message = await prisma.smsMessage.findFirst({ where: { providerMessageId: String(messageId) } });
+    if (!message) return res.status(202).json({ ok: true });
+    if (/deliver/.test(raw) && message.status !== 'DELIVERED') {
+      await prisma.smsMessage.update({ where: { id: message.id }, data: { status: 'DELIVERED', deliveredAt: body.delivered_at ? new Date(body.delivered_at) : new Date() } });
+    } else if (/fail|undeliv|reject/.test(raw) && ['SENT', 'DELIVERED'].includes(message.status)) {
+      await prisma.smsMessage.update({ where: { id: message.id }, data: { status: 'FAILED', errorMessage: String(body.error || body.reason || 'El operador no pudo entregar el SMS').slice(0, 300) } });
+    }
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[sms] webhook de entrega error', err);
+    res.status(500).json({ error: 'Error procesando el webhook' });
+  }
+});
+
 module.exports = { router, webhook };

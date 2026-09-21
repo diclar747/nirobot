@@ -1,0 +1,11 @@
+import { createHash } from 'node:crypto';
+import { readFileSync, writeFileSync, readdirSync } from 'node:fs';
+import { resolve } from 'node:path';
+const dist = new URL('../dist/', import.meta.url).pathname;
+const hash = createHash('sha256');
+for (const file of readdirSync(resolve(dist, 'assets')).sort()) hash.update(file);
+hash.update(readFileSync(resolve(dist, 'index.html')));
+hash.update(readFileSync(resolve(dist, 'offline.html')));
+const worker = resolve(dist, 'sw.js');
+hash.update(readFileSync(worker));
+writeFileSync(worker, readFileSync(worker, 'utf8').replace('niro-public-v1', `niro-public-${hash.digest('hex').slice(0, 12)}`));

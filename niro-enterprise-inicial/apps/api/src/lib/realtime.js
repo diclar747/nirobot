@@ -5,6 +5,9 @@ const { prisma } = require('./prisma');
 
 let io = null;
 
+// Estados que una persona puede elegir. "offline" no se elige: lo deriva el servidor cuando no queda ninguna pestaña conectada.
+const PRESENCE_STATUSES = ['available', 'busy', 'pending', 'break', 'rest', 'away'];
+
 // Track presence: orgId -> Map<userId, { socketIds: Set<string>, status: string, user: { id, name, role, email }, lastSeen: Date }>
 const orgPresence = new Map();
 
@@ -91,21 +94,12 @@ function attachSocketServer(httpServer) {
     const { organizationId, userId, user } = socket.data.auth || {};
     if (organizationId) {
       socket.join(`org:${organizationId}`);
+      if (socket.data.auth?.role !== 'AGENT') socket.join(`org:${organizationId}:staff`);
       if (userId) {
         socket.join(`user:${userId}`);
 
-        // Register in presence map
-        const orgMap = getOrgPresenceMap(organizationId);
-        const existing = orgMap.get(userId) || {
-          socketIds: new Set(),
-          status: 'available',
-          user,
-          lastSeen: new Date()
-        };
-        existing.socketIds.add(socket.id);
-        existing.lastSeen = new Date();
-        existing.user = user;
-        orgMap.set(userId, existing);
+        // Al conectarse la persona queda "en línea" con el último estado que eligió (o Disponible).
+        registerPresence(organizationId, userId, user, socket.id);
 
         // Send current presence list to newly connected socket
         socket.emit('agent:presence_list', { presence: getOrgPresenceList(organizationId) });
@@ -114,27 +108,12 @@ function attachSocketServer(httpServer) {
 
         // Handle agent status update from client
         socket.on('agent:set_status', (data) => {
-          const status = ['available', 'busy', 'away', 'offline'].includes(data?.status)
-            ? data.status
-            : 'available';
-          const entry = orgMap.get(userId);
-          if (entry) {
-            entry.status = status;
-            entry.lastSeen = new Date();
-            broadcastPresence(organizationId);
-          }
+          if (PRESENCE_STATUSES.includes(data?.status)) setAgentPresenceStatus(organizationId, userId, data.status);
         });
 
         socket.on('disconnect', () => {
-          const entry = orgMap.get(userId);
-          if (entry) {
-            entry.socketIds.delete(socket.id);
-            entry.lastSeen = new Date();
-            if (entry.socketIds.size === 0) {
-              entry.status = 'offline';
-            }
-            broadcastPresence(organizationId);
-          }
+          releasePresence(organizationId, userId, socket.id);
+          broadcastPresence(organizationId);
         });
       }
     }
@@ -143,9 +122,34 @@ function attachSocketServer(httpServer) {
   return io;
 }
 
+// Eventos que llevan datos de una conversación. No van a toda la organización: los agentes solo reciben los de
+// conversaciones que pueden ver (ver lib/chatAccess.js). Sin esto, quien no tiene "auto chat" recibiría igual
+// los chats nuevos y sus mensajes en tiempo real aunque la lista de la API se los oculte.
+const CONVERSATION_EVENTS = new Set(['conversation:new', 'conversation:updated', 'message:new', 'message:updated', 'message:deleted']);
+// Las emisiones de una misma organización salen en orden (conversation:new antes que sus message:new).
+const orgQueues = new Map();
+
+async function emitConversationScoped(organizationId, event, payload) {
+  const conversationId = payload?.conversation?.id || payload?.conversationId;
+  const conversation = conversationId
+    ? await prisma.conversation.findUnique({ where: { id: conversationId }, select: { assignedToId: true, departmentId: true } })
+    : null;
+  // Propietario, administrador y supervisor: siempre.
+  io.to(`org:${organizationId}:staff`).emit(event, payload);
+  if (!conversation) return;
+  const { seeing, hidden } = await require('./chatAccess').agentAudience(organizationId, conversation);
+  for (const userId of seeing) io.to(`user:${userId}`).emit(event, payload);
+  // Si una conversación deja de ser visible para alguien (p. ej. se la transfirieron a otro), que la saque de su lista.
+  if (event === 'conversation:updated') for (const userId of hidden) io.to(`user:${userId}`).emit('conversation:hidden', { conversationId });
+}
+
 function emitToOrg(organizationId, event, payload) {
   if (!io || !organizationId) return;
-  io.to(`org:${organizationId}`).emit(event, payload);
+  if (!CONVERSATION_EVENTS.has(event)) { io.to(`org:${organizationId}`).emit(event, payload); return; }
+  const previous = orgQueues.get(organizationId) || Promise.resolve();
+  const next = previous.then(() => emitConversationScoped(organizationId, event, payload)).catch((err) => console.error('[realtime] emisión filtrada falló:', err.message || err));
+  orgQueues.set(organizationId, next);
+  next.finally(() => { if (orgQueues.get(organizationId) === next) orgQueues.delete(organizationId); });
 }
 
 function emitToConversation(conversationId, event, payload) {
@@ -166,14 +170,36 @@ function isUserOnline(organizationId, userId) {
   return !!(entry && entry.socketIds.size > 0);
 }
 
-function setAgentPresenceStatus(organizationId, userId, status) {
+// Una pestaña (socket) se conecta: si la persona estaba "offline" vuelve a su último estado elegido, no queda desconectada.
+function registerPresence(organizationId, userId, user, socketId) {
   const orgMap = getOrgPresenceMap(organizationId);
-  const entry = orgMap.get(userId);
-  if (entry) {
-    entry.status = status;
-    entry.lastSeen = new Date();
-    broadcastPresence(organizationId);
-  }
+  const entry = orgMap.get(userId) || { socketIds: new Set(), status: 'available', preferred: 'available', user, lastSeen: new Date() };
+  entry.socketIds.add(socketId);
+  entry.user = user;
+  entry.lastSeen = new Date();
+  if (entry.status === 'offline' || entry.socketIds.size === 1) entry.status = entry.preferred || 'available';
+  orgMap.set(userId, entry);
+  return entry;
+}
+
+// Una pestaña se desconecta: recién cuando no queda ninguna la persona pasa a "offline" (recordando su estado elegido).
+function releasePresence(organizationId, userId, socketId) {
+  const entry = getOrgPresenceMap(organizationId).get(userId);
+  if (!entry) return;
+  entry.socketIds.delete(socketId);
+  entry.lastSeen = new Date();
+  if (entry.socketIds.size === 0) entry.status = 'offline';
+}
+
+function setAgentPresenceStatus(organizationId, userId, status) {
+  if (!PRESENCE_STATUSES.includes(status)) return false;
+  const entry = getOrgPresenceMap(organizationId).get(userId);
+  if (!entry || entry.socketIds.size === 0) return false;
+  entry.status = status;
+  entry.preferred = status;
+  entry.lastSeen = new Date();
+  broadcastPresence(organizationId);
+  return true;
 }
 
 module.exports = {
@@ -184,5 +210,8 @@ module.exports = {
   getOrgPresenceList,
   isUserOnline,
   setAgentPresenceStatus,
+  registerPresence,
+  releasePresence,
+  PRESENCE_STATUSES,
   broadcastPresence
 };

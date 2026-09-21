@@ -6,6 +6,7 @@ import { PageHeader } from '../components/PageKit';
 import { IconChart } from '../components/icons';
 import type { ConversationStatus, OrderStatus } from '../types';
 import { Ui } from '../components/Ui';
+import '../styles/reports.css';
 
 interface Summary {
   period: { days: number };
@@ -133,7 +134,7 @@ export function Reports() {
   }));
 
   return (
-    <div style={{ height: '100%', overflowY: 'auto', padding: '24px 32px', boxSizing: 'border-box' }}>
+    <div className="page-shell reports-page">
       {/* Header Toolbar */}
       <div style={{ marginBottom: 24 }}>
         <PageHeader
@@ -154,6 +155,7 @@ export function Reports() {
 
       {/* KPI Cards */}
       <div
+        className="reports-kpis"
         style={{
           display: 'grid',
           gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
@@ -161,7 +163,7 @@ export function Reports() {
           marginBottom: 24
         }}
       >
-        <div className="card" style={{ padding: '16px 20px', borderRadius: 14, background: 'var(--bg-surface)' }}>
+        <div className="card reports-kpi-card" style={{ padding: '16px 20px', borderRadius: 14, background: 'var(--bg-surface)' }}>
           <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-dim)', textTransform: 'uppercase' }}>
             Conversaciones Totales
           </div>
@@ -173,7 +175,7 @@ export function Reports() {
           </div>
         </div>
 
-        <div className="card" style={{ padding: '16px 20px', borderRadius: 14, background: 'var(--bg-surface)' }}>
+        <div className="card reports-kpi-card" style={{ padding: '16px 20px', borderRadius: 14, background: 'var(--bg-surface)' }}>
           <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-dim)', textTransform: 'uppercase' }}>
             Tasa de Resolución
           </div>
@@ -185,7 +187,7 @@ export function Reports() {
           </div>
         </div>
 
-        <div className="card" style={{ padding: '16px 20px', borderRadius: 14, background: 'var(--bg-surface)' }}>
+        <div className="card reports-kpi-card" style={{ padding: '16px 20px', borderRadius: 14, background: 'var(--bg-surface)' }}>
           <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-dim)', textTransform: 'uppercase' }}>
             Tiempo Promedio 1.ª Respuesta
           </div>
@@ -199,7 +201,7 @@ export function Reports() {
           </div>
         </div>
 
-        <div className="card" style={{ padding: '16px 20px', borderRadius: 14, background: 'var(--bg-surface)' }}>
+        <div className="card reports-kpi-card" style={{ padding: '16px 20px', borderRadius: 14, background: 'var(--bg-surface)' }}>
           <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-dim)', textTransform: 'uppercase' }}>
             Pedidos Generados
           </div>
@@ -211,7 +213,7 @@ export function Reports() {
           </div>
         </div>
 
-        <div className="card" style={{ padding: '16px 20px', borderRadius: 14, background: 'var(--bg-surface)' }}>
+        <div className="card reports-kpi-card" style={{ padding: '16px 20px', borderRadius: 14, background: 'var(--bg-surface)' }}>
           <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-dim)', textTransform: 'uppercase' }}>
             Facturación Total
           </div>
@@ -225,15 +227,15 @@ export function Reports() {
       </div>
 
       {/* Row 1: Estados y Canales */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, marginBottom: 20 }}>
-        <div className="card" style={{ padding: 22, borderRadius: 14, background: 'var(--bg-surface)' }}>
+      <div className="reports-pair">
+        <div className="card reports-panel" style={{ padding: 22, borderRadius: 14, background: 'var(--bg-surface)' }}>
           <h3 style={{ margin: '0 0 16px', fontSize: 15, fontWeight: 800, color: 'var(--text-main)' }}>
             <Ui name="clipboard" size={16} /> Conversaciones por Estado
           </h3>
           <ModernBarList rows={conversationStatusRows} color="linear-gradient(90deg, #0284c7 0%, #38bdf8 100%)" />
         </div>
 
-        <div className="card" style={{ padding: 22, borderRadius: 14, background: 'var(--bg-surface)' }}>
+        <div className="card reports-panel" style={{ padding: 22, borderRadius: 14, background: 'var(--bg-surface)' }}>
           <h3 style={{ margin: '0 0 16px', fontSize: 15, fontWeight: 800, color: 'var(--text-main)' }}>
             <Ui name="globe" size={16} /> Conversaciones por Canal de Entrada
           </h3>
@@ -248,8 +250,8 @@ export function Reports() {
       </div>
 
       {/* Row 2: Carga por Agente y Departamentos */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, marginBottom: 20 }}>
-        <div className="card" style={{ padding: 22, borderRadius: 14, background: 'var(--bg-surface)' }}>
+      <div className="reports-pair">
+        <div className="card reports-panel" style={{ padding: 22, borderRadius: 14, background: 'var(--bg-surface)' }}>
           <h3 style={{ margin: '0 0 16px', fontSize: 15, fontWeight: 800, color: 'var(--text-main)' }}>
             <Ui name="user" size={16} /> Desempeño y Carga por Agente
           </h3>
@@ -259,7 +261,7 @@ export function Reports() {
           />
         </div>
 
-        <div className="card" style={{ padding: 22, borderRadius: 14, background: 'var(--bg-surface)' }}>
+        <div className="card reports-panel" style={{ padding: 22, borderRadius: 14, background: 'var(--bg-surface)' }}>
           <h3 style={{ margin: '0 0 16px', fontSize: 15, fontWeight: 800, color: 'var(--text-main)' }}>
             <Ui name="building" size={16} /> Volumen por Departamento
           </h3>
@@ -271,7 +273,7 @@ export function Reports() {
       </div>
 
       {/* Row 3: Pedidos por Estado */}
-      <div className="card" style={{ padding: 22, borderRadius: 14, background: 'var(--bg-surface)', marginBottom: 20 }}>
+      <div className="card reports-panel reports-orders" style={{ padding: 22, borderRadius: 14, background: 'var(--bg-surface)', marginBottom: 20 }}>
         <h3 style={{ margin: '0 0 16px', fontSize: 15, fontWeight: 800, color: 'var(--text-main)' }}>
           <Ui name="cart" size={16} /> Estado de Pedidos y Logística
         </h3>
@@ -280,7 +282,7 @@ export function Reports() {
 
       {/* Audit Logs */}
       {canSeeAudit && (
-        <div className="card" style={{ padding: 22, borderRadius: 14, background: 'var(--bg-surface)' }}>
+        <div className="card reports-panel reports-audit" style={{ padding: 22, borderRadius: 14, background: 'var(--bg-surface)' }}>
           <h3 style={{ margin: '0 0 16px', fontSize: 15, fontWeight: 800, color: 'var(--text-main)' }}>
             <Ui name="lock" size={16} /> Registro de Auditoría de Operaciones
           </h3>

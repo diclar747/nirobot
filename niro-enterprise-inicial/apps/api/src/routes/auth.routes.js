@@ -579,21 +579,27 @@ router.post('/refresh', async (req, res, next) => {
   }
 });
 
-router.post('/logout', requireAuth, async (req, res, next) => {
+// Cerrar sesión no exige la cookie de acceso (dura 15 min): con solo la de renovación también se revoca y se limpian
+// las cookies. Si no, un cierre hecho con el acceso vencido dejaba viva la sesión de 30 días y volvía a entrar sola.
+router.post('/logout', async (req, res, next) => {
   try {
     const token = req.cookies?.[REFRESH_COOKIE];
+    let actor = null;
     if (token) {
       const tokenHash = hashToken(token);
+      actor = await prisma.refreshToken.findUnique({ where: { tokenHash }, select: { userId: true, user: { select: { organizationId: true } } } }).catch(() => null);
       await prisma.refreshToken.updateMany({ where: { tokenHash, revokedAt: null }, data: { revokedAt: new Date() } });
     }
     clearAuthCookies(res);
-    await audit(prisma, {
-      organizationId: req.auth.organizationId,
-      actorUserId: req.auth.userId,
-      action: 'auth.logout',
-      entityType: 'User',
-      entityId: req.auth.userId
-    });
+    if (actor) {
+      await audit(prisma, {
+        organizationId: actor.user?.organizationId || null,
+        actorUserId: actor.userId,
+        action: 'auth.logout',
+        entityType: 'User',
+        entityId: actor.userId
+      });
+    }
     res.status(204).end();
   } catch (err) {
     next(err);

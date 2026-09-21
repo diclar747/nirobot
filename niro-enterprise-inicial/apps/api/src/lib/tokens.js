@@ -8,8 +8,9 @@ if (!JWT_SECRET) {
 
 const ACCESS_TOKEN_TTL = '15m';
 const ACCESS_TOKEN_MAX_AGE_MS = 15 * 60 * 1000;
-const REFRESH_TOKEN_TTL = '14d';
-const REFRESH_TOKEN_MAX_AGE_MS = 14 * 24 * 60 * 60 * 1000;
+// La sesión se renueva cada vez que se usa (ventana deslizante): mientras se entre al menos una vez por mes no vuelve a pedir QR.
+const REFRESH_TOKEN_TTL = '30d';
+const REFRESH_TOKEN_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
 
 const COOKIE_SECURE = process.env.COOKIE_SECURE === 'true';
 
@@ -64,7 +65,7 @@ function setAuthCookies(res, { accessToken, refreshToken, csrfToken }) {
     secure: COOKIE_SECURE,
     sameSite: 'lax',
     path: '/',
-    maxAge: ACCESS_TOKEN_MAX_AGE_MS
+    maxAge: REFRESH_TOKEN_MAX_AGE_MS
   });
 }
 

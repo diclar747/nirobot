@@ -1,0 +1,20 @@
+.list-filters { display:flex; flex-direction:column; gap:10px; margin:0 0 14px; padding:12px; border:1px solid var(--border-color); border-radius:14px; background:var(--bg-surface); }
+.list-filter-chips { display:flex; flex-wrap:wrap; gap:6px; }
+.list-chip { display:inline-flex; align-items:center; gap:7px; padding:6px 11px; border:1px solid var(--border-color); border-radius:999px; background:transparent; color:var(--text-muted); cursor:pointer; font-size:12px; font-weight:700; }
+.list-chip:hover { background:var(--primary-soft); color:var(--primary-text); }
+.list-chip.active { border-color:var(--primary-glow, var(--primary)); background:var(--primary-soft); color:var(--primary-text); }
+.list-chip b { min-width:18px; padding:1px 6px; border-radius:999px; background:var(--bg-surface-2); color:var(--text-dim); font-size:10.5px; text-align:center; }
+.list-chip.active b { background:var(--primary); color:#fff; }
+.list-filter-row { display:flex; flex-wrap:wrap; align-items:flex-end; gap:10px; }
+.list-filter-search { display:flex; flex:1 1 220px; align-items:center; gap:8px; min-width:180px; padding-left:10px; border:1px solid var(--border-color); border-radius:10px; background:var(--bg-surface-2); color:var(--text-dim); }
+.list-filter-search .input { border:0; background:transparent; box-shadow:none; }
+.list-filter-field { display:flex; flex-direction:column; gap:3px; min-width:130px; }
+.list-filter-field span { color:var(--text-dim); font-size:10px; font-weight:800; text-transform:uppercase; letter-spacing:.04em; }
+.list-filter-clear { align-self:flex-end; }
+.list-bulkbar { position:sticky; top:8px; z-index:5; display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin:0 0 12px; padding:9px 12px; border:1px solid var(--primary-glow, var(--primary)); border-radius:12px; background:var(--bg-surface); box-shadow:var(--shadow-app); color:var(--text-main); font-size:12.5px; }
+.list-bulkbar span { margin-right:auto; }
+.list-select { display:inline-flex; align-items:center; }
+.list-select input { width:17px; height:17px; cursor:pointer; accent-color:var(--primary); }
+.list-select input:disabled { cursor:not-allowed; opacity:.4; }
+.list-empty-filtered { padding:26px 12px; color:var(--text-dim); text-align:center; font-size:12.5px; }
+@media (max-width:640px) { .list-filter-field { flex:1 1 130px; } .list-bulkbar span { flex:1 1 100%; } }

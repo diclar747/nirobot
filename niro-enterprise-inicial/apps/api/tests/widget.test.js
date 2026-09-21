@@ -88,7 +88,7 @@ describe('Widget público', () => {
     const conversationId = start.body.conversation.id;
 
     const { agent, csrfToken } = await loginAgent(app, owner.email);
-    await agent.patch(`/api/org/conversations/${conversationId}`).set('X-CSRF-Token', csrfToken).send({ status: 'CLOSED' });
+    await prisma.conversation.update({ where: { id: conversationId }, data: { status: 'CLOSED' } });
 
     const res = await request(app).post('/api/public/widget/acme/messages').send({ token, content: 'sigo ahí?' });
     expect(res.status).toBe(409);

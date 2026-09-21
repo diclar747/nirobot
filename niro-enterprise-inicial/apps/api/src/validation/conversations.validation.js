@@ -33,6 +33,17 @@ const createConversationSchema = z
     message: 'Se requiere un contacto existente o los datos de uno nuevo'
   });
 
+const outcomeInput = z.object({
+  categoryId: z.string().min(1),
+  amount: z.union([z.number(), z.string().max(30)]).nullable().optional(),
+  note: z.string().max(500).nullable().optional()
+});
+
+const outcomeRequestSchema = outcomeInput.extend({
+  close: z.boolean().optional(),
+  status: z.enum(['RESOLVED', 'CLOSED']).optional()
+});
+
 const updateConversationSchema = z
   .object({
     status: z.enum(STATUSES).optional(),
@@ -40,7 +51,9 @@ const updateConversationSchema = z
     departmentId: z.string().min(1).nullable().optional(),
     assignedToId: z.string().min(1).nullable().optional(),
     subject: z.string().max(200).nullable().optional(),
-    tags: z.array(z.string().min(1).max(30)).max(15).optional()
+    tags: z.array(z.string().min(1).max(30)).max(15).optional(),
+    // Cómo terminó la conversación: obligatorio al cerrarla/resolverla (ver lib/outcomes.js).
+    outcome: outcomeInput.optional()
   })
   .refine((data) => Object.keys(data).length > 0, { message: 'No hay cambios para aplicar' });
 
@@ -70,6 +83,8 @@ module.exports = {
   contactSchema,
   createConversationSchema,
   updateConversationSchema,
+  outcomeInput,
+  outcomeRequestSchema,
   createMessageSchema,
   reactionSchema,
   createPollSchema,

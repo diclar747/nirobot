@@ -9,6 +9,7 @@ const {
   PRIORITIES,
   createConversationSchema,
   updateConversationSchema,
+  outcomeRequestSchema: outcomeInputSchema,
   createMessageSchema,
   reactionSchema,
   createPollSchema,
@@ -28,6 +29,9 @@ const { extensionFor, normalizeMimeType, sendAttachmentFile } = require('../lib/
 const fsp = require('fs/promises');
 const whatsapp = require('../lib/whatsapp');
 
+const chatAccess = require('../lib/chatAccess');
+const outcomes = require('../lib/outcomes');
+
 const router = express.Router();
 
 function requireOrgContext(req, _res, next) {
@@ -37,23 +41,9 @@ function requireOrgContext(req, _res, next) {
 
 router.use(requireAuth, requireOrgContext);
 
-async function agentDepartmentIds(organizationId, userId) {
-  const memberships = await prisma.departmentMember.findMany({
-    where: { userId, department: { organizationId } },
-    select: { departmentId: true }
-  });
-  return memberships.map((m) => m.departmentId);
-}
-
 async function visibilityWhere(req) {
   if (req.auth.role !== 'AGENT') return {};
-  const deptIds = await agentDepartmentIds(req.auth.organizationId, req.auth.userId);
-  return {
-    OR: [
-      { assignedToId: req.auth.userId },
-      { assignedToId: null, OR: [{ departmentId: null }, { departmentId: { in: deptIds } }] }
-    ]
-  };
+  return chatAccess.agentVisibilityWhere(await chatAccess.agentAccess(req.auth.organizationId, req.auth.userId));
 }
 
 
@@ -277,9 +267,18 @@ router.get('/:id/messages', async (req, res, next) => {
 
 router.patch('/:id', requireCsrf, async (req, res, next) => {
   try {
-    const data = updateConversationSchema.parse(req.body);
+    const parsed = updateConversationSchema.parse(req.body);
+    const { outcome: outcomeInput, ...data } = parsed;
     const existing = await loadVisibleConversation(req, req.params.id);
     if (!existing) throw new HttpError(404, 'Conversación no encontrada');
+
+    // Cerrar o resolver una conversación exige indicar cómo terminó (venta cerrada, perdida, cotización…).
+    const CLOSED_STATUSES = ['RESOLVED', 'CLOSED'];
+    const closing = CLOSED_STATUSES.includes(data.status) && !CLOSED_STATUSES.includes(existing.status);
+    if (closing && !outcomeInput && await outcomes.hasActiveCategories(req.auth.organizationId)) {
+      throw Object.assign(new HttpError(400, 'Elegí cómo terminó la conversación (venta cerrada, venta perdida, cotización…)'), { code: 'OUTCOME_REQUIRED' });
+    }
+    if (!closing && Object.keys(data).length === 0) throw new HttpError(400, 'No hay cambios para aplicar');
 
     if (
       typeof data.assignedToId !== 'undefined' &&
@@ -299,11 +298,19 @@ router.patch('/:id', requireCsrf, async (req, res, next) => {
       if (!user) throw new HttpError(404, 'Usuario no encontrado');
     }
 
-    const conversation = await prisma.conversation.update({
-      where: { id: existing.id },
-      data,
-      include: CONVERSATION_INCLUDE
+    const actor = { id: req.auth.userId, name: (await prisma.user.findUnique({ where: { id: req.auth.userId }, select: { name: true } }))?.name };
+    let createdOutcome = null;
+    const conversation = await prisma.$transaction(async (tx) => {
+      const updated = await tx.conversation.update({ where: { id: existing.id }, data, include: CONVERSATION_INCLUDE });
+      if (closing && outcomeInput) {
+        // Se registra con el estado pedido (resuelta o cerrada) y la etapa "Cerradas" del CRM.
+        const { outcome, conversation: closed } = await outcomes.createOutcome(tx, { organizationId: req.auth.organizationId, conversation: updated, actor, ...outcomeInput, close: true, status: data.status });
+        createdOutcome = outcome;
+        return { ...updated, ...(closed || {}) };
+      }
+      return updated;
     });
+    if (createdOutcome) await outcomes.postOutcomeNote({ organizationId: req.auth.organizationId, conversationId: conversation.id, outcome: createdOutcome, userId: req.auth.userId }).catch((err) => console.error('[outcome] nota en el chat falló:', err.message || err));
 
     let action = 'conversation.updated';
     if (typeof data.assignedToId !== 'undefined') action = 'conversation.assigned';
@@ -326,6 +333,33 @@ router.patch('/:id', requireCsrf, async (req, res, next) => {
   }
 });
 
+// Registrar una gestión sobre la conversación (p. ej. "cotización enviada"), cerrándola o no.
+router.post('/:id/outcome', requireCsrf, async (req, res, next) => {
+  try {
+    const input = outcomeInputSchema.parse(req.body);
+    const conversation = await loadVisibleConversation(req, req.params.id);
+    if (!conversation) throw new HttpError(404, 'Conversación no encontrada');
+    const actor = { id: req.auth.userId, name: (await prisma.user.findUnique({ where: { id: req.auth.userId }, select: { name: true } }))?.name };
+    const result = await prisma.$transaction((tx) => outcomes.createOutcome(tx, { organizationId: req.auth.organizationId, conversation, actor, categoryId: input.categoryId, amount: input.amount, note: input.note, close: input.close === true, status: input.status }));
+    await audit(prisma, {
+      organizationId: req.auth.organizationId,
+      actorUserId: req.auth.userId,
+      action: 'conversation.outcome',
+      entityType: 'Conversation',
+      entityId: conversation.id,
+      metadata: { category: result.outcome.categoryName, kind: result.outcome.kind, amount: result.outcome.amount === null ? null : Number(result.outcome.amount), closed: Boolean(input.close) }
+    });
+    await outcomes.postOutcomeNote({ organizationId: req.auth.organizationId, conversationId: conversation.id, outcome: result.outcome, userId: req.auth.userId }).catch((err) => console.error('[outcome] nota en el chat falló:', err.message || err));
+    let payload = null;
+    if (result.conversation) {
+      const full = await prisma.conversation.findUnique({ where: { id: conversation.id }, include: CONVERSATION_INCLUDE });
+      payload = sanitizeConversation(full);
+      emitToOrg(req.auth.organizationId, 'conversation:updated', { conversation: payload });
+    }
+    res.status(201).json({ outcome: outcomes.sanitizeOutcome({ ...result.outcome, contact: null, category: null }), conversation: payload });
+  } catch (err) { next(err); }
+});
+
 router.post('/:id/claim', requireCsrf, async (req, res, next) => {
   try {
     // A org-scoped (not visibility-scoped) existence check: visibility for AGENT depends on
@@ -337,8 +371,7 @@ router.post('/:id/claim', requireCsrf, async (req, res, next) => {
 
     const claimWhere = { id: existing.id, assignedToId: null };
     if (req.auth.role === 'AGENT') {
-      const deptIds = await agentDepartmentIds(req.auth.organizationId, req.auth.userId);
-      claimWhere.OR = [{ departmentId: null }, { departmentId: { in: deptIds } }];
+      claimWhere.OR = chatAccess.agentClaimWhere(await chatAccess.agentAccess(req.auth.organizationId, req.auth.userId));
     }
 
     const result = await prisma.conversation.updateMany({ where: claimWhere, data: { assignedToId: req.auth.userId } });

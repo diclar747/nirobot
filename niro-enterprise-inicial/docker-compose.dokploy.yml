@@ -46,6 +46,9 @@ services:
       WHATSAPP_CALL_PROVIDER: ${WHATSAPP_CALL_PROVIDER:-unavailable}
       # Cobro del plan mensual (Winsap: tarjeta / QR Bancard)
       WINSAP_API_KEY: ${WINSAP_API_KEY:-}
+      WINSAP_SMS_API_KEY: ${WINSAP_SMS_API_KEY:-}
+      WINSAP_SMS_FROM: ${WINSAP_SMS_FROM:-}
+      SMS_PRICE_GS: ${SMS_PRICE_GS:-130}
       WINSAP_BASE_URL: ${WINSAP_BASE_URL:-https://winsap.com.py}
       WINSAP_WEBHOOK_SECRET: ${WINSAP_WEBHOOK_SECRET:-}
       PLAN_PRICE_GS: ${PLAN_PRICE_GS:-49000}

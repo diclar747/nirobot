@@ -883,29 +883,74 @@
 }
 
 .crm-reaction-row {
+  position: relative;
+  z-index: 2;
   display: flex;
+  flex-wrap: wrap;
   gap: 4px;
-  margin-top: -6px;
-  margin-bottom: 4px;
+  margin: -13px 12px 0;
 }
 
 .chat-bubble-container.outbound .crm-reaction-row {
   align-self: flex-end;
+  justify-content: flex-end;
+}
+
+.chat-bubble-container.inbound .crm-reaction-row {
+  align-self: flex-start;
+}
+
+/* La burbuja deja lugar abajo para que el chip no tape la última línea del texto. */
+.chat-bubble-container.has-reactions .chat-bubble {
+  padding-bottom: 20px;
 }
 
 .crm-reaction-chip {
-  background: var(--bg-surface);
-  border: 1px solid var(--border-color);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-width: 30px;
+  height: 26px;
+  padding: 0 8px;
+  margin: 0;
+  border: 2px solid var(--bg-app);
   border-radius: 999px;
-  padding: 1px 7px;
-  font-size: 12px;
+  background: var(--bg-surface-2, var(--bg-surface));
+  color: var(--text-main);
+  font: inherit;
+  line-height: 1;
   cursor: default;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.28);
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.crm-reaction-chip:disabled { opacity: 1; color: var(--text-main); }
+
+.crm-reaction-emoji {
+  display: block;
+  font-family: "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif;
+  font-size: 15px;
+  line-height: 1;
+  transform: translateY(0.5px);
+}
+
+.crm-reaction-count {
+  font-size: 11.5px;
+  font-weight: 700;
+  color: var(--text-muted);
 }
 
 .crm-reaction-chip.mine {
   cursor: pointer;
-  border-color: var(--primary-glow);
+  background: var(--bg-surface-2);
+  box-shadow: 0 0 0 1px var(--primary-glow), 0 2px 6px rgba(0, 0, 0, 0.28);
+  transition: transform 0.15s ease;
 }
+
+.crm-reaction-chip.mine:hover { transform: scale(1.08); }
+.crm-reaction-chip.mine:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
 
 .crm-poll-card {
   min-width: 200px;

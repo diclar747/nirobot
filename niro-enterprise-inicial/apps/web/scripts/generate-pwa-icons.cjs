@@ -1,0 +1,12 @@
+const fs = require('fs');
+const { Resvg } = require('@resvg/resvg-js');
+const base=require('path').resolve(__dirname, '..') + '/';
+const source=fs.readFileSync(base+'src/components/NiroMascot.tsx','utf8');
+let svg=source.slice(source.indexOf('<svg'),source.indexOf('</svg>')+6).replace(/\{\/\*[\s\S]*?\*\/\}/g,'').replace(/width=\{size\}/,'width="512"').replace(/height=\{size\}/,'height="512"').replace(/className="[^"]*"/g,'');
+for(const [a,b] of Object.entries({stopColor:'stop-color',strokeWidth:'stroke-width',strokeLinecap:'stroke-linecap',strokeLinejoin:'stroke-linejoin'})) svg=svg.replaceAll(a,b);
+svg=svg.replace(/(<svg[\s\S]*?>)/,'$1<rect width="200" height="200" fill="#0b1329"/>');
+fs.writeFileSync(base+'public/icons/niro.svg',svg);
+for(const size of [192,512,180]) fs.writeFileSync(base+'public/icons/'+(size===180?'apple-touch-icon.png':`niro-${size}.png`),new Resvg(svg,{fitTo:{mode:'width',value:size}}).render().asPng());
+const mask=svg.replace('viewBox="0 0 200 200"','viewBox="-35 -35 270 270"').replace('<rect width="200" height="200" fill="#0b1329"/>','<rect x="-35" y="-35" width="270" height="270" fill="#0b1329"/>');
+fs.writeFileSync(base+'public/icons/niro-maskable-512.png',new Resvg(mask,{fitTo:{mode:'width',value:512}}).render().asPng());
+fs.writeFileSync(base+'public/icons/badge-96.png',new Resvg('<svg xmlns="http://www.w3.org/2000/svg" width="96" height="96" viewBox="0 0 96 96"><g fill="white"><rect x="18" y="25" width="60" height="48" rx="18"/><rect x="7" y="39" width="10" height="22" rx="5"/><rect x="79" y="39" width="10" height="22" rx="5"/><rect x="44" y="14" width="8" height="16"/><circle cx="48" cy="11" r="7"/></g><path d="M33 55V42L63 56V42" stroke="black" stroke-width="6" fill="none"/></svg>').render().asPng());

@@ -20,6 +20,7 @@ export interface OrgUser {
   role: UserRole;
   active: boolean;
   mustChangePassword: boolean;
+  autoChat?: boolean;
   createdAt: string;
   permissions?: Record<string, boolean>;
   departments?: { id: string; name: string }[];
@@ -55,7 +56,7 @@ export interface MenuOption {
   departmentId: string;
 }
 
-export type BotNodeType = 'start' | 'message' | 'keyword' | 'condition' | 'ai' | 'crm' | 'agent' | 'end';
+export type BotNodeType = 'start' | 'message' | 'menu' | 'keyword' | 'condition' | 'ai' | 'crm' | 'agent' | 'end';
 
 export interface BotFlowNode {
   id: string;
@@ -198,7 +199,7 @@ export interface Order {
   total: number;
 }
 
-export type AgentPresenceStatus = 'available' | 'busy' | 'away' | 'offline';
+export type AgentPresenceStatus = 'available' | 'busy' | 'pending' | 'break' | 'rest' | 'away' | 'offline';
 
 export interface AgentPresence {
   userId: string;

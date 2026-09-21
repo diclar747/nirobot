@@ -1,0 +1,61 @@
+{
+  "errors": [],
+  "widths": [
+    {
+      "width": 320,
+      "scroll": 320,
+      "composer": 900,
+      "height": 900
+    },
+    {
+      "width": 360,
+      "scroll": 360,
+      "composer": 900,
+      "height": 900
+    },
+    {
+      "width": 390,
+      "scroll": 390,
+      "composer": 900,
+      "height": 900
+    },
+    {
+      "width": 768,
+      "scroll": 768,
+      "composer": 900,
+      "height": 900
+    },
+    {
+      "width": 1024,
+      "scroll": 1024,
+      "composer": 900,
+      "height": 900
+    },
+    {
+      "width": 1440,
+      "scroll": 1440,
+      "composer": 900,
+      "height": 900
+    }
+  ],
+  "geometry": {
+    "width": 390,
+    "scroll": 390,
+    "composer": 844,
+    "height": 844
+  },
+  "modules": [
+    "/dashboard",
+    "/contactos",
+    "/orders",
+    "/reports",
+    "/board"
+  ],
+  "mutations": [
+    "/api/org/conversations/c1/read",
+    "/api/org/conversations/c2/read",
+    "/api/org/conversations/c1/read",
+    "/api/org/conversations/c1/messages",
+    "/api/org/conversations/c1/transfer"
+  ]
+}

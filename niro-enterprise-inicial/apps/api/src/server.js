@@ -61,6 +61,17 @@ statusPostsTimer.unref?.();
 setTimeout(statusPostsTick, 15 * 1000).unref?.();
 whatsappStatus.cleanupExpired().catch((err) => console.error('[status] cleanup failed', err));
 
+// SMS masivo: retoma las campañas en curso tras un reinicio y arranca las programadas cuando les toca.
+const smsService = require('./lib/sms');
+smsService.resumeCampaigns().catch((err) => console.error('[sms] resumeCampaigns failed', err));
+let smsBusy = false;
+const smsTimer = setInterval(async () => {
+  if (smsBusy || stopping) return;
+  smsBusy = true;
+  try { await smsService.tick(); } catch (err) { console.error('[sms] tick failed', err); } finally { smsBusy = false; }
+}, 20 * 1000);
+smsTimer.unref?.();
+
 async function shutdown() {
   stopping = true;
   io.close();

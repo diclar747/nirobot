@@ -111,6 +111,15 @@ model Organization {
   whatsappStatuses WhatsappStatus[]
   statusPosts   WhatsappStatusPost[]
   statusCampaigns WhatsappStatusCampaign[]
+  outcomeCategories OutcomeCategory[]
+  outcomes          ConversationOutcome[]
+  statusViews       WhatsappStatusView[]
+  // SMS prepago: cada crédito es un SMS. El saldo se mueve solo con SmsTransaction (compras, envíos, ajustes).
+  smsBalance        Int    @default(0)
+  smsTransactions   SmsTransaction[]
+  smsPurchases      SmsPurchase[]
+  smsCampaigns      SmsCampaign[]
+  smsMessages       SmsMessage[]
 }
 
 model OrganizationSettings {
@@ -151,6 +160,9 @@ model User {
   permissions        Json?
   quickReplies       QuickReply[]
   conversationReads  ConversationRead[]
+  // Auto chat: los chats nuevos sin asignar le llegan solos (sin que un administrador se los transfiera).
+  autoChat           Boolean            @default(false)
+  outcomes           ConversationOutcome[] @relation("OutcomeAgent")
 }
 
 model Department {
@@ -194,6 +206,7 @@ model Contact {
   callSurveyResponses CallSurveyResponse[]
   directCallRecords CallDirectRecord[]
   whatsappStatuses WhatsappStatus[]
+  outcomes ConversationOutcome[]
   callConsentStatus String? @default("UNKNOWN")
   callConsentAt DateTime?
   callConsentSource String?
@@ -226,6 +239,7 @@ model Conversation {
   messages       Message[]
   orders         Order[]
   directCallRecords CallDirectRecord[]
+  outcomes       ConversationOutcome[]
 
   @@index([organizationId, status, updatedAt])
   @@index([tags], type: Gin)
@@ -515,6 +529,7 @@ model CallSurveyOption {
   optionLabel String
   replyMessage String?
   action    String   @default("AUTO")
+  crmStage  String?
   survey    CallSurvey @relation(fields: [surveyId], references: [id], onDelete: Cascade)
 
   @@unique([surveyId, optionKey])
@@ -887,4 +902,160 @@ model ConversationRead {
 
   @@unique([conversationId, userId])
   @@index([userId])
+}
+
+// Categorías de gestión que crea cada empresa (venta cerrada, venta perdida, cotización enviada…).
+// kind resume el resultado para las estadísticas: WON (venta), LOST (venta perdida), QUOTE (cotización), OTHER.
+model OutcomeCategory {
+  id             String   @id @default(cuid())
+  organizationId String
+  name           String
+  kind           String   @default("OTHER")
+  requiresAmount Boolean  @default(false)
+  color          String   @default("#64748b")
+  sortOrder      Int      @default(0)
+  active         Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  organization   Organization          @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  outcomes       ConversationOutcome[]
+
+  @@unique([organizationId, name])
+  @@index([organizationId, active, sortOrder])
+}
+
+// Gestión registrada por un agente sobre una conversación: cierre (con o sin venta) o avance (p. ej. cotización enviada).
+// Guarda copia del nombre de la categoría y del agente para que el historial no cambie si luego se renombran o borran.
+model ConversationOutcome {
+  id                 String   @id @default(cuid())
+  organizationId     String
+  conversationId     String
+  contactId          String?
+  agentId            String?
+  agentName          String
+  categoryId         String?
+  categoryName       String
+  kind               String   @default("OTHER")
+  amount             Decimal? @db.Decimal(14, 2)
+  note               String?
+  closedConversation Boolean  @default(false)
+  createdAt          DateTime @default(now())
+  organization       Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  conversation       Conversation     @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  contact            Contact?         @relation(fields: [contactId], references: [id], onDelete: SetNull)
+  agent              User?            @relation("OutcomeAgent", fields: [agentId], references: [id], onDelete: SetNull)
+  category           OutcomeCategory? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId, createdAt])
+  @@index([organizationId, agentId, createdAt])
+  @@index([conversationId])
+}
+
+// Quién vio (y quién reaccionó a) un estado que publicó la empresa. waMessageId es el id del estado propio en WhatsApp,
+// así sirve para los publicados desde Nirobot y para los subidos desde el teléfono. Solo hay datos de quienes
+// tienen activadas las confirmaciones de lectura: WhatsApp no informa las vistas de los demás.
+model WhatsappStatusView {
+  id             String    @id @default(cuid())
+  organizationId String
+  waMessageId    String
+  viewerJid      String
+  phone          String?
+  displayName    String?
+  contactId      String?
+  viewedAt       DateTime?
+  reaction       String?
+  reactedAt      DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, waMessageId, viewerJid])
+  @@index([organizationId, waMessageId])
+}
+
+// Libro de saldo SMS: type = PURCHASE | CONSUMPTION | REFUND | ADJUSTMENT. amount es con signo (+ suma, - resta).
+model SmsTransaction {
+  id              String   @id @default(cuid())
+  organizationId  String
+  type            String
+  amount          Int
+  balanceAfter    Int
+  note            String?
+  reference       String?
+  createdByUserId String?
+  createdAt       DateTime @default(now())
+  organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, createdAt])
+}
+
+// Recarga de saldo. source = CARD (pago en línea con Winsap) | ADMIN (asignada por el superadmin).
+model SmsPurchase {
+  id              String   @id @default(cuid())
+  organizationId  String
+  credits         Int
+  unitPrice       Int
+  amount          Int
+  status          String   @default("pending") // pending | paid | failed | expired
+  source          String   @default("CARD")
+  winsapLinkId    String?
+  winsapLinkToken String?
+  paymentUrl      String?
+  winsapPaymentId String?
+  paymentMethod   String?
+  note            String?
+  createdByUserId String?
+  paidAt          DateTime?
+  raw             Json?
+  createdAt       DateTime @default(now())
+  organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, createdAt])
+  @@index([status])
+}
+
+model SmsCampaign {
+  id               String   @id @default(cuid())
+  organizationId   String
+  name             String
+  message          String   @db.Text
+  stripAccents     Boolean  @default(true)
+  source           String   @default("CAMPAIGN") // CAMPAIGN | QUICK
+  status           String   @default("DRAFT")    // DRAFT | SCHEDULED | SENDING | PAUSED | COMPLETED | CANCELLED
+  pauseReason      String?
+  scheduledAt      DateTime?
+  startedAt        DateTime?
+  completedAt      DateTime?
+  createdByUserId  String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+  organization     Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  messages         SmsMessage[]
+
+  @@index([organizationId, status, createdAt])
+}
+
+// Un SMS a un destinatario. Guarda el texto ya personalizado tal como se envió.
+model SmsMessage {
+  id                String   @id @default(cuid())
+  organizationId    String
+  campaignId        String?
+  contactId         String?
+  name              String?
+  phone             String
+  body              String   @db.Text
+  encoding          String   @default("gsm7")
+  status            String   @default("PENDING") // PENDING | SENDING | SENT | DELIVERED | FAILED | CANCELLED
+  providerMessageId String?
+  errorMessage      String?
+  credits           Int      @default(1)
+  sentAt            DateTime?
+  deliveredAt       DateTime?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  organization      Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  campaign          SmsCampaign? @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, createdAt])
+  @@index([campaignId, status])
+  @@index([providerMessageId])
 }

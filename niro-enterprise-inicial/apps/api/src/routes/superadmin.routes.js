@@ -344,4 +344,56 @@ router.delete('/plans/:id', requireCsrf, async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+// ---- SMS: saldo del proveedor, ventas y asignación manual de saldo ----
+router.get('/sms/overview', async (_req, res, next) => {
+  try {
+    const sms = require('../lib/sms');
+    const provider = require('../lib/smsProvider');
+    let providerInfo = { configured: provider.configured(), balance: null, error: null };
+    if (provider.configured()) {
+      try { providerInfo = { ...providerInfo, ...(await provider.getBalance()) }; } catch (err) { providerInfo.error = err.message; }
+    }
+    const [orgs, purchases, messages, sold] = await Promise.all([
+      prisma.organization.findMany({ where: { OR: [{ smsBalance: { gt: 0 } }, { smsPurchases: { some: {} } }, { smsMessages: { some: {} } }] }, select: { id: true, name: true, smsBalance: true, active: true } }),
+      prisma.smsPurchase.groupBy({ by: ['organizationId', 'source'], where: { status: 'paid' }, _sum: { credits: true, amount: true } }),
+      prisma.smsMessage.groupBy({ by: ['organizationId', 'status'], _count: { _all: true } }),
+      prisma.smsPurchase.aggregate({ where: { status: 'paid' }, _sum: { credits: true, amount: true } })
+    ]);
+    const rows = orgs.map((org) => {
+      const bought = purchases.filter((p) => p.organizationId === org.id);
+      const sent = messages.filter((m) => m.organizationId === org.id && ['SENT', 'DELIVERED'].includes(m.status)).reduce((n, m) => n + m._count._all, 0);
+      const failed = messages.filter((m) => m.organizationId === org.id && m.status === 'FAILED').reduce((n, m) => n + m._count._all, 0);
+      return { id: org.id, name: org.name, active: org.active, balance: org.smsBalance, sent, failed, creditsCard: bought.filter((p) => p.source === 'CARD').reduce((n, p) => n + (p._sum.credits || 0), 0), creditsAdmin: bought.filter((p) => p.source === 'ADMIN').reduce((n, p) => n + (p._sum.credits || 0), 0) };
+    }).sort((a, b) => b.sent - a.sent || a.name.localeCompare(b.name));
+    const owed = rows.reduce((n, r) => n + r.balance, 0);
+    res.json({ provider: providerInfo, priceGs: sms.PRICE_GS(), totals: { creditsSold: sold._sum.credits || 0, revenue: sold._sum.amount || 0, customerBalance: owed, sent: rows.reduce((n, r) => n + r.sent, 0), failed: rows.reduce((n, r) => n + r.failed, 0) }, organizations: rows });
+  } catch (err) { next(err); }
+});
+
+// Asigna (o descuenta, con un número negativo) saldo de SMS a una empresa. Queda en su historial de compras.
+router.post('/sms/organizations/:id/credits', requireCsrf, async (req, res, next) => {
+  try {
+    const sms = require('../lib/sms');
+    const org = await prisma.organization.findUnique({ where: { id: req.params.id }, select: { id: true, name: true } });
+    if (!org) throw new HttpError(404, 'Empresa no encontrada');
+    const credits = Number(req.body?.credits);
+    const note = typeof req.body?.note === 'string' ? req.body.note.trim().slice(0, 200) : '';
+    const amount = req.body?.amount === undefined || req.body?.amount === null || req.body?.amount === '' ? undefined : Number(req.body.amount);
+    const result = await sms.grantCredits(org.id, credits, { userId: req.auth.userId, note, amount });
+    await audit(prisma, { organizationId: org.id, actorUserId: req.auth.userId, action: 'sms.credits.assigned', entityType: 'Organization', entityId: org.id, metadata: { credits, note: note || null } });
+    res.json({ balance: result.balance, organization: org.name });
+  } catch (err) { next(err); }
+});
+
+// Registra en Winsap el webhook de entregas (una vez). Después el estado "entregado" o "fallido" llega solo.
+router.post('/sms/webhook/register', requireCsrf, async (_req, res, next) => {
+  try {
+    const provider = require('../lib/smsProvider');
+    const origin = (process.env.PUBLIC_APP_URL || String(process.env.WEB_ORIGIN || '').split(',')[0] || '').trim().replace(/\/$/, '');
+    if (!origin) throw new HttpError(400, 'Falta configurar PUBLIC_APP_URL');
+    const result = await provider.registerWebhook(`${origin}/api/billing/webhook/sms-delivery?token=${provider.webhookToken()}`, billing.webhookSecret());
+    res.json({ ok: true, webhookId: result.webhook_id || null });
+  } catch (err) { next(err.name === 'SmsProviderError' ? new HttpError(502, err.message) : err); }
+});
+
 module.exports = router;

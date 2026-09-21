@@ -1,7 +1,9 @@
+import { PwaExperience } from './components/PwaExperience';
 import { BrowserRouter, Route, Routes } from 'react-router-dom';
 import { AuthProvider } from './context/AuthContext';
 import { ThemeProvider } from './context/ThemeContext';
 import { AlertProvider } from './context/AlertContext';
+import { OutcomeProvider } from './context/OutcomeContext';
 import { ProtectedRoute } from './components/ProtectedRoute';
 import { Layout } from './components/Layout';
 import { Login } from './routes/Login';
@@ -16,6 +18,9 @@ import { CrmBoard } from './routes/CrmBoard';
 import { Campaigns } from './routes/Campaigns';
 import { Orders } from './routes/Orders';
 import { Reports } from './routes/Reports';
+import { Management } from './routes/Management';
+import { Sms } from './routes/Sms';
+import { SmsAdmin } from './routes/SmsAdmin';
 import { ApiPortal } from './routes/ApiPortal';
 import { AiAgents } from './routes/AiAgents';
 import { BotFlow } from './routes/BotFlow';
@@ -31,7 +36,9 @@ export function App() {
     <ThemeProvider>
       <AlertProvider>
         <BrowserRouter>
+          <PwaExperience />
           <AuthProvider>
+          <OutcomeProvider>
           <Routes>
             <Route path="/" element={<Login />} />
             <Route path="/landing" element={<Login />} />
@@ -78,6 +85,18 @@ export function App() {
                 <Route path="/orders" element={<Orders />} />
               </Route>
 
+              <Route element={<ProtectedRoute roles={['OWNER', 'ADMIN', 'SUPERVISOR']} permission="sms" />}>
+                <Route path="/sms" element={<Sms />} />
+              </Route>
+
+              <Route element={<ProtectedRoute roles={['SUPERADMIN']} />}>
+                <Route path="/sms-admin" element={<SmsAdmin />} />
+              </Route>
+
+              <Route element={<ProtectedRoute roles={['OWNER', 'ADMIN', 'SUPERVISOR', 'AGENT']} permission="management" />}>
+                <Route path="/gestion" element={<Management />} />
+              </Route>
+
               <Route element={<ProtectedRoute roles={['OWNER', 'ADMIN', 'SUPERVISOR', 'AGENT']} permission="reports" />}>
                 <Route path="/reports" element={<Reports />} />
               </Route>
@@ -113,6 +132,7 @@ export function App() {
             </Route>
           </Route>
         </Routes>
+          </OutcomeProvider>
           </AuthProvider>
         </BrowserRouter>
       </AlertProvider>

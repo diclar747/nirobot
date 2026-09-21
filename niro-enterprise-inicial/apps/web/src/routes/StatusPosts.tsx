@@ -4,6 +4,7 @@ import { getSocket } from '../lib/socket';
 import { useAlerts } from '../context/AlertContext';
 import { EmptyState, PageHeader, Panel, Pill, StatCard, StatGrid, type Tone } from '../components/PageKit';
 import { StatusCampaigns } from '../components/StatusCampaigns';
+import { StatusViewersModal } from '../components/StatusViewers';
 import type { Contact } from '../types';
 import '../styles/status-posts.css';
 import { Ui } from '../components/Ui';
@@ -28,6 +29,8 @@ type StatusPost = {
   errorMessage: string | null;
   retryCount: number;
   createdAt: string;
+  viewCount?: number;
+  reactionCount?: number;
 };
 
 type Metrics = {
@@ -78,6 +81,7 @@ function toLocalInput(date: Date): string {
 export function StatusPosts() {
   const { notify, confirm } = useAlerts();
   const [posts, setPosts] = useState<StatusPost[]>([]);
+  const [viewersOf, setViewersOf] = useState<StatusPost | null>(null);
   const [metrics, setMetrics] = useState<Metrics | null>(null);
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [loading, setLoading] = useState(true);
@@ -118,7 +122,13 @@ export function StatusPosts() {
       apiGet<Metrics>('/api/org/status-posts/metrics').then(setMetrics).catch(() => {});
     };
     socket.on('status-post:updated', onUpdate);
-    return () => { socket.off('status-post:updated', onUpdate); };
+    // Alguien vio o marcó con me gusta un estado: los contadores se actualizan al instante.
+    const onView = ({ postId, counts }: { postId: string | null; counts: { views: number; reactions: number } }) => {
+      if (!postId) return;
+      setPosts((current) => current.map((p) => (p.id === postId ? { ...p, viewCount: counts.views, reactionCount: counts.reactions } : p)));
+    };
+    socket.on('status:view', onView);
+    return () => { socket.off('status-post:updated', onUpdate); socket.off('status:view', onView); };
   }, [load]);
 
   useEffect(() => {
@@ -359,6 +369,12 @@ export function StatusPosts() {
                     {post.errorMessage && <small className="sp-error">{post.errorMessage}{post.status === 'scheduled' ? ` (reintento ${post.retryCount}/3)` : ''}</small>}
                   </span>
                   <Pill tone={meta.tone}>{meta.label}</Pill>
+                  {['published', 'expired'].includes(post.status) && (
+                    <button type="button" className="sp-viewers" onClick={() => setViewersOf(post)} title="Ver quién lo vio">
+                      <Ui name="eye" size={15} /> {post.viewCount || 0}
+                      <span aria-hidden="true">·</span> ❤️ {post.reactionCount || 0}
+                    </button>
+                  )}
                   <span className="sp-actions">
                     {['draft', 'failed'].includes(post.status) && <button type="button" onClick={() => act(post, 'publish')}>{post.status === 'failed' ? 'Reintentar' : 'Publicar'}</button>}
                     {post.status !== 'deleted' && post.status !== 'processing' && <button type="button" onClick={() => act(post, 'duplicate')}>Duplicar</button>}
@@ -372,6 +388,7 @@ export function StatusPosts() {
         )}
       </Panel>
       </>}
+      {viewersOf && <StatusViewersModal postId={viewersOf.id} title={viewersOf.contentType === 'text' ? viewersOf.textContent || 'Estado de texto' : viewersOf.caption || (viewersOf.contentType === 'video' ? 'Video' : 'Imagen')} onClose={() => setViewersOf(null)} />}
     </div>
   );
 }

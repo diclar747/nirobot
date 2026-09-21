@@ -79,6 +79,7 @@ export class ActiveCall extends EventEmitter {
         super();
         this.callId = callId;
         this.engine = engine;
+        this._startedAt = Date.now();
         this.#endPromise = new Promise((res) => { this.#endResolver = res; });
         if (durationMs > 0) {
             this.#endTimer = setTimeout(() => this.end("duration_limit"), durationMs);
@@ -97,6 +98,7 @@ export class ActiveCall extends EventEmitter {
     };
     pushAudio = (pcm) => this._pushAudio?.(pcm);
     _pushAudio = null;
+    _stopFeeder = null;
     mute = (muted) => {
         try {
             this.engine.setMute(muted);
@@ -106,6 +108,7 @@ export class ActiveCall extends EventEmitter {
     waitForEnd = () => this.#endPromise;
     /** @internal — called by VoipClient on WASM call-state change */
     _updateState = (state) => {
+        if (state !== this.#state) console.log(`[calls] ${this.callId.slice(0, 8)} estado ${this.#state} -> ${state} (+${Math.round((Date.now() - this._startedAt) / 1000)}s)`);
         this.#state = state;
         if (state === CallState.PreacceptReceived)
             this.emit("ringing");
@@ -127,6 +130,8 @@ export class ActiveCall extends EventEmitter {
             this.#endTimer = null;
         }
         reason = this.#endReason || reason;
+        console.log(`[calls] ${this.callId.slice(0, 8)} terminó: motivo=${reason} estado=${this.#state} (+${Math.round((Date.now() - this._startedAt) / 1000)}s)`);
+        try { this._stopFeeder?.(); } catch { }
         this.#endResolver(reason);
         this.emit("ended", reason);
     };
@@ -202,6 +207,7 @@ export class VoipClient {
                         return;
                     }
                     if (update.connection === "close" && opened) {
+                        console.log(`[calls] socket de llamadas cerrado: código=${update.lastDisconnect?.error?.output?.statusCode ?? '?'} ${update.lastDisconnect?.error?.message ?? ''}`);
                         this.#activeCall?._forceEnd("connection_lost");
                     }
                     if (update.connection === "close" && !opened) {
@@ -290,6 +296,7 @@ export class VoipClient {
         const call = new ActiveCall(callId, this.#engine, durationMs);
         call._audioSource = audioSource;
         call._pushAudio = (pcm) => this.#feeder?.pushAudio(pcm);
+        call._stopFeeder = () => { this.#feeder?.stop(); this.#feeder = null; };
         this.#activeCall = call;
         this.#engine.startCall({
             peerJid: peerLid,
@@ -336,6 +343,7 @@ export class VoipClient {
             catch { }
         }
         else if (eventType === 2) {
+            console.log(`[calls] ${this.#activeCall?.callId?.slice(0, 8) ?? '-'} evento 2 (fin remoto)`);
             this.#activeCall?._forceEnd("remote_end");
         }
     };

@@ -7,7 +7,7 @@ export function ProtectedRoute({ roles, permission }: { roles?: UserRole[]; perm
   const { user, loading } = useAuth();
   const location = useLocation();
 
-  if (loading) return null;
+  if (loading) return <div className="pwa-launch" role="status"><img src="/icons/niro-192.png" alt="Robot de NIRO" width="112" height="112" /><strong>NIRO Enterprise</strong><span>Abriendo tu espacio de trabajo…</span></div>;
   if (!user) return <Navigate to="/login" state={{ from: location }} replace />;
   if (user.mustChangePassword && location.pathname !== '/change-password') {
     return <Navigate to="/change-password" replace />;

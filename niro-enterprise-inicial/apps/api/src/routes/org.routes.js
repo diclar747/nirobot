@@ -32,6 +32,7 @@ function sanitizeOrgUser(user, whatsappProfile = null) {
     role: user.role,
     active: user.active,
     mustChangePassword: user.mustChangePassword,
+    autoChat: Boolean(user.autoChat),
     createdAt: user.createdAt,
     permissions: require('../lib/permissions').effectivePermissions(user),
     departments: (user.memberships || []).map((m) => ({ id: m.department.id, name: m.department.name })),
@@ -48,6 +49,7 @@ async function setUserDepartments(organizationId, userId, departmentIds) {
     prisma.departmentMember.deleteMany({ where: { userId, department: { organizationId } } }),
     ...(valid.length ? [prisma.departmentMember.createMany({ data: valid.map((d) => ({ departmentId: d.id, userId })), skipDuplicates: true })] : [])
   ]);
+  require('../lib/chatAccess').invalidateAgentCache(organizationId);
 }
 
 function sanitizeSettings(settings) {
@@ -196,7 +198,8 @@ router.post('/users', requireRole('OWNER', 'ADMIN'), requireCsrf, async (req, re
           email: data.email,
           role: data.role,
           passwordHash,
-          mustChangePassword: true
+          mustChangePassword: true,
+          autoChat: data.role === 'AGENT' && data.autoChat === true
         }
       });
     } catch (err) {
@@ -205,6 +208,7 @@ router.post('/users', requireRole('OWNER', 'ADMIN'), requireCsrf, async (req, re
     }
 
     if (data.departmentIds && data.departmentIds.length > 0) await setUserDepartments(req.auth.organizationId, user.id, data.departmentIds);
+    require('../lib/chatAccess').invalidateAgentCache(req.auth.organizationId);
 
     await audit(prisma, {
       organizationId: req.auth.organizationId,
@@ -264,6 +268,7 @@ router.patch('/users/:id', requireRole('OWNER', 'ADMIN'), requireCsrf, async (re
       await setUserDepartments(req.auth.organizationId, target.id, departmentIds);
       user.memberships = (await prisma.departmentMember.findMany({ where: { userId: target.id }, include: { department: { select: { id: true, name: true } } } }));
     }
+    require('../lib/chatAccess').invalidateAgentCache(req.auth.organizationId);
     await audit(prisma, {
       organizationId: req.auth.organizationId,
       actorUserId: req.auth.userId,
@@ -273,6 +278,37 @@ router.patch('/users/:id', requireRole('OWNER', 'ADMIN'), requireCsrf, async (re
       metadata: data
     });
     res.json({ user: sanitizeOrgUser(user) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.delete('/users/:id', requireRole('OWNER', 'ADMIN'), requireCsrf, async (req, res, next) => {
+  try {
+    const organizationId = req.auth.organizationId;
+    const target = await prisma.user.findFirst({ where: { id: req.params.id, organizationId } });
+    if (!target) throw new HttpError(404, 'Usuario no encontrado');
+    if (target.id === req.auth.userId) throw new HttpError(400, 'No podés eliminar tu propia cuenta');
+    if (target.role === 'OWNER') {
+      if (req.auth.role !== 'OWNER') throw new HttpError(403, 'Solo un propietario puede eliminar a otro propietario');
+      const otherOwners = await prisma.user.count({ where: { organizationId, role: 'OWNER', active: true, id: { not: target.id } } });
+      if (otherOwners === 0) throw new HttpError(400, 'Debe existir al menos un propietario activo');
+    }
+    // Sus chats, mensajes y campañas quedan en la cuenta (las referencias al usuario pasan a "sin asignar").
+    await prisma.$transaction([
+      prisma.refreshToken.deleteMany({ where: { userId: target.id } }),
+      prisma.user.delete({ where: { id: target.id } })
+    ]);
+    require('../lib/chatAccess').invalidateAgentCache(organizationId);
+    await audit(prisma, {
+      organizationId,
+      actorUserId: req.auth.userId,
+      action: 'user.deleted',
+      entityType: 'User',
+      entityId: target.id,
+      metadata: { email: target.email, name: target.name, role: target.role }
+    });
+    res.json({ ok: true });
   } catch (err) {
     next(err);
   }
@@ -411,6 +447,7 @@ router.post('/departments/:id/members', requireRole('OWNER', 'ADMIN'), requireCs
 
     try {
       await prisma.departmentMember.create({ data: { departmentId: department.id, userId: user.id } });
+      require('../lib/chatAccess').invalidateAgentCache(req.auth.organizationId);
     } catch (err) {
       if (err.code === 'P2002') throw new HttpError(409, 'El usuario ya pertenece a ese departamento');
       throw err;
@@ -439,6 +476,7 @@ router.delete('/departments/:id/members/:userId', requireRole('OWNER', 'ADMIN'),
       where: { departmentId: department.id, userId: req.params.userId }
     });
     if (deleted.count === 0) throw new HttpError(404, 'El usuario no pertenece a ese departamento');
+    require('../lib/chatAccess').invalidateAgentCache(req.auth.organizationId);
 
     await audit(prisma, {
       organizationId: req.auth.organizationId,
@@ -454,7 +492,7 @@ router.delete('/departments/:id/members/:userId', requireRole('OWNER', 'ADMIN'),
   }
 });
 
-const { getOrgPresenceList, setAgentPresenceStatus } = require('../lib/realtime');
+const { getOrgPresenceList, setAgentPresenceStatus, PRESENCE_STATUSES } = require('../lib/realtime');
 
 router.get('/presence', async (req, res, next) => {
   try {
@@ -468,11 +506,12 @@ router.get('/presence', async (req, res, next) => {
 router.post('/presence/status', requireCsrf, async (req, res, next) => {
   try {
     const { status } = req.body;
-    if (!['available', 'busy', 'away', 'offline'].includes(status)) {
+    if (!PRESENCE_STATUSES.includes(status)) {
       throw new HttpError(400, 'Estado no válido');
     }
-    setAgentPresenceStatus(req.auth.organizationId, req.auth.userId, status);
-    res.json({ ok: true, status });
+    // Sin una pestaña conectada no hay presencia que cambiar: se recuerda igual para cuando se conecte.
+    const applied = setAgentPresenceStatus(req.auth.organizationId, req.auth.userId, status);
+    res.json({ ok: true, status, applied });
   } catch (err) {
     next(err);
   }

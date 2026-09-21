@@ -2,6 +2,8 @@ import { DragEvent, useEffect, useMemo, useState } from 'react';
 import { apiGet, apiPost } from '../lib/api';
 import { getSocket } from '../lib/socket';
 import { initials } from '../lib/format';
+import { useAuth } from '../context/AuthContext';
+import { PRESENCE_LABEL, PRESENCE_ORDER } from '../lib/presence';
 import type { AgentPresence, AgentPresenceStatus, Conversation, OrgUser } from '../types';
 
 /** MIME type used when dragging a conversation onto an agent. */
@@ -13,14 +15,8 @@ export function setConversationDragData(e: DragEvent, conversationId: string) {
   e.dataTransfer.effectAllowed = 'move';
 }
 
-const STATUS_LABEL: Record<AgentPresenceStatus, string> = {
-  available: 'Disponible',
-  busy: 'Ocupado',
-  away: 'Ausente',
-  offline: 'Desconectado'
-};
-
-const STATUS_ORDER: Record<AgentPresenceStatus, number> = { available: 0, busy: 1, away: 2, offline: 3 };
+const STATUS_LABEL = PRESENCE_LABEL;
+const STATUS_ORDER = PRESENCE_ORDER;
 
 type AgentRow = { id: string; name: string; role: string; status: AgentPresenceStatus };
 
@@ -31,6 +27,7 @@ export function AgentsDropPanel({
   conversation: Conversation;
   onConversationChange: (c: Conversation) => void;
 }) {
+  const { user: me } = useAuth();
   const [users, setUsers] = useState<OrgUser[]>([]);
   const [presence, setPresence] = useState<AgentPresence[]>([]);
   const [overId, setOverId] = useState<string | null>(null);
@@ -155,7 +152,7 @@ export function AgentsDropPanel({
                 <span className={`agents-drop-dot ${a.status}`} />
               </div>
               <div className="agents-drop-info">
-                <div className="agents-drop-name">{a.name}</div>
+                <div className="agents-drop-name">{a.name.replace(/\s+\d{6,}\s*$/, '') || a.name}{a.id === me?.id ? ' (vos)' : ''}</div>
                 <div className="agents-drop-meta">
                   {busyId === a.id ? 'Transfiriendo...' : isAssigned ? 'Asignado a este chat' : STATUS_LABEL[a.status]}
                 </div>

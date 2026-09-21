@@ -14,7 +14,9 @@ const activeCalls = new Map();
 const directCalls = new Map();
 let stopping = false;
 
-const ANSWERED_END_REASONS = new Set(['audio_complete', 'remote_end', 'hangup', 'ended']);
+// Una llamada que llegó a conectarse y terminó por cualquiera de estos motivos (incluido que la otra persona corte
+// o se pierda la conexión a mitad) cuenta como contacto logrado: no se reintenta y sí se envía la encuesta.
+const ANSWERED_END_REASONS = new Set(['audio_complete', 'remote_end', 'hangup', 'ended', 'duration_limit', 'connection_lost']);
 const STATUS_TERMINAL = new Set(['COMPLETED', 'NO_ANSWER', 'FAILED', 'CANCELLED']);
 const STATUS_ACTIVE = new Set(['STARTING', 'RINGING', 'CONNECTED', 'PLAYING']);
 
@@ -331,6 +333,7 @@ async function runAttempt(campaign, recipient) {
     const currentCampaign = await prisma.callCampaign.findUnique({ where: { id: campaign.id }, select: { status: true } });
     // Someone who picked up and later hung up was reached: that is a completed contact, not a
     // failure, and must not be dialled again. Only transport/provider errors count as FAILED.
+    console.log(`[calls] campaña ${campaign.id} -> ${recipient.phoneNumber}: fin motivo=${reason} conectada=${connected}`);
     const status = currentCampaign?.status === 'CANCELLED' ? 'CANCELLED' : connected && ANSWERED_END_REASONS.has(reason) ? 'COMPLETED' : (connected ? 'FAILED' : 'NO_ANSWER');
     const finished = await finishRecipient(campaign, recipient, attempt, status, {
       durationSeconds,
@@ -689,6 +692,11 @@ async function cancelCampaign(organizationId, campaignId) {
   return findCampaign(organizationId, campaignId);
 }
 
+function unscheduleCampaign(campaignId) {
+  if (scheduledTimers.has(campaignId)) clearTimeout(scheduledTimers.get(campaignId));
+  scheduledTimers.delete(campaignId);
+}
+
 function scheduleCampaign(organizationId, campaignId, scheduledAt) {
   if (scheduledTimers.has(campaignId)) clearTimeout(scheduledTimers.get(campaignId));
   const delayMs = Math.max(0, new Date(scheduledAt).getTime() - Date.now());
@@ -771,6 +779,7 @@ module.exports = {
   cancelCampaign,
   closeAccount: callProvider.closeAccount,
   scheduleCampaign,
+  unscheduleCampaign,
   resumeScheduledCampaigns,
   resumeRunningCampaigns,
   shutdown

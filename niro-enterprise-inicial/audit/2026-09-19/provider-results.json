@@ -1,0 +1,16 @@
+[
+  {
+    "name": "remote terminal state resolves",
+    "passed": true
+  },
+  {
+    "name": "local hangup resolves",
+    "passed": false,
+    "error": "Expected \"actual\" to be strictly unequal to:\n\n'UNRESOLVED'"
+  },
+  {
+    "name": "duration timeout resolves",
+    "passed": false,
+    "error": "Expected \"actual\" to be strictly unequal to:\n\n'UNRESOLVED'"
+  }
+]

@@ -1,10 +1,11 @@
 import { FormEvent, useEffect, useMemo, useState } from 'react';
-import { apiGet, apiPost, ApiError } from '../lib/api';
+import { apiGet, apiPatch, apiPost, ApiError } from '../lib/api';
 import { useAuth } from '../context/AuthContext';
 import { Modal } from './Modal';
 import { Ui } from './Ui';
+import { CRM_STAGES as CRM_STAGE_DEFS, type CrmStage } from '../lib/crmStage';
 import { ContactAvatar } from '../routes/Contacts';
-import type { CallAccount, CallAudio } from '../types';
+import type { CallAccount, CallAudio, CallCampaign } from '../types';
 
 interface AudContact {
   id: string; name: string | null; phone: string | null; email: string | null; avatarUrl: string | null;
@@ -18,13 +19,24 @@ const STEPS = [
   { label: 'Revisión', short: 'Revisar', description: 'Verificá todo antes de guardar la campaña.' }
 ];
 
-const TYPES = [
+export const CALL_CAMPAIGN_TYPES = [
   { key: 'COMMERCIAL', label: 'Comercial' }, { key: 'NOTIFICATION', label: 'Aviso / notificación' }, { key: 'FOLLOW_UP', label: 'Seguimiento' },
   { key: 'SURVEY', label: 'Encuesta' }, { key: 'INSTITUTIONAL', label: 'Institucional' }
 ];
 
 type SurveyAction = 'NONE' | 'INTERESTED' | 'FOLLOW_UP' | 'OPT_OUT';
-interface SurveyOption { key: string; label: string; action: SurveyAction; replyMessage: string }
+interface SurveyOption { key: string; label: string; action: SurveyAction; replyMessage: string; crmStage?: CrmStage | '' }
+
+// Datos de una campaña existente para precargar el asistente (editar, relanzar o rellamar a un contacto).
+export interface WizardSource {
+  campaign: CallCampaign;
+  survey: { question: string; options: SurveyOption[] } | null;
+  recipients: { contactId: string; status: string }[];
+  onlyContactIds?: string[];
+}
+export type WizardMode = 'create' | 'edit' | 'relaunch';
+// Resultados que cuentan como "atendió": el resto (no contestó, falló, canceló, pendiente) es candidato a rellamada.
+const ANSWERED = new Set(['COMPLETED']);
 const ACTIONS: { key: SurveyAction; label: string }[] = [
   { key: 'NONE', label: 'Solo responder' },
   { key: 'INTERESTED', label: 'Marcar como interesado (CRM)' },
@@ -41,42 +53,60 @@ const CRM_STAGES = ['Abiertas', 'Pendientes', 'Clientes', 'Interesados', 'Cerrad
 const isAllowed = (c: AudContact) => c.callConsentStatus === 'GRANTED' && !c.callOptedOutAt;
 const formatPhone = (p: string | null) => (p ? (/^\d{8,}$/.test(p) ? `+${p}` : p) : 'Sin teléfono');
 
-export function CallCampaignWizard({ accounts, audios, onClose, onCreated }: { accounts: CallAccount[]; audios: CallAudio[]; onClose: () => void; onCreated: () => void }) {
+export function CallCampaignWizard({ accounts, audios, onClose, onCreated, mode = 'create', source }: { accounts: CallAccount[]; audios: CallAudio[]; onClose: () => void; onCreated: () => void; mode?: WizardMode; source?: WizardSource }) {
+  const src = source?.campaign;
+  const redial = Boolean(source?.onlyContactIds);
+  const initialScope = redial ? 'custom' : 'all';
   const { user } = useAuth();
   const canAttest = user ? ['OWNER', 'ADMIN', 'SUPERVISOR'].includes(user.role) : false;
   const [step, setStep] = useState(1);
-  const [name, setName] = useState('');
-  const [description, setDescription] = useState('');
-  const [campaignType, setCampaignType] = useState('COMMERCIAL');
-  const [accountId, setAccountId] = useState(accounts.find((a) => a.status === 'CONNECTED')?.id || accounts[0]?.id || '');
-  const [audioId, setAudioId] = useState(audios[0]?.id || '');
+  const [name, setName] = useState(src ? (mode === 'relaunch' ? `${src.name} (${redial ? 'rellamada' : 'relanzada'})` : src.name) : '');
+  const [description, setDescription] = useState(src?.description || '');
+  const [campaignType, setCampaignType] = useState(src?.campaignType || 'COMMERCIAL');
+  const [accountId, setAccountId] = useState((src && accounts.find((a) => a.id === src.account?.id)?.id) || accounts.find((a) => a.status === 'CONNECTED')?.id || accounts[0]?.id || '');
+  const [audioId, setAudioId] = useState((src && audios.find((a) => a.id === src.audio?.id)?.id) || audios[0]?.id || '');
   const [contacts, setContacts] = useState<AudContact[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [onlyNamed, setOnlyNamed] = useState(false);
   const [onlyAllowed, setOnlyAllowed] = useState(false);
-  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [scope, setScope] = useState<'all' | 'unanswered' | 'custom'>(initialScope);
+  const [selectedIds, setSelectedIds] = useState<string[]>(() => {
+    if (!source) return [];
+    if (source.onlyContactIds) return source.onlyContactIds;
+    return source.recipients.map((r) => r.contactId);
+  });
+  const [startNow, setStartNow] = useState(false);
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [attest, setAttest] = useState(false);
   const [consentSource, setConsentSource] = useState('Clientes que aceptaron ser llamados');
   const [granting, setGranting] = useState(false);
   const [consentMsg, setConsentMsg] = useState<string | null>(null);
-  const [scheduled, setScheduled] = useState(false);
-  const [scheduledAt, setScheduledAt] = useState('');
-  const [pause, setPause] = useState('10');
-  const [maxAttempts, setMaxAttempts] = useState('1');
-  const [answerTimeout, setAnswerTimeout] = useState('30');
-  const [retryDelay, setRetryDelay] = useState('300');
-  const [windowFrom, setWindowFrom] = useState('');
-  const [windowTo, setWindowTo] = useState('');
-  const [surveyEnabled, setSurveyEnabled] = useState(false);
-  const [question, setQuestion] = useState('¿Desea recibir más información?');
-  const [options, setOptions] = useState<SurveyOption[]>(DEFAULT_OPTIONS);
+  const futureSchedule = mode === 'edit' && src?.scheduledAt && new Date(src.scheduledAt).getTime() > Date.now() ? src.scheduledAt : null;
+  const toLocalInput = (iso: string) => { const d = new Date(iso); return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16); };
+  const [scheduled, setScheduled] = useState(Boolean(futureSchedule));
+  const [scheduledAt, setScheduledAt] = useState(futureSchedule ? toLocalInput(futureSchedule) : '');
+  const [pause, setPause] = useState(String(src?.pauseBetweenSeconds ?? 10));
+  const [maxAttempts, setMaxAttempts] = useState(String(src?.maxAttempts ?? 1));
+  const [answerTimeout, setAnswerTimeout] = useState(String(src?.answerTimeoutSeconds ?? 30));
+  const [retryDelay, setRetryDelay] = useState(String(src?.retryDelaySeconds ?? 300));
+  const [windowFrom, setWindowFrom] = useState(src?.allowedFrom || '');
+  const [windowTo, setWindowTo] = useState(src?.allowedTo || '');
+  const [surveyEnabled, setSurveyEnabled] = useState(Boolean(src?.surveyEnabled && source?.survey));
+  const [question, setQuestion] = useState(source?.survey?.question || src?.surveyQuestion || '¿Desea recibir más información?');
+  const [options, setOptions] = useState<SurveyOption[]>(source?.survey?.options?.length ? source.survey.options : DEFAULT_OPTIONS);
   const [suggesting, setSuggesting] = useState(false);
   const [suggestNote, setSuggestNote] = useState<string | null>(null);
   const [confirmed, setConfirmed] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Relanzar: elegir a quién se vuelve a llamar (todos, o solo quienes no atendieron la vez anterior).
+  function changeScope(next: 'all' | 'unanswered') {
+    setScope(next);
+    if (!source) return;
+    setSelectedIds(source.recipients.filter((r) => next === 'all' || !ANSWERED.has(r.status)).map((r) => r.contactId));
+  }
 
   async function loadContacts() {
     setLoading(true);
@@ -169,22 +199,26 @@ export function CallCampaignWizard({ accounts, audios, onClose, onCreated }: { a
     for (const s of [1, 2, 3, 4]) if (!validate(s)) { setStep(s); return; }
     setBusy(true); setError(null);
     try {
-      await apiPost('/api/org/wa-calls/campaigns', {
+      const payload = {
         name: name.trim(), description: description.trim() || null, campaignType, accountId, audioId,
         contactIds: callable.map((c) => c.id),
         scheduledAt: scheduled ? new Date(scheduledAt).toISOString() : null,
         maxAttempts: Number(maxAttempts), pauseBetweenSeconds: Number(pause), answerTimeoutSeconds: Number(answerTimeout), retryDelaySeconds: Number(retryDelay),
         allowedFrom: windowFrom || null, allowedTo: windowTo || null,
         surveyEnabled, surveyQuestion: surveyEnabled ? question.trim() : null, surveyResponseMethod: 'WHATSAPP',
-        surveyOptions: surveyEnabled ? options.filter((o) => o.key.trim() && o.label.trim()).map((o) => ({ key: o.key.trim(), label: o.label.trim(), action: o.action, replyMessage: o.replyMessage.trim() || null })) : []
-      });
+        surveyOptions: surveyEnabled ? options.filter((o) => o.key.trim() && o.label.trim()).map((o) => ({ key: o.key.trim(), label: o.label.trim(), action: o.action, crmStage: o.crmStage || null, replyMessage: o.replyMessage.trim() || null })) : []
+      };
+      const saved = mode === 'edit' && src
+        ? await apiPatch<{ campaign: CallCampaign }>(`/api/org/wa-calls/campaigns/${src.id}`, payload)
+        : await apiPost<{ campaign: CallCampaign }>('/api/org/wa-calls/campaigns', payload);
+      if (startNow && !scheduled) await apiPost(`/api/org/wa-calls/campaigns/${saved.campaign.id}/start`, {});
       onCreated();
-    } catch (err) { setError(err instanceof ApiError ? err.message : 'No se pudo crear la campaña'); setBusy(false); }
+    } catch (err) { setError(err instanceof ApiError ? err.message : mode === 'edit' ? 'No se pudo guardar la campaña' : 'No se pudo crear la campaña'); setBusy(false); }
   }
 
   const cur = STEPS[step - 1];
   return (
-    <Modal title="Nueva campaña de llamadas" onClose={onClose} className="campaign-modal campaign-create-modal">
+    <Modal title={mode === 'edit' ? 'Editar campaña de llamadas' : mode === 'relaunch' ? (redial ? 'Rellamar contacto' : 'Relanzar campaña de llamadas') : 'Nueva campaña de llamadas'} onClose={onClose} className="campaign-modal campaign-create-modal">
       <form onSubmit={submit} className="campaign-wizard">
         <div className="campaign-wizard-intro"><span className="campaign-wizard-intro-icon"><Ui name="phone" size={20} /></span><div><strong>Llamadas con audio, controladas</strong><p>Solo se llama a contactos con consentimiento registrado. Cada llamada reproduce el audio elegido y queda en el historial.</p></div></div>
         <nav className="campaign-wizard-progress" style={{ gridTemplateColumns: `repeat(${STEPS.length}, minmax(0, 1fr))` }} aria-label="Pasos">
@@ -196,7 +230,7 @@ export function CallCampaignWizard({ accounts, audios, onClose, onCreated }: { a
           <section className="campaign-wizard-panel">
             <div className="campaign-form-grid">
               <div className="field"><label htmlFor="cc-name">Nombre de la campaña</label><input id="cc-name" className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="Seguimiento comercial septiembre" autoFocus /></div>
-              <div className="field"><label htmlFor="cc-type">Tipo</label><select id="cc-type" className="input" value={campaignType} onChange={(e) => setCampaignType(e.target.value)}>{TYPES.map((t) => <option key={t.key} value={t.key}>{t.label}</option>)}</select></div>
+              <div className="field"><label htmlFor="cc-type">Tipo</label><select id="cc-type" className="input" value={campaignType} onChange={(e) => setCampaignType(e.target.value)}>{CALL_CAMPAIGN_TYPES.map((t) => <option key={t.key} value={t.key}>{t.label}</option>)}</select></div>
             </div>
             <div className="field" style={{ marginTop: 14 }}><label htmlFor="cc-desc">Descripción interna (opcional)</label><input id="cc-desc" className="input" value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Objetivo de la llamada" /></div>
             <div className="field" style={{ marginTop: 14 }}><label htmlFor="cc-acc">Línea de WhatsApp que llama</label>
@@ -219,6 +253,16 @@ export function CallCampaignWizard({ accounts, audios, onClose, onCreated }: { a
 
         {step === 2 && (
           <section className="campaign-wizard-panel">
+            {mode === 'relaunch' && source && !redial && (
+              <div className="field" style={{ marginBottom: 12 }}>
+                <label htmlFor="cc-scope">A quién volver a llamar</label>
+                <select id="cc-scope" className="input" value={scope === 'unanswered' ? 'unanswered' : 'all'} onChange={(e) => changeScope(e.target.value as 'all' | 'unanswered')}>
+                  <option value="all">Todos los de la campaña original ({source.recipients.length})</option>
+                  <option value="unanswered">Solo los que no atendieron ({source.recipients.filter((r) => !ANSWERED.has(r.status)).length})</option>
+                </select>
+                <small className="campaign-field-hint">Podés seguir ajustando la lista abajo antes de crear la nueva campaña.</small>
+              </div>
+            )}
             <div className="cc-summary">
               <span><b>{audience.length}</b> elegidos</span><span className="ok"><b>{callable.length}</b> autorizados</span>
               {pendingConsent.length > 0 && <span className="warn"><b>{pendingConsent.length}</b> sin consentimiento</span>}
@@ -293,6 +337,11 @@ export function CallCampaignWizard({ accounts, audios, onClose, onCreated }: { a
                     <div className="cc-option-reply">
                       <label><span>Si elige esta opción</span>
                         <select className="input" value={o.action} onChange={(e) => setOptions((cur) => cur.map((x, j) => (j === i ? { ...x, action: e.target.value as SurveyAction } : x)))}>{ACTIONS.map((a) => <option key={a.key} value={a.key}>{a.label}</option>)}</select></label>
+                      <label><span>Enviar al embudo de ventas (CRM)</span>
+                        <select className="input" value={o.crmStage || ''} onChange={(e) => setOptions((cur) => cur.map((x, j) => (j === i ? { ...x, crmStage: e.target.value as CrmStage | '' } : x)))}>
+                          <option value="">{o.action === 'INTERESTED' ? 'Interesados (por defecto)' : 'No mover'}</option>
+                          {CRM_STAGE_DEFS.map((s) => <option key={s.key} value={s.key}>{s.label}</option>)}
+                        </select></label>
                       <label><span>Respuesta automática por WhatsApp</span>
                         <textarea className="input" rows={2} maxLength={1000} value={o.replyMessage} onChange={(e) => setOptions((cur) => cur.map((x, j) => (j === i ? { ...x, replyMessage: e.target.value } : x)))} placeholder="Si lo dejás vacío se usa un mensaje de agradecimiento por defecto." /></label>
                     </div>
@@ -306,7 +355,7 @@ export function CallCampaignWizard({ accounts, audios, onClose, onCreated }: { a
           <section className="campaign-wizard-panel campaign-review-panel">
             <div className="campaign-review-status"><span><Ui name={scheduled ? 'calendar' : 'clock'} size={16} /></span><div><strong>{scheduled ? 'Quedará programada' : 'Quedará lista para iniciar'}</strong><small>{scheduled ? `Inicio: ${new Date(scheduledAt).toLocaleString('es-PY', { dateStyle: 'medium', timeStyle: 'short' })}` : 'La iniciás desde su tarjeta con “Iniciar”.'}</small></div></div>
             <div className="campaign-review-grid">
-              <div><span>CAMPAÑA</span><strong>{name}</strong><small>{TYPES.find((t) => t.key === campaignType)?.label}</small></div>
+              <div><span>CAMPAÑA</span><strong>{name}</strong><small>{CALL_CAMPAIGN_TYPES.find((t) => t.key === campaignType)?.label}</small></div>
               <div><span>LÍNEA</span><strong>{account?.name || '—'}</strong><small>{account?.status === 'CONNECTED' ? 'Conectada' : 'No conectada'}</small></div>
               <div><span>AUDIO</span><strong>{audio?.name || '—'}</strong></div>
               <div><span>DESTINATARIOS</span><strong>{callable.length} contactos</strong><small>{audience.length - callable.length > 0 ? `${audience.length - callable.length} se omiten (sin consentimiento o excluidos)` : 'Todos autorizados'}</small></div>
@@ -315,7 +364,8 @@ export function CallCampaignWizard({ accounts, audios, onClose, onCreated }: { a
             </div>
             {audio && <div className="cc-review-audio"><span>Así suena el audio</span><audio controls preload="none" src={audio.fileUrl} /></div>}
             <div className="cc-review-list">{callable.slice(0, 8).map((c) => <span key={c.id}>{c.name?.trim() || formatPhone(c.phone)}</span>)}{callable.length > 8 && <span>+{callable.length - 8} más</span>}</div>
-            <label className="campaign-review-confirm"><input type="checkbox" checked={confirmed} onChange={(e) => setConfirmed(e.target.checked)} /> <span>Revisé el audio, los destinatarios y las reglas. Quiero crear esta campaña.</span></label>
+            <label className="campaign-review-confirm"><input type="checkbox" checked={confirmed} onChange={(e) => setConfirmed(e.target.checked)} /> <span>Revisé el audio, los destinatarios y las reglas. {mode === 'edit' ? 'Quiero guardar estos cambios.' : 'Quiero crear esta campaña.'}</span></label>
+            {!scheduled && <label className="campaign-review-confirm"><input type="checkbox" checked={startNow} onChange={(e) => setStartNow(e.target.checked)} /> <span>Iniciar las llamadas apenas se guarde.</span></label>}
           </section>
         )}
 
@@ -323,7 +373,7 @@ export function CallCampaignWizard({ accounts, audios, onClose, onCreated }: { a
         <div className="campaign-wizard-footer"><button type="button" className="btn secondary" onClick={onClose}>Cancelar</button>
           <div className="campaign-wizard-actions">
             {step > 1 && <button type="button" className="btn secondary" onClick={back} disabled={busy}><Ui name="arrow-left" size={14} /> Atrás</button>}
-            {step < STEPS.length ? <button type="button" className="btn" onClick={next} disabled={busy || (step === 2 && loading)}>Siguiente <Ui name="arrow-right" size={14} /></button> : <button type="submit" className="btn" disabled={busy}>{busy ? 'Creando…' : scheduled ? 'Crear campaña programada' : 'Crear campaña'}</button>}
+            {step < STEPS.length ? <button type="button" className="btn" onClick={next} disabled={busy || (step === 2 && loading)}>Siguiente <Ui name="arrow-right" size={14} /></button> : <button type="submit" className="btn" disabled={busy}>{busy ? 'Guardando…' : mode === 'edit' ? (startNow && !scheduled ? 'Guardar e iniciar' : 'Guardar cambios') : startNow && !scheduled ? 'Crear e iniciar' : scheduled ? 'Crear campaña programada' : mode === 'relaunch' ? 'Crear nueva campaña' : 'Crear campaña'}</button>}
           </div>
         </div>
       </form>

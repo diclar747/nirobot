@@ -1,5 +1,8 @@
 const CSRF_COOKIE = 'niro_csrf';
-let refreshPromise: Promise<boolean> | null = null;
+// 'ok' renovó; 'denied' la sesión ya no existe (hay que volver a entrar); 'unavailable' no se pudo consultar
+// (sin red, servidor reiniciando): en ese caso NO hay que cerrar la sesión del usuario.
+export type RefreshResult = 'ok' | 'denied' | 'unavailable';
+let refreshPromise: Promise<RefreshResult> | null = null;
 
 function readCookie(name: string): string | null {
   const match = document.cookie.match(new RegExp(`(?:^|; )${name}=([^;]*)`));
@@ -9,34 +12,41 @@ function readCookie(name: string): string | null {
 export class ApiError extends Error {
   status: number;
   details?: unknown;
+  code?: string;
 
-  constructor(status: number, message: string, details?: unknown) {
+  constructor(status: number, message: string, details?: unknown, code?: string) {
     super(message);
     this.status = status;
     this.details = details;
+    this.code = code;
   }
 }
 
 const MUTATING_METHODS = new Set(['POST', 'PATCH', 'PUT', 'DELETE']);
 
-export async function refreshAccessSession(): Promise<boolean> {
+export async function refreshSession(): Promise<RefreshResult> {
   if (!refreshPromise) {
     const attempt = () => fetch('/api/auth/refresh', { method: 'POST', credentials: 'include' });
+    const outcome = (response: Response): RefreshResult => (response.ok ? 'ok' : response.status === 401 || response.status === 403 ? 'denied' : 'unavailable');
     refreshPromise = attempt()
       .then(async (response) => {
         // 409: another tab is renewing the shared cookie right now. Retry once with the new cookie.
         if (response.status === 409) {
           await new Promise((resolve) => setTimeout(resolve, 600));
-          return (await attempt()).ok;
+          return outcome(await attempt());
         }
-        return response.ok;
+        return outcome(response);
       })
-      .catch(() => false)
+      .catch((): RefreshResult => 'unavailable')
       .finally(() => {
         refreshPromise = null;
       });
   }
   return refreshPromise;
+}
+
+export async function refreshAccessSession(): Promise<boolean> {
+  return (await refreshSession()) === 'ok';
 }
 
 export async function api<T = unknown>(path: string, options: RequestInit = {}, allowRefresh = true): Promise<T> {
@@ -72,7 +82,7 @@ export async function api<T = unknown>(path: string, options: RequestInit = {}, 
 
   if (!res.ok) {
     const message = (body && (body.error as string)) || `Error ${res.status}`;
-    throw new ApiError(res.status, message, body?.details);
+    throw new ApiError(res.status, message, body?.details ?? body?.data, typeof body?.code === 'string' ? body.code : undefined);
   }
 
   return body as T;

@@ -267,7 +267,7 @@ router.get('/dashboard', async (req, res, next) => {
 
 router.get('/campaigns', async (req, res, next) => {
   try {
-    const list = await prisma.callCampaign.findMany({ where: { organizationId: req.auth.organizationId, ...(req.query.status ? { status: String(req.query.status) } : {}) }, include: CAMPAIGN_INCLUDE, orderBy: { createdAt: 'desc' }, take: 100 });
+    const list = await prisma.callCampaign.findMany({ where: { organizationId: req.auth.organizationId, ...(req.query.status ? { status: String(req.query.status) } : {}) }, include: CAMPAIGN_INCLUDE, orderBy: { createdAt: 'desc' }, take: 300 });
     res.json({ campaigns: await Promise.all(list.map(async (campaign) => calls.sanitizeCampaign(campaign, await calls.getCounts(campaign.id)))) });
   } catch (err) { next(err); }
 });
@@ -346,56 +346,141 @@ router.post('/survey/suggest-replies', requireCsrf, async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+const CAMPAIGN_MANAGERS = requireRole('OWNER', 'ADMIN', 'SUPERVISOR');
+
+// Contactos que sí se pueden llamar (número válido, con consentimiento, sin exclusión, sin duplicados) y los rechazados con motivo.
+async function resolveAudience(organizationId, data) {
+  const candidates = await prisma.contact.findMany({
+    where: { organizationId, OR: [...(data.contactIds.length ? [{ id: { in: data.contactIds } }] : []), ...(data.tagFilter.length ? [{ tags: { hasSome: data.tagFilter } }] : [])] },
+    orderBy: { createdAt: 'asc' }
+  });
+  const rejected = [];
+  const accepted = [];
+  const seenPhones = new Set();
+  for (const contact of candidates) {
+    const phone = String(contact.phone || '').replace(/[^0-9]/g, '');
+    let reason = null;
+    if (!/^\d{7,15}$/.test(phone)) reason = 'Número inválido o ausente';
+    else if (contact.callOptedOutAt) reason = 'Contacto excluido de llamadas';
+    else if (contact.callConsentStatus !== 'GRANTED') reason = 'Sin consentimiento registrado';
+    else if (seenPhones.has(phone)) reason = 'Número duplicado';
+    if (reason) rejected.push({ contactId: contact.id, name: contact.name, phone: contact.phone, reason });
+    else { seenPhones.add(phone); accepted.push({ contact, phone }); }
+  }
+  if (accepted.length === 0) throw new HttpError(400, `No hay contactos autorizados para llamar. Rechazados: ${rejected.length}`);
+  return { accepted, rejected };
+}
+
+// Valida cuenta, audio y fecha, y arma los campos comunes de crear/editar una campaña.
+async function campaignPayload(organizationId, data) {
+  const [account, audio] = await Promise.all([
+    prisma.callAccount.findFirst({ where: { id: data.accountId, organizationId } }),
+    prisma.callAudio.findFirst({ where: { id: data.audioId, organizationId } })
+  ]);
+  if (!account) throw new HttpError(404, 'Cuenta de llamadas no encontrada');
+  if (!audio) throw new HttpError(404, 'Audio de llamadas no encontrado');
+  const { accepted, rejected } = await resolveAudience(organizationId, data);
+  const scheduledAt = data.scheduledAt ? new Date(data.scheduledAt) : null;
+  if (scheduledAt && scheduledAt.getTime() <= Date.now()) throw new HttpError(400, 'La fecha de programación debe estar en el futuro');
+  const surveyExpiresAt = data.surveyExpiresAt ? new Date(data.surveyExpiresAt) : null;
+  const fields = {
+    name: data.name, description: data.description || null, campaignType: data.campaignType,
+    accountId: account.id, audioId: audio.id, status: scheduledAt ? 'SCHEDULED' : 'DRAFT', scheduledAt,
+    timezone: data.timezone, maxConcurrent: data.maxConcurrent, pauseBetweenSeconds: data.pauseBetweenSeconds,
+    maxAttempts: data.maxAttempts, answerTimeoutSeconds: data.answerTimeoutSeconds, retryDelaySeconds: data.retryDelaySeconds,
+    allowedFrom: data.allowedFrom || null, allowedTo: data.allowedTo || null, surveyEnabled: data.surveyEnabled,
+    surveyQuestion: data.surveyQuestion || null, surveyResponseMethod: data.surveyResponseMethod, surveyExpiresAt
+  };
+  const recipients = { create: accepted.map(({ contact, phone }) => ({ contactId: contact.id, phoneNumber: phone })) };
+  const survey = data.surveyEnabled
+    ? { create: { question: data.surveyQuestion, responseMethod: data.surveyResponseMethod, expiresAt: surveyExpiresAt, options: { create: data.surveyOptions.map((option) => ({ optionKey: option.key, optionLabel: option.label, replyMessage: option.replyMessage || null, action: option.action || 'NONE', crmStage: option.crmStage || null })) } } }
+    : null;
+  return { fields, recipients, survey, scheduledAt, accepted, rejected };
+}
+
 router.post('/campaigns', requireCsrf, async (req, res, next) => {
   try {
     const data = createCallCampaignSchema.parse(req.body);
     const organizationId = req.auth.organizationId;
-    const [account, audio] = await Promise.all([
-      prisma.callAccount.findFirst({ where: { id: data.accountId, organizationId } }),
-      prisma.callAudio.findFirst({ where: { id: data.audioId, organizationId } })
-    ]);
-    if (!account) throw new HttpError(404, 'Cuenta de llamadas no encontrada');
-    if (!audio) throw new HttpError(404, 'Audio de llamadas no encontrado');
-    const candidates = await prisma.contact.findMany({
-      where: { organizationId, OR: [...(data.contactIds.length ? [{ id: { in: data.contactIds } }] : []), ...(data.tagFilter.length ? [{ tags: { hasSome: data.tagFilter } }] : [])] },
-      orderBy: { createdAt: 'asc' }
-    });
-    const rejected = [];
-    const accepted = [];
-    const seenPhones = new Set();
-    for (const contact of candidates) {
-      const phone = String(contact.phone || '').replace(/[^0-9]/g, '');
-      let reason = null;
-      if (!/^\d{7,15}$/.test(phone)) reason = 'Número inválido o ausente';
-      else if (contact.callOptedOutAt) reason = 'Contacto excluido de llamadas';
-      else if (contact.callConsentStatus !== 'GRANTED') reason = 'Sin consentimiento registrado';
-      else if (seenPhones.has(phone)) reason = 'Número duplicado';
-      if (reason) rejected.push({ contactId: contact.id, name: contact.name, phone: contact.phone, reason });
-      else { seenPhones.add(phone); accepted.push({ contact, phone }); }
-    }
-    if (accepted.length === 0) throw new HttpError(400, `No hay contactos autorizados para llamar. Rechazados: ${rejected.length}`);
-    const scheduledAt = data.scheduledAt ? new Date(data.scheduledAt) : null;
-    if (scheduledAt && scheduledAt.getTime() <= Date.now()) throw new HttpError(400, 'La fecha de programación debe estar en el futuro');
-    const campaign = await prisma.$transaction(async (tx) => {
-      const created = await tx.callCampaign.create({
-        data: {
-          organizationId, name: data.name, description: data.description || null, campaignType: data.campaignType,
-          accountId: account.id, audioId: audio.id, status: scheduledAt ? 'SCHEDULED' : 'DRAFT', scheduledAt,
-          timezone: data.timezone, maxConcurrent: data.maxConcurrent, pauseBetweenSeconds: data.pauseBetweenSeconds,
-          maxAttempts: data.maxAttempts, answerTimeoutSeconds: data.answerTimeoutSeconds, retryDelaySeconds: data.retryDelaySeconds,
-          allowedFrom: data.allowedFrom || null, allowedTo: data.allowedTo || null, surveyEnabled: data.surveyEnabled,
-          surveyQuestion: data.surveyQuestion || null, surveyResponseMethod: data.surveyResponseMethod,
-          surveyExpiresAt: data.surveyExpiresAt ? new Date(data.surveyExpiresAt) : null, createdByUserId: req.auth.userId,
-          recipients: { create: accepted.map(({ contact, phone }) => ({ contactId: contact.id, phoneNumber: phone })) },
-          ...(data.surveyEnabled ? { survey: { create: { question: data.surveyQuestion, responseMethod: data.surveyResponseMethod, expiresAt: data.surveyExpiresAt ? new Date(data.surveyExpiresAt) : null, options: { create: data.surveyOptions.map((option) => ({ optionKey: option.key, optionLabel: option.label, replyMessage: option.replyMessage || null, action: option.action || 'NONE' })) } } } } : {})
-        },
-        include: CAMPAIGN_INCLUDE
-      });
-      return created;
+    const { fields, recipients, survey, scheduledAt, accepted, rejected } = await campaignPayload(organizationId, data);
+    const campaign = await prisma.callCampaign.create({
+      data: { organizationId, ...fields, createdByUserId: req.auth.userId, recipients, ...(survey ? { survey } : {}) },
+      include: CAMPAIGN_INCLUDE
     });
     if (scheduledAt) calls.scheduleCampaign(organizationId, campaign.id, scheduledAt);
     await writeCallAudit({ organizationId, userId: req.auth.userId, action: 'call.campaign.created', entityType: 'CallCampaign', entityId: campaign.id, details: { accepted: accepted.length, rejected: rejected.length } });
     res.status(201).json({ campaign: calls.sanitizeCampaign(campaign, await calls.getCounts(campaign.id)), accepted: accepted.length, rejected });
+  } catch (err) { next(err); }
+});
+
+// Editar: solo campañas que todavía no salieron (borrador o programada). Reemplaza datos, destinatarios y encuesta.
+router.patch('/campaigns/:id', CAMPAIGN_MANAGERS, requireCsrf, async (req, res, next) => {
+  try {
+    const data = createCallCampaignSchema.parse(req.body);
+    const organizationId = req.auth.organizationId;
+    const existing = await calls.findCampaign(organizationId, req.params.id);
+    if (!existing) throw new HttpError(404, 'Campaña de llamadas no encontrada');
+    if (!['DRAFT', 'SCHEDULED'].includes(existing.status)) throw new HttpError(409, 'Solo se pueden editar campañas en borrador o programadas. Para repetir una que ya corrió, usá "Relanzar".');
+    const { fields, recipients, survey, scheduledAt, accepted, rejected } = await campaignPayload(organizationId, data);
+    await prisma.$transaction(async (tx) => {
+      await tx.callSurvey.deleteMany({ where: { campaignId: existing.id } });
+      await tx.callCampaignRecipient.deleteMany({ where: { campaignId: existing.id } });
+      await tx.callCampaign.update({ where: { id: existing.id }, data: { ...fields, recipients, ...(survey ? { survey } : {}) } });
+    });
+    if (scheduledAt) calls.scheduleCampaign(organizationId, existing.id, scheduledAt); else calls.unscheduleCampaign(existing.id);
+    await writeCallAudit({ organizationId, campaignId: existing.id, userId: req.auth.userId, action: 'call.campaign.updated', entityType: 'CallCampaign', entityId: existing.id, details: { accepted: accepted.length, rejected: rejected.length } });
+    const updated = await calls.findCampaign(organizationId, existing.id);
+    res.json({ campaign: calls.sanitizeCampaign(updated, await calls.getCounts(updated.id)), accepted: accepted.length, rejected });
+  } catch (err) { next(err); }
+});
+
+// Datos para precargar el asistente al editar o relanzar: encuesta, opciones y destinatarios con su resultado.
+router.get('/campaigns/:id/config', async (req, res, next) => {
+  try {
+    const campaign = await calls.findCampaign(req.auth.organizationId, req.params.id);
+    if (!campaign) throw new HttpError(404, 'Campaña de llamadas no encontrada');
+    const recipients = await prisma.callCampaignRecipient.findMany({ where: { campaignId: campaign.id }, select: { contactId: true, status: true }, orderBy: { createdAt: 'asc' } });
+    res.json({
+      campaign: calls.sanitizeCampaign(campaign, await calls.getCounts(campaign.id)),
+      survey: campaign.survey ? {
+        question: campaign.survey.question,
+        options: campaign.survey.options.map((o) => ({ key: o.optionKey, label: o.optionLabel, action: o.action === 'AUTO' ? 'NONE' : o.action, replyMessage: o.replyMessage || '', crmStage: o.crmStage || '' }))
+          .sort((a, b) => a.key.localeCompare(b.key, 'es', { numeric: true }))
+      } : null,
+      recipients
+    });
+  } catch (err) { next(err); }
+});
+
+async function deleteCampaigns(organizationId, userId, ids) {
+  const found = await prisma.callCampaign.findMany({ where: { organizationId, id: { in: ids } }, select: { id: true, name: true, status: true } });
+  const deleted = [];
+  const skipped = [];
+  for (const campaign of found) {
+    if (campaign.status === 'RUNNING') { skipped.push({ id: campaign.id, name: campaign.name, reason: 'Está en curso: cancelala o pausala antes de eliminarla' }); continue; }
+    calls.unscheduleCampaign(campaign.id);
+    await prisma.callCampaign.delete({ where: { id: campaign.id } });
+    deleted.push(campaign.id);
+    await writeCallAudit({ organizationId, userId, action: 'call.campaign.deleted', entityType: 'CallCampaign', entityId: campaign.id, details: { name: campaign.name, status: campaign.status } });
+  }
+  return { deleted, skipped };
+}
+
+router.delete('/campaigns/:id', CAMPAIGN_MANAGERS, requireCsrf, async (req, res, next) => {
+  try {
+    const result = await deleteCampaigns(req.auth.organizationId, req.auth.userId, [req.params.id]);
+    if (result.skipped.length) throw new HttpError(409, result.skipped[0].reason);
+    if (!result.deleted.length) throw new HttpError(404, 'Campaña de llamadas no encontrada');
+    res.json({ ok: true });
+  } catch (err) { next(err); }
+});
+
+// Limpieza en lote (bandeja / historial): elimina las campañas elegidas y su historial; las que están en curso se omiten.
+router.post('/campaigns/bulk-delete', CAMPAIGN_MANAGERS, requireCsrf, async (req, res, next) => {
+  try {
+    const ids = Array.isArray(req.body?.ids) ? [...new Set(req.body.ids.map(String))].slice(0, 500) : [];
+    if (!ids.length) throw new HttpError(400, 'Elegí al menos una campaña');
+    res.json(await deleteCampaigns(req.auth.organizationId, req.auth.userId, ids));
   } catch (err) { next(err); }
 });
 
@@ -447,6 +532,17 @@ router.post('/campaigns/:id/cancel', requireCsrf, async (req, res, next) => {
     const campaign = await calls.cancelCampaign(req.auth.organizationId, req.params.id);
     await writeCallAudit({ organizationId: req.auth.organizationId, campaignId: campaign.id, userId: req.auth.userId, action: 'call.campaign.cancelled', entityType: 'CallCampaign', entityId: campaign.id });
     res.json({ campaign: calls.sanitizeCampaign(campaign, await calls.getCounts(campaign.id)) });
+  } catch (err) { next(err); }
+});
+
+// Limpiar el historial de llamadas directas (las hechas desde el chat). Las que están sonando o en curso se conservan.
+router.post('/history/direct/bulk-delete', CAMPAIGN_MANAGERS, requireCsrf, async (req, res, next) => {
+  try {
+    const ids = Array.isArray(req.body?.ids) ? [...new Set(req.body.ids.map(String))].slice(0, 1000) : [];
+    if (!ids.length) throw new HttpError(400, 'Elegí al menos una llamada');
+    const result = await prisma.callDirectRecord.deleteMany({ where: { organizationId: req.auth.organizationId, id: { in: ids }, status: { notIn: ['STARTING', 'RINGING', 'CONNECTED', 'PLAYING'] } } });
+    await writeCallAudit({ organizationId: req.auth.organizationId, userId: req.auth.userId, action: 'call.direct.deleted', entityType: 'CallDirectRecord', details: { deleted: result.count, requested: ids.length } });
+    res.json({ deleted: result.count, skipped: ids.length - result.count });
   } catch (err) { next(err); }
 });
 

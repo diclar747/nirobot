@@ -41,7 +41,7 @@ function qrBrowserKey() {
 }
 
 export function Login() {
-  const { login, setUser } = useAuth();
+  const { login, setUser, user, loading: authLoading } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const [mode, setMode] = useState<LoginMode>('qr');
@@ -98,9 +98,15 @@ export function Login() {
     }
   }, []);
 
+  // Ya hay sesión (p. ej. se cerró el navegador y se volvió a abrir): entra directo, sin pedir QR.
   useEffect(() => {
+    if (!authLoading && user) navigate(destination(), { replace: true });
+  }, [authLoading, user, navigate]);
+
+  useEffect(() => {
+    if (authLoading || user) return;
     startQr();
-  }, [startQr]);
+  }, [startQr, authLoading, user]);
 
   useEffect(() => {
     if (!qr?.flowId || qr.status === 'connected') return;
@@ -151,6 +157,9 @@ export function Login() {
     : qr?.status === 'connected'
       ? showSetup ? 'WhatsApp conectado' : 'Verificando tu cuenta'
       : 'Preparando conexión segura';
+
+  // Mientras se comprueba la sesión (o se está entrando) no se muestra el QR: evita parpadeos y vinculaciones de más.
+  if (authLoading || user) return <div className="pwa-launch" role="status"><img src="/icons/niro-192.png" alt="Robot de NIRO" width="112" height="112" /><strong>NIRO Enterprise</strong><span>Abriendo tu espacio de trabajo…</span></div>;
 
   return (
     <div className="qr-login-shell">

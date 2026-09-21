@@ -1,5 +1,6 @@
+import { PresenceMenu } from './PresenceMenu';
 import { useEffect, useRef, useState } from 'react';
-import { NavLink, Outlet, useNavigate } from 'react-router-dom';
+import { NavLink, Outlet, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useTheme, type AppTheme } from '../context/ThemeContext';
 import { Logo } from './Logo';
@@ -21,6 +22,8 @@ type WhatsAppStatus = 'disconnected' | 'connecting' | 'qr' | 'connected';
 interface WhatsAppStatusPayload {
   status: WhatsAppStatus;
   avatarUrl?: string | null;
+  // La conexión falló varias veces pero las credenciales siguen guardadas: se puede reconectar sin escanear otro QR.
+  needsManualReconnect?: boolean;
 }
 
 function initials(name: string) {
@@ -32,10 +35,34 @@ function initials(name: string) {
     .join('');
 }
 
+function formatPhone(digits: string) {
+  if (digits.startsWith('595') && digits.length === 12) {
+    return `+595 ${digits.slice(3, 6)} ${digits.slice(6, 9)} ${digits.slice(9)}`;
+  }
+  return `+${digits}`;
+}
+
+// Usuarios creados por conexión de WhatsApp: el nombre trae el número pegado y el email es interno (@niro.local).
+function userIdentity(u: { name: string; email: string }) {
+  const generated = /^admin\.(\d{6,})\.[^@]*@niro\.local$/i.exec(u.email || '');
+  const name = u.name.replace(/\s+\d{6,}\s*$/, '').trim() || u.name;
+  return { name, contact: generated ? formatPhone(generated[1]) : u.email };
+}
+
 export function Layout() {
   const { user, logout } = useAuth();
+  const identity = user ? userIdentity(user) : { name: '', contact: '' };
   const { theme, setTheme } = useTheme();
   const navigate = useNavigate();
+  const location = useLocation();
+  const [mobileMenu, setMobileMenu] = useState(false);
+  useEffect(() => { setMobileMenu(false); }, [location.pathname]);
+  useEffect(() => {
+    if (!mobileMenu) return;
+    const close = (event: KeyboardEvent) => { if (event.key === 'Escape') setMobileMenu(false); };
+    window.addEventListener('keydown', close);
+    return () => window.removeEventListener('keydown', close);
+  }, [mobileMenu]);
   const [showWhatsAppModal, setShowWhatsAppModal] = useState(false);
   const [globalSearch, setGlobalSearch] = useState('');
   const [waStatus, setWaStatus] = useState<WhatsAppStatus>('disconnected');
@@ -80,7 +107,7 @@ export function Layout() {
       .then((res) => {
         setWaStatus(res.status);
         setWhatsappAvatarUrl(res.avatarUrl || null);
-        if (res.status === 'disconnected') forcePortalLogout();
+        if (res.status === 'disconnected' && !res.needsManualReconnect) forcePortalLogout();
       })
       .catch(() => {});
 
@@ -96,7 +123,7 @@ export function Layout() {
     const onStatus = (payload: WhatsAppStatusPayload & { lastError?: string | null }) => {
       setWaStatus(payload.status);
       setWhatsappAvatarUrl(payload.avatarUrl || null);
-      if (payload.status === 'disconnected') forcePortalLogout();
+      if (payload.status === 'disconnected' && !payload.needsManualReconnect) forcePortalLogout();
     };
 
     socket.on('whatsapp:status', onStatus);
@@ -179,9 +206,10 @@ export function Layout() {
 
   return (
     <NotificationsProvider>
-    <div ref={appShellRef} className={`modern-app-shell ${sidebarCollapsed ? 'sidebar-collapsed' : ''}`}>
+    <div ref={appShellRef} className={`modern-app-shell ${sidebarCollapsed ? 'sidebar-collapsed' : ''} ${mobileMenu ? 'mobile-menu-open' : ''}`} >
       {/* SIDEBAR */}
-      <aside className={`modern-sidebar ${sidebarCollapsed ? 'collapsed' : ''}`}>
+      {mobileMenu && <button type="button" className="mobile-menu-backdrop" aria-label="Cerrar menú" onClick={() => setMobileMenu(false)} />}
+      <aside id="app-navigation" className={`modern-sidebar ${sidebarCollapsed ? 'collapsed' : ''}`}>
         <button
           type="button"
           className="sidebar-collapse-toggle"
@@ -204,7 +232,7 @@ export function Layout() {
           </NavLink>
 
           {/* Navigation Items */}
-          <nav className="sidebar-nav-list" style={{ flex: 1, overflowY: 'auto' }}>
+          <nav onClick={(event) => { if ((event.target as HTMLElement).closest('a')) setMobileMenu(false); }} className="sidebar-nav-list" style={{ flex: 1, overflowY: 'auto' }}>
             <NavLink to="/dashboard" className={({ isActive }) => `sidebar-nav-item ${isActive ? 'active' : ''}`} end>
               <div className="sidebar-nav-item-content">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -239,6 +267,19 @@ export function Layout() {
                     <polygon points="12 2 15 9 22 9.5 17 14.5 18.5 22 12 18 5.5 22 7 14.5 2 9.5 9 9" />
                   </svg>
                   <span>Planes</span>
+                </div>
+              </NavLink>
+            )}
+
+            {isSuperadmin && (
+              <NavLink to="/sms-admin" className={({ isActive }) => `sidebar-nav-item ${isActive ? 'active' : ''}`}>
+                <div className="sidebar-nav-item-content">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <rect x="6" y="2" width="12" height="20" rx="2.5" />
+                    <line x1="11" y1="18" x2="13" y2="18" />
+                    <path d="M9.5 7.5h5M9.5 11h5" />
+                  </svg>
+                  <span>SMS</span>
                 </div>
               </NavLink>
             )}
@@ -363,6 +404,18 @@ export function Layout() {
               </NavLink>
             )}
 
+            {!isSuperadmin && can(user, 'management') &&(
+              <NavLink to="/gestion" className={({ isActive }) => `sidebar-nav-item ${isActive ? 'active' : ''}`}>
+                <div className="sidebar-nav-item-content">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M3 3v18h18" />
+                    <path d="m7 15 4-4 3 3 5-6" />
+                  </svg>
+                  <span>Gestión</span>
+                </div>
+              </NavLink>
+            )}
+
             {!isSuperadmin && can(user, 'reports') &&(
               <NavLink to="/reports" className={({ isActive }) => `sidebar-nav-item ${isActive ? 'active' : ''}`}>
                 <div className="sidebar-nav-item-content">
@@ -372,6 +425,19 @@ export function Layout() {
                     <line x1="6" y1="20" x2="6" y2="14" />
                   </svg>
                   <span>Reportes</span>
+                </div>
+              </NavLink>
+            )}
+
+            {!isSuperadmin && can(user, 'sms') && ['OWNER', 'ADMIN', 'SUPERVISOR'].includes(user.role) && (
+              <NavLink to="/sms" className={({ isActive }) => `sidebar-nav-item ${isActive ? 'active' : ''}`}>
+                <div className="sidebar-nav-item-content">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <rect x="6" y="2" width="12" height="20" rx="2.5" />
+                    <line x1="11" y1="18" x2="13" y2="18" />
+                    <path d="M9.5 7.5h5M9.5 11h5" />
+                  </svg>
+                  <span>SMS</span>
                 </div>
               </NavLink>
             )}
@@ -481,6 +547,8 @@ export function Layout() {
       <div className="modern-main-area">
         {/* TOPBAR */}
         <header className="modern-topbar">
+          <button type="button" className="mobile-menu-toggle" aria-label={mobileMenu ? 'Cerrar menú' : 'Abrir menú'} aria-expanded={mobileMenu} aria-controls="app-navigation" onClick={() => setMobileMenu((open) => !open)}><span aria-hidden="true" style={{ fontSize: 22 }}>☰</span></button>
+          <span className="mobile-brand">NIRO<span> Workspace</span></span>
           <div className="topbar-search-box">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <circle cx="11" cy="11" r="8" />
@@ -553,6 +621,8 @@ export function Layout() {
               )}
             </button>
 
+            <PresenceMenu />
+
             {/* User Profile Pill & Dropdown */}
             <div className="topbar-user-dropdown-container">
               <button
@@ -564,7 +634,7 @@ export function Layout() {
                   {whatsappAvatarUrl ? <img src={whatsappAvatarUrl} alt={`Perfil de WhatsApp de ${user.name}`} /> : initials(user.name)}
                 </div>
                 <div className="topbar-user-info">
-                  <div className="topbar-user-name">{user.name}</div>
+                  <div className="topbar-user-name">{identity.name}</div>
                   <div className="topbar-user-subtitle">
                     {user.role} {user.organization ? `· ${user.organization.name}` : ''}
                   </div>
@@ -577,8 +647,8 @@ export function Layout() {
               {showUserMenu && (
                 <div className="topbar-dropdown-menu">
                   <div className="dropdown-header">
-                    <div style={{ fontWeight: 600, color: 'var(--text-main)' }}>{user.name}</div>
-                    <div style={{ fontSize: 11, color: 'var(--text-dim)' }}>{user.email}</div>
+                    <div style={{ fontWeight: 600, color: 'var(--text-main)' }}>{identity.name}</div>
+                    <div style={{ fontSize: 11, color: 'var(--text-dim)' }}>{identity.contact}</div>
                   </div>
                   <div className="dropdown-divider" />
                   <button

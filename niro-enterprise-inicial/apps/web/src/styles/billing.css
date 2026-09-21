@@ -71,3 +71,8 @@
 .transcribe-switch input:checked + .transcribe-track { background: #10b981; } .transcribe-switch input:checked + .transcribe-track::after { transform: translateX(20px); }
 .transcribe-switch input:disabled + .transcribe-track { opacity: .5; } .transcribe-switch input:focus-visible + .transcribe-track { outline: 2px solid #10b981; outline-offset: 2px; }
 .transcribe-switch b, .transcribe-switch small { display: block; } .transcribe-switch small { margin-top: 2px; color: var(--text-muted); font-size: 12.5px; font-weight: 400; }
+
+.auto-chat-option { margin-bottom:14px; display:flex; align-items:flex-start; gap:10px; padding:12px; border:1px solid var(--border-color); border-radius:12px; background:var(--bg-surface-2); cursor:pointer; }
+.auto-chat-option input { margin-top:3px; width:17px; height:17px; accent-color:var(--primary); flex:0 0 auto; }
+.auto-chat-option span { display:flex; flex-direction:column; gap:3px; color:var(--text-main); font-size:13px; }
+.auto-chat-option small { color:var(--text-dim); font-size:11.5px; line-height:1.45; }

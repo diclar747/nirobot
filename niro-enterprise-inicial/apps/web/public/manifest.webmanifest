@@ -1,0 +1,59 @@
+{
+  "id": "/",
+  "name": "NIRO Enterprise",
+  "short_name": "NIRO",
+  "description": "Tu equipo, tus clientes y tus conversaciones en un solo lugar.",
+  "lang": "es",
+  "start_url": "/inbox",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#0b1329",
+  "theme_color": "#0b1329",
+  "categories": [
+    "business",
+    "productivity"
+  ],
+  "icons": [
+    {
+      "src": "/icons/niro-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/niro-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/niro-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Conversaciones",
+      "url": "/inbox",
+      "icons": [
+        {
+          "src": "/icons/niro-192.png",
+          "sizes": "192x192"
+        }
+      ]
+    }
+  ],
+  "related_applications": [
+    {
+      "platform": "webapp",
+      "url": "https://niro.com.py/manifest.webmanifest"
+    },
+    {
+      "platform": "webapp",
+      "url": "https://nirobot.cnid.com.py/manifest.webmanifest"
+    }
+  ],
+  "prefer_related_applications": false
+}

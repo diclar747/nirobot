@@ -1,8 +1,9 @@
 import { FormEvent, useEffect, useState } from 'react';
-import { apiGet, apiPatch, apiPost, ApiError } from '../lib/api';
+import { apiDelete, apiGet, apiPatch, apiPost, ApiError } from '../lib/api';
 import type { OrgUser, UserRole } from '../types';
 import { Modal } from '../components/Modal';
 import { useAuth } from '../context/AuthContext';
+import { useAlerts } from '../context/AlertContext';
 import { EmptyState, LoadingRows, PageHeader, PageShell, Panel, PersonCell, Pill, StatCard, StatGrid, type Tone } from '../components/PageKit';
 import { IconUsers } from '../components/icons';
 import { Link } from 'react-router-dom';
@@ -70,6 +71,7 @@ function userDisplayName(user: OrgUser) {
 
 export function OrgUsers() {
   const { user: me } = useAuth();
+  const { confirm } = useAlerts();
   const [users, setUsers] = useState<OrgUser[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -105,6 +107,23 @@ export function OrgUsers() {
       setSecret({ email: u.email, temporaryPassword: data.temporaryPassword });
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'No se pudo restablecer la contraseña');
+    }
+  }
+
+  async function removeUser(u: OrgUser) {
+    const accepted = await confirm({
+      title: 'Eliminar usuario',
+      message: `¿Eliminar a ${userDisplayName(u)}? Esta acción no se puede deshacer. Sus chats y mensajes se conservan pero quedan sin asignar.`,
+      confirmLabel: 'Eliminar',
+      tone: 'danger'
+    });
+    if (!accepted) return;
+    setError(null);
+    try {
+      await apiDelete(`/api/org/users/${u.id}`);
+      load();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'No se pudo eliminar el usuario');
     }
   }
 
@@ -175,6 +194,7 @@ export function OrgUsers() {
                     </td>
                     <td>
                       <Pill tone={ROLE_TONE[u.role]}>{ROLE_LABEL[u.role]}</Pill>
+                      {u.role === 'AGENT' && u.autoChat && <span style={{ marginLeft: 6 }}><Pill tone="primary">Auto chat</Pill></span>}
                     </td>
                     <td>
                       {['OWNER', 'ADMIN', 'SUPERVISOR'].includes(u.role) ? <span className="area-all">Todas</span> : (u.departments || []).length === 0 ? <span className="area-none">Sin área</span> : <span className="area-list">{(u.departments || []).map((d) => <span key={d.id} className="area-tag">{d.name}</span>)}</span>}
@@ -198,6 +218,11 @@ export function OrgUsers() {
                           <button className="btn secondary small" onClick={() => resetPassword(u)}>
                             Resetear contraseña
                           </button>
+                          {u.id !== me?.id && (
+                            <button className="btn secondary small" style={{ color: 'var(--danger)' }} onClick={() => removeUser(u)}>
+                              Eliminar
+                            </button>
+                          )}
                         </>
                       )}
                     </td>
@@ -260,6 +285,7 @@ function CreateUserModal({
   const [role, setRole] = useState<UserRole>('AGENT');
   const [departments, setDepartments] = useState<Department[]>([]);
   const [departmentIds, setDepartmentIds] = useState<string[]>([]);
+  const [autoChat, setAutoChat] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const roleOptions = ASSIGNABLE_ROLES;
@@ -271,7 +297,7 @@ function CreateUserModal({
     setError(null);
     setSubmitting(true);
     try {
-      const data = await apiPost<{ temporaryPassword?: string }>('/api/org/users', { name, email, role, ...(role === 'AGENT' ? { departmentIds } : {}) });
+      const data = await apiPost<{ temporaryPassword?: string }>('/api/org/users', { name, email, role, ...(role === 'AGENT' ? { departmentIds, autoChat } : {}) });
       onCreated(data.temporaryPassword ? { email, temporaryPassword: data.temporaryPassword } : null);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'No se pudo crear el usuario');
@@ -317,6 +343,12 @@ function CreateUserModal({
             <small className="area-help">Verá los chats de estas áreas y los que le asignen. Podés cambiarlo cuando quieras.</small>
           </div>
         )}
+        {role === 'AGENT' && (
+          <label className="auto-chat-option">
+            <input type="checkbox" checked={autoChat} onChange={(e) => setAutoChat(e.target.checked)} />
+            <span><b>Auto chat</b><small>Recibe automáticamente todos los chats nuevos y puede responderlos, sin que un administrador se los transfiera. Si lo dejás apagado, solo verá los chats que le transfieran o asignen (y los de sus áreas).</small></span>
+          </label>
+        )}
         <button className="btn" type="submit" disabled={submitting} style={{ width: '100%', justifyContent: 'center' }}>
           {submitting ? 'Creando…' : 'Crear usuario'}
         </button>
@@ -341,6 +373,7 @@ function EditUserModal({
   const [active, setActive] = useState(user.active);
   const [departments, setDepartments] = useState<Department[]>([]);
   const [departmentIds, setDepartmentIds] = useState<string[]>((user.departments || []).map((d) => d.id));
+  const [autoChat, setAutoChat] = useState(Boolean(user.autoChat));
   const [defs, setDefs] = useState<PermissionDef[]>([]);
   const [perms, setPerms] = useState<Record<string, boolean>>(() => ({ ...(user.permissions || {}) }));
   const [error, setError] = useState<string | null>(null);
@@ -358,7 +391,7 @@ function EditUserModal({
     setError(null);
     setSubmitting(true);
     try {
-      await apiPatch(`/api/org/users/${user.id}`, { name, role, active, ...(restrictable ? { departmentIds } : {}), ...(restrictable && defs.length ? { permissions: Object.fromEntries(defs.map((d) => [d.key, isOn(d.key)])) } : {}) });
+      await apiPatch(`/api/org/users/${user.id}`, { name, role, active, ...(role === 'AGENT' ? { autoChat } : {}), ...(restrictable ? { departmentIds } : {}), ...(restrictable && defs.length ? { permissions: Object.fromEntries(defs.map((d) => [d.key, isOn(d.key)])) } : {}) });
       onSaved();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'No se pudo guardar el usuario');
@@ -391,6 +424,12 @@ function EditUserModal({
             <AreaPicker departments={departments} value={departmentIds} onChange={setDepartmentIds} />
             <small className="area-help">Verá los chats de estas áreas y los que le asignen.</small>
           </div>
+        )}
+        {role === 'AGENT' && (
+          <label className="auto-chat-option">
+            <input type="checkbox" checked={autoChat} onChange={(e) => setAutoChat(e.target.checked)} />
+            <span><b>Auto chat</b><small>Recibe automáticamente todos los chats nuevos y puede responderlos, sin que un administrador se los transfiera. Si lo dejás apagado, solo verá los chats que le transfieran o asignen (y los de sus áreas).</small></span>
+          </label>
         )}
         <div className="field" style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
           <input id="edit-active" type="checkbox" checked={active} onChange={(e) => setActive(e.target.checked)} />

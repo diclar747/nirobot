@@ -1,4 +1,4 @@
-import { FormEvent, useCallback, useEffect, useState } from 'react';
+import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
 import { apiDelete, apiGet, apiPost, apiUpload, ApiError } from '../lib/api';
 import { getSocket } from '../lib/socket';
 import { Modal } from '../components/Modal';
@@ -6,9 +6,27 @@ import { useAlerts } from '../context/AlertContext';
 import type { CallAccount, CallAudio, CallCampaign, CallCampaignCounts, CallDashboardStats, CallProviderInfo } from '../types';
 import '../styles/call-campaigns.css';
 import { Glyph, Ui } from '../components/Ui';
-import { CallCampaignWizard } from '../components/CallCampaignWizard';
+import { CALL_CAMPAIGN_TYPES, CallCampaignWizard, type WizardMode, type WizardSource } from '../components/CallCampaignWizard';
+import { BulkBar, EMPTY_FILTERS, ListFilters, filtersActive, inDateRange, type ListFilterState } from '../components/ListFilters';
 
 type Tab = 'dashboard' | 'campaigns' | 'history' | 'audios' | 'accounts';
+type CampaignAction = 'start' | 'pause' | 'resume' | 'cancel';
+interface CardActions {
+  onAction: (campaign: CallCampaign, action: CampaignAction) => void;
+  onEdit: (campaign: CallCampaign) => void;
+  onRelaunch: (campaign: CallCampaign) => void;
+  onDelete: (campaign: CallCampaign) => void;
+}
+
+// Agrupaciones de estado para filtrar: "pendientes" junta borrador y programada.
+const STATUS_GROUPS: { key: string; label: string; match: (status: CallCampaign['status']) => boolean }[] = [
+  { key: 'all', label: 'Todas', match: () => true },
+  { key: 'pending', label: 'Pendientes', match: (s) => s === 'DRAFT' || s === 'SCHEDULED' },
+  { key: 'running', label: 'En proceso', match: (s) => s === 'RUNNING' },
+  { key: 'paused', label: 'Pausadas', match: (s) => s === 'PAUSED' },
+  { key: 'completed', label: 'Finalizadas', match: (s) => s === 'COMPLETED' },
+  { key: 'cancelled', label: 'Canceladas', match: (s) => s === 'CANCELLED' }
+];
 
 const STATUS_LABEL: Record<CallCampaign['status'], string> = {
   DRAFT: 'Borrador', SCHEDULED: 'Programada', RUNNING: 'En curso', PAUSED: 'Pausada', COMPLETED: 'Finalizada', CANCELLED: 'Cancelada'
@@ -45,7 +63,8 @@ export function CallCampaigns() {
   const [history, setHistory] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [showCreate, setShowCreate] = useState(false);
+  const [wizard, setWizard] = useState<{ mode: WizardMode; source?: WizardSource } | null>(null);
+  const { confirm, notify } = useAlerts();
   const [showConnect, setShowConnect] = useState(false);
 
   const load = useCallback(async () => {
@@ -83,7 +102,44 @@ export function CallCampaigns() {
     return () => { socket.off('wa-call:updated', onUpdate); };
   }, [tab]);
 
-  async function performAction(campaign: CallCampaign, action: 'start' | 'pause' | 'resume' | 'cancel') {
+  async function openWizard(mode: WizardMode, campaignId: string, onlyContactIds?: string[]) {
+    try {
+      const config = await apiGet<{ campaign: CallCampaign; survey: WizardSource['survey']; recipients: WizardSource['recipients'] }>(`/api/org/wa-calls/campaigns/${campaignId}/config`);
+      setWizard({ mode, source: { ...config, onlyContactIds } });
+    } catch (err) { notify(err instanceof ApiError ? err.message : 'No se pudo cargar la campaña', { tone: 'error' }); }
+  }
+
+  async function deleteCampaigns(list: CallCampaign[]) {
+    const running = list.filter((c) => c.status === 'RUNNING');
+    const deletable = list.filter((c) => c.status !== 'RUNNING');
+    if (!deletable.length) { notify('Las campañas en curso no se pueden eliminar: cancelalas o pausalas primero.', { tone: 'error' }); return false; }
+    const many = deletable.length > 1;
+    const ok = await confirm({
+      title: many ? `Eliminar ${deletable.length} campañas` : 'Eliminar campaña',
+      message: many
+        ? `¿Eliminar ${deletable.length} campañas? Se borra también su historial de llamadas y respuestas de encuesta. Esta acción no se puede deshacer.${running.length ? ` (${running.length} en curso se omiten.)` : ''}`
+        : `¿Eliminar “${deletable[0].name}”? Se borra también su historial de llamadas y respuestas de encuesta. Esta acción no se puede deshacer.`,
+      confirmLabel: 'Eliminar',
+      tone: 'danger'
+    });
+    if (!ok) return false;
+    try {
+      const result = await apiPost<{ deleted: string[]; skipped: { name: string; reason: string }[] }>('/api/org/wa-calls/campaigns/bulk-delete', { ids: deletable.map((c) => c.id) });
+      notify(`${result.deleted.length} campaña${result.deleted.length === 1 ? '' : 's'} eliminada${result.deleted.length === 1 ? '' : 's'}${result.skipped.length ? ` · ${result.skipped.length} omitida${result.skipped.length === 1 ? '' : 's'}` : ''}.`, { tone: result.skipped.length ? 'warning' : 'success' });
+      await load();
+      if (tab === 'history') loadHistory();
+      return true;
+    } catch (err) { notify(err instanceof ApiError ? err.message : 'No se pudieron eliminar las campañas', { tone: 'error' }); return false; }
+  }
+
+  const cardActions: CardActions = {
+    onAction: (campaign, action) => performAction(campaign, action),
+    onEdit: (campaign) => openWizard('edit', campaign.id),
+    onRelaunch: (campaign) => openWizard('relaunch', campaign.id),
+    onDelete: (campaign) => { deleteCampaigns([campaign]); }
+  };
+
+  async function performAction(campaign: CallCampaign, action: CampaignAction) {
     try {
       const result = await apiPost<{ campaign: CallCampaign }>(`/api/org/wa-calls/campaigns/${campaign.id}/${action}`, {});
       setCampaigns((current) => current.map((item) => item.id === campaign.id ? result.campaign : item));
@@ -95,7 +151,7 @@ export function CallCampaigns() {
 
   async function loadHistory() {
     try {
-      const result = await apiGet<{ attempts: any[] }>('/api/org/wa-calls/history?limit=200');
+      const result = await apiGet<{ attempts: any[] }>('/api/org/wa-calls/history?limit=1000');
       setHistory(result.attempts || []);
     } catch (err) { setError(err instanceof ApiError ? err.message : 'No se pudo cargar el historial'); }
   }
@@ -115,7 +171,7 @@ export function CallCampaigns() {
         <div className="page-header-actions call-header-actions">
           <button type="button" className="btn secondary" onClick={load} disabled={loading}><Glyph c="↻" size={15} /> Actualizar</button>
           <button type="button" className="btn secondary" onClick={() => setShowConnect(true)}><Glyph c="◉" size={15} /> Cuenta WhatsApp</button>
-          <button type="button" className="btn" onClick={() => setShowCreate(true)}>＋ Nueva campaña</button>
+          <button type="button" className="btn" onClick={() => setWizard({ mode: 'create' })}>＋ Nueva campaña</button>
         </div>
       </header>
 
@@ -140,49 +196,137 @@ export function CallCampaigns() {
 
       {loading ? <div className="call-loading">Cargando centro de llamadas…</div> : (
         <div className="call-page-content">
-          {tab === 'dashboard' && <Dashboard stats={stats} campaigns={campaigns.slice(0, 6)} onAction={performAction} onOpenCampaign={(campaign) => { setTab('campaigns'); setCampaigns((current) => current.map((item) => item.id === campaign.id ? campaign : item)); }} />}
-          {tab === 'campaigns' && <CampaignList campaigns={campaigns} onAction={performAction} />}
-          {tab === 'history' && <HistoryTable attempts={history} />}
+          {tab === 'dashboard' && <Dashboard stats={stats} campaigns={campaigns.slice(0, 6)} actions={cardActions} onOpenCampaign={(campaign) => { setTab('campaigns'); setCampaigns((current) => current.map((item) => item.id === campaign.id ? campaign : item)); }} />}
+          {tab === 'campaigns' && <CampaignList campaigns={campaigns} actions={cardActions} onBulkDelete={deleteCampaigns} />}
+          {tab === 'history' && <HistoryTable attempts={history} onChanged={loadHistory} onRedial={(attempt) => openWizard('relaunch', attempt.campaignId, [attempt.campaignContact?.contactId].filter(Boolean))} />}
           {tab === 'audios' && <AudioLibrary audios={audios} onChange={load} />}
           {tab === 'accounts' && <AccountPanel accounts={accounts} provider={provider} onConnect={() => setShowConnect(true)} onChange={load} />}
         </div>
       )}
 
-      {showCreate && <CallCampaignWizard accounts={accounts} audios={audios} onClose={() => setShowCreate(false)} onCreated={() => { setShowCreate(false); load(); }} />}
+      {wizard && <CallCampaignWizard mode={wizard.mode} source={wizard.source} accounts={accounts} audios={audios} onClose={() => setWizard(null)} onCreated={() => { setWizard(null); load(); }} />}
       {showConnect && <ConnectAccountModal onClose={() => setShowConnect(false)} onConnected={() => { setShowConnect(false); load(); }} />}
     </div>
   );
 }
 
-function Dashboard({ stats, campaigns, onAction, onOpenCampaign }: { stats: CallDashboardStats; campaigns: CallCampaign[]; onAction: (campaign: CallCampaign, action: 'start' | 'pause' | 'resume' | 'cancel') => void; onOpenCampaign: (campaign: CallCampaign) => void }) {
+function Dashboard({ stats, campaigns, actions, onOpenCampaign }: { stats: CallDashboardStats; campaigns: CallCampaign[]; actions: CardActions; onOpenCampaign: (campaign: CallCampaign) => void }) {
   const cards = [['Llamadas totales', stats.totalCalls, '☎', 'blue'], ['Minutos hablados', stats.totalMinutes, '◷', 'purple'], ['Atendidas', stats.attendedCalls, '✓', 'green'], ['Llamadas directas', stats.directCalls, '↗', 'cyan'], ['Programadas', stats.scheduled, '◷', 'blue'], ['En cola', stats.queued, '≋', 'purple'], ['En proceso', stats.inProgress, '◉', 'cyan'], ['Conectadas', stats.connected, '✓', 'green'], ['No contestadas', stats.noAnswer, '↯', 'orange'], ['Fallidas', stats.failed, '!', 'red'], ['Pendientes de encuesta', stats.pendingSurvey, '?', 'pink'], ['Respuestas recibidas', stats.surveyResponses, '↩', 'indigo']];
   return <>
     <section className="call-stat-grid">{cards.map(([label, value, icon, tone]) => <div className={`call-stat tone-${tone}`} key={label}><div><span>{label}</span><b><Glyph c={String(icon)} size={18} /></b></div><strong>{Number(value).toLocaleString('es')}</strong><small>actualizado en tiempo real</small></div>)}</section>
     <section className="call-section-heading"><div><h2>Campañas recientes</h2><p>Supervisá el avance y actuá sobre las campañas sin salir del panel.</p></div><span className="call-live-badge"><i /> Tiempo real</span></section>
-    <div className="call-campaign-grid">{campaigns.length ? campaigns.map((campaign) => <CallCampaignCard key={campaign.id} campaign={campaign} onAction={onAction} onOpen={() => onOpenCampaign(campaign)} />) : <EmptyState text="Todavía no hay campañas de llamadas" />}</div>
+    <div className="call-campaign-grid">{campaigns.length ? campaigns.map((campaign) => <CallCampaignCard key={campaign.id} campaign={campaign} actions={actions} onOpen={() => onOpenCampaign(campaign)} />) : <EmptyState text="Todavía no hay campañas de llamadas" />}</div>
   </>;
 }
 
-function CampaignList({ campaigns, onAction }: { campaigns: CallCampaign[]; onAction: (campaign: CallCampaign, action: 'start' | 'pause' | 'resume' | 'cancel') => void }) {
-  return <section className="call-table-card"><div className="call-section-heading"><div><h2>Historial de campañas</h2><p>Estados persistidos, progreso y acciones de cada campaña.</p></div></div>{campaigns.length ? <div className="call-campaign-grid">{campaigns.map((campaign) => <CallCampaignCard key={campaign.id} campaign={campaign} onAction={onAction} />)}</div> : <EmptyState text="No hay campañas creadas" />}</section>;
+function CampaignList({ campaigns, actions, onBulkDelete }: { campaigns: CallCampaign[]; actions: CardActions; onBulkDelete: (list: CallCampaign[]) => Promise<boolean> }) {
+  const [filters, setFilters] = useState<ListFilterState>(EMPTY_FILTERS);
+  const [selected, setSelected] = useState<string[]>([]);
+  const groups = STATUS_GROUPS.map((g) => ({ key: g.key, label: g.label, count: campaigns.filter((c) => g.match(c.status)).length }));
+  const visible = useMemo(() => {
+    const q = filters.q.trim().toLowerCase();
+    const group = STATUS_GROUPS.find((g) => g.key === filters.group) || STATUS_GROUPS[0];
+    return campaigns.filter((c) => group.match(c.status)
+      && (!filters.type || c.campaignType === filters.type)
+      && inDateRange(c.createdAt, filters.from, filters.to)
+      && (!q || `${c.name} ${c.description || ''} ${c.audio?.name || ''}`.toLowerCase().includes(q)));
+  }, [campaigns, filters]);
+  // Solo se puede elegir lo que se puede borrar (las campañas en curso no).
+  const selectable = visible.filter((c) => c.status !== 'RUNNING');
+  const chosen = campaigns.filter((c) => selected.includes(c.id));
+  useEffect(() => { setSelected((cur) => cur.filter((id) => campaigns.some((c) => c.id === id && c.status !== 'RUNNING'))); }, [campaigns]);
+  const toggle = (id: string) => setSelected((cur) => cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id]);
+  const toggleAll = () => setSelected(selectable.every((c) => selected.includes(c.id)) ? selected.filter((id) => !selectable.some((c) => c.id === id)) : Array.from(new Set([...selected, ...selectable.map((c) => c.id)])));
+  return <section className="call-table-card">
+    <div className="call-section-heading"><div><h2>Historial de campañas</h2><p>Filtrá por estado, categoría o fecha; editá, relanzá o limpiá las que ya no necesitás.</p></div>
+      {selectable.length > 0 && <button type="button" className="btn secondary small" onClick={toggleAll}>{selectable.every((c) => selected.includes(c.id)) ? 'Deseleccionar' : 'Seleccionar'} {selectable.length} visible{selectable.length === 1 ? '' : 's'}</button>}</div>
+    <ListFilters state={filters} onChange={setFilters} groups={groups} types={CALL_CAMPAIGN_TYPES} typeLabel="Categoría" searchPlaceholder="Buscar campaña o audio…" />
+    {chosen.length > 0 && <BulkBar selected={chosen.length} visible={selectable.length} onToggleAll={toggleAll} onClear={() => setSelected([])} onDelete={async () => { if (await onBulkDelete(chosen)) setSelected([]); }} />}
+    {visible.length ? <div className="call-campaign-grid">{visible.map((campaign) => <CallCampaignCard key={campaign.id} campaign={campaign} actions={actions} selected={selected.includes(campaign.id)} onToggle={() => toggle(campaign.id)} />)}</div>
+      : campaigns.length && filtersActive(filters) ? <div className="list-empty-filtered">Ninguna campaña coincide con los filtros. <button type="button" className="btn secondary small" onClick={() => setFilters(EMPTY_FILTERS)}>Limpiar filtros</button></div>
+      : <EmptyState text="No hay campañas creadas" />}
+  </section>;
 }
 
-function CallCampaignCard({ campaign, onAction, onOpen }: { campaign: CallCampaign; onAction: (campaign: CallCampaign, action: 'start' | 'pause' | 'resume' | 'cancel') => void; onOpen?: () => void }) {
+function CallCampaignCard({ campaign, actions, onOpen, selected, onToggle }: { campaign: CallCampaign; actions: CardActions; onOpen?: () => void; selected?: boolean; onToggle?: () => void }) {
   const data = counts(campaign);
   const progress = data.total ? Math.round(((data.completed + data.noAnswer + data.failed + data.cancelled) / data.total) * 100) : 0;
-  return <article className="call-campaign-card">
+  const editable = ['DRAFT', 'SCHEDULED'].includes(campaign.status);
+  const finished = ['COMPLETED', 'CANCELLED'].includes(campaign.status);
+  const typeLabel = CALL_CAMPAIGN_TYPES.find((t) => t.key === campaign.campaignType)?.label;
+  return <article className={`call-campaign-card ${selected ? 'selected' : ''} ${onToggle ? 'has-select' : ''}`}>
+    {onToggle && <span className="list-select call-card-check"><input type="checkbox" checked={Boolean(selected)} disabled={campaign.status === 'RUNNING'} onChange={onToggle} aria-label={`Elegir ${campaign.name}`} title={campaign.status === 'RUNNING' ? 'En curso: cancelala o pausala para poder eliminarla' : undefined} /></span>}
     <button type="button" className="call-card-main" onClick={onOpen}>
-      <div className="call-card-top"><span className="call-card-icon"><Glyph c={campaign.status === 'RUNNING' ? '◉' : '☎'} size={20} /></span><div><strong>{campaign.name}</strong><small>{formatDate(campaign.createdAt)}</small></div><span className={`call-status status-${campaign.status.toLowerCase()}`}>{STATUS_LABEL[campaign.status]}</span></div>
+      <div className="call-card-top">
+        <span className="call-card-icon"><Glyph c={campaign.status === 'RUNNING' ? '◉' : '☎'} size={20} /></span><div><strong>{campaign.name}</strong><small>{formatDate(campaign.createdAt)}{typeLabel ? ` · ${typeLabel}` : ''}</small></div><span className={`call-status status-${campaign.status.toLowerCase()}`}>{STATUS_LABEL[campaign.status]}</span></div>
       <p>{campaign.description || `${campaign.audio?.name || 'Audio'} · ${campaign.account?.name || 'Cuenta WhatsApp'}`}</p>
+      {campaign.status === 'SCHEDULED' && campaign.scheduledAt && <p className="call-card-schedule">Programada para {formatDate(campaign.scheduledAt)}</p>}
       <div className="call-progress"><span style={{ width: `${progress}%` }} /></div><div className="call-progress-label"><span>{progress}% procesado</span><b>{data.total} destinatarios</b></div>
       <div className="call-count-row"><span><b>{data.connected}</b> conectadas</span><span><b>{data.noAnswer}</b> no contestadas</span><span><b>{data.failed}</b> fallidas</span></div>
     </button>
-    <div className="call-card-footer"><span><Glyph c="♫" size={13} /> {campaign.audio?.name || 'Sin audio'}</span><div>{['DRAFT', 'PAUSED'].includes(campaign.status) && <button type="button" className="btn small" onClick={() => onAction(campaign, campaign.status === 'PAUSED' ? 'resume' : 'start')}>{campaign.status === 'PAUSED' ? <><Glyph c="▶" size={13} /> Reanudar</> : <><Glyph c="▶" size={13} /> Iniciar</>}</button>}{campaign.status === 'RUNNING' && <button type="button" className="btn secondary small" onClick={() => onAction(campaign, 'pause')}>Ⅱ Pausar</button>}{!['COMPLETED', 'CANCELLED'].includes(campaign.status) && <button type="button" className="btn danger small" onClick={() => onAction(campaign, 'cancel')}>× Cancelar</button>}</div></div>
+    <div className="call-card-footer"><span><Glyph c="♫" size={13} /> {campaign.audio?.name || 'Sin audio'}</span><div>
+      {['DRAFT', 'PAUSED'].includes(campaign.status) && <button type="button" className="btn small" onClick={() => actions.onAction(campaign, campaign.status === 'PAUSED' ? 'resume' : 'start')}><Glyph c="▶" size={13} /> {campaign.status === 'PAUSED' ? 'Reanudar' : 'Iniciar'}</button>}
+      {campaign.status === 'RUNNING' && <button type="button" className="btn secondary small" onClick={() => actions.onAction(campaign, 'pause')}>Ⅱ Pausar</button>}
+      {editable && <button type="button" className="btn secondary small" onClick={() => actions.onEdit(campaign)}><Ui name="edit" size={13} /> Editar</button>}
+      {(finished || campaign.status === 'PAUSED') && <button type="button" className="btn secondary small" onClick={() => actions.onRelaunch(campaign)} title="Crea una campaña nueva a partir de esta, para editarla y volver a lanzarla"><Glyph c="↻" size={13} /> Relanzar</button>}
+      {!finished && <button type="button" className="btn danger small" onClick={() => actions.onAction(campaign, 'cancel')}>× Cancelar</button>}
+      {campaign.status !== 'RUNNING' && <button type="button" className="btn secondary small" onClick={() => actions.onDelete(campaign)} aria-label={`Eliminar ${campaign.name}`} title="Eliminar campaña y su historial"><Ui name="trash" size={14} /></button>}
+    </div></div>
   </article>;
 }
 
-function HistoryTable({ attempts }: { attempts: any[] }) {
-  return <section className="call-table-card"><div className="call-section-heading"><div><h2>Historial completo de llamadas</h2><p>Incluye campañas y llamadas individuales realizadas desde el chat, con duración y resultado.</p></div><a className="btn secondary small" href="/api/org/wa-calls/history?format=csv"><Glyph c="↓" size={15} /> Exportar CSV</a></div>{attempts.length ? <div className="call-history-table-wrap"><table className="call-history-table"><thead><tr><th>Fecha</th><th>Tipo</th><th>Contacto</th><th>Campaña / origen</th><th>Cuenta</th><th>Resultado</th><th>Duración</th><th>Detalle</th></tr></thead><tbody>{attempts.map((attempt) => { const direct = attempt.recordType === 'DIRECT'; const duration = Number(attempt.durationSeconds || 0); return <tr key={`${attempt.recordType || 'CAMPAIGN'}-${attempt.id}`}><td>{formatDate(attempt.createdAt)}</td><td><span className="call-history-kind">{direct ? 'Directa' : 'Campaña'}</span></td><td><strong>{direct ? attempt.contact?.name || 'Sin nombre' : attempt.campaignContact?.contact?.name || 'Sin nombre'}</strong><small>{direct ? attempt.phoneNumber : attempt.campaignContact?.phoneNumber}</small></td><td>{direct ? 'Llamada desde el chat' : attempt.campaign?.name}</td><td>{attempt.account?.name || '—'}</td><td><span className={`call-status status-${String(attempt.status).toLowerCase()}`}>{CALL_STATUS_LABEL[attempt.status] || attempt.status}</span></td><td>{duration ? `${Math.floor(duration / 60)}m ${duration % 60}s` : '—'}</td><td>{attempt.errorMessage || attempt.endedReason || '—'}</td></tr>; })}</tbody></table></div> : <EmptyState text="Todavía no hay llamadas registradas" />}</section>;
+const HISTORY_GROUPS: { key: string; label: string; match: (status: string) => boolean }[] = [
+  { key: 'all', label: 'Todas', match: () => true },
+  { key: 'answered', label: 'Atendidas', match: (s) => ['COMPLETED', 'CONNECTED', 'PLAYING'].includes(s) },
+  { key: 'noanswer', label: 'No contestadas', match: (s) => s === 'NO_ANSWER' },
+  { key: 'failed', label: 'Fallidas', match: (s) => s === 'FAILED' },
+  { key: 'cancelled', label: 'Canceladas', match: (s) => s === 'CANCELLED' }
+];
+
+function HistoryTable({ attempts, onRedial, onChanged }: { attempts: any[]; onRedial: (attempt: any) => void; onChanged: () => void }) {
+  const { confirm, notify } = useAlerts();
+  const [filters, setFilters] = useState<ListFilterState>(EMPTY_FILTERS);
+  const [kind, setKind] = useState<'' | 'DIRECT' | 'CAMPAIGN'>('');
+  const rows = useMemo(() => {
+    const q = filters.q.trim().toLowerCase();
+    const group = HISTORY_GROUPS.find((g) => g.key === filters.group) || HISTORY_GROUPS[0];
+    return attempts.filter((a) => {
+      const direct = a.recordType === 'DIRECT';
+      if (kind && (kind === 'DIRECT') !== direct) return false;
+      if (!group.match(String(a.status))) return false;
+      if (!direct && filters.type && a.campaign?.campaignType !== filters.type) return false;
+      if (filters.type && direct) return false;
+      if (!inDateRange(a.createdAt, filters.from, filters.to)) return false;
+      if (!q) return true;
+      const name = direct ? a.contact?.name : a.campaignContact?.contact?.name;
+      const phone = direct ? a.phoneNumber : a.campaignContact?.phoneNumber;
+      return `${name || ''} ${phone || ''} ${direct ? '' : a.campaign?.name || ''}`.toLowerCase().includes(q);
+    });
+  }, [attempts, filters, kind]);
+  const finishedDirect = rows.filter((a) => a.recordType === 'DIRECT' && !['STARTING', 'RINGING', 'CONNECTED', 'PLAYING'].includes(String(a.status)));
+  async function clearDirect(list: any[]) {
+    const ok = await confirm({ title: 'Eliminar llamadas del historial', message: `¿Eliminar ${list.length} llamada${list.length === 1 ? '' : 's'} directa${list.length === 1 ? '' : 's'} del historial? Esta acción no se puede deshacer.`, confirmLabel: 'Eliminar', tone: 'danger' });
+    if (!ok) return;
+    try {
+      const result = await apiPost<{ deleted: number }>('/api/org/wa-calls/history/direct/bulk-delete', { ids: list.map((a) => a.id) });
+      notify(`${result.deleted} llamada${result.deleted === 1 ? '' : 's'} eliminada${result.deleted === 1 ? '' : 's'} del historial.`, { tone: 'success' });
+      onChanged();
+    } catch (err) { notify(err instanceof ApiError ? err.message : 'No se pudo eliminar el historial', { tone: 'error' }); }
+  }
+  const groups = HISTORY_GROUPS.map((g) => ({ key: g.key, label: g.label, count: attempts.filter((a) => g.match(String(a.status))).length }));
+  const csvHref = '/api/org/wa-calls/history?format=csv';
+  return <section className="call-table-card">
+    <div className="call-section-heading"><div><h2>Historial completo de llamadas</h2><p>Incluye campañas y llamadas individuales realizadas desde el chat, con duración y resultado. Para limpiar el historial de una campaña, eliminá la campaña desde “Campañas”.</p></div><a className="btn secondary small" href={csvHref}><Glyph c="↓" size={15} /> Exportar CSV</a></div>
+    <ListFilters state={filters} onChange={setFilters} groups={groups} types={CALL_CAMPAIGN_TYPES} typeLabel="Categoría de campaña" searchPlaceholder="Buscar contacto, número o campaña…" />
+    <div className="list-filter-row" style={{ marginBottom: 12 }}>
+      <label className="list-filter-field"><span>Tipo de llamada</span><select className="input" value={kind} onChange={(e) => setKind(e.target.value as '' | 'DIRECT' | 'CAMPAIGN')}><option value="">Todas</option><option value="CAMPAIGN">De campaña</option><option value="DIRECT">Directas (desde el chat)</option></select></label>
+      <small style={{ color: 'var(--text-dim)', alignSelf: 'center' }}>{rows.length} de {attempts.length} llamadas</small>
+      {finishedDirect.length > 0 && <button type="button" className="btn secondary small" style={{ marginLeft: 'auto' }} onClick={() => clearDirect(finishedDirect)}><Ui name="trash" size={14} /> Eliminar las {finishedDirect.length} directas visibles</button>}
+    </div>
+    {rows.length ? <div className="call-history-table-wrap"><table className="call-history-table"><thead><tr><th>Fecha</th><th>Tipo</th><th>Contacto</th><th>Campaña / origen</th><th>Cuenta</th><th>Resultado</th><th>Duración</th><th>Detalle</th><th></th></tr></thead><tbody>{rows.map((attempt) => { const direct = attempt.recordType === 'DIRECT'; const duration = Number(attempt.durationSeconds || 0); const canRedial = !direct && attempt.campaignId && attempt.campaignContact?.contactId && !['PENDING', 'QUEUED', 'STARTING', 'RINGING', 'CONNECTED', 'PLAYING'].includes(String(attempt.status)); return <tr key={`${attempt.recordType || 'CAMPAIGN'}-${attempt.id}`}><td>{formatDate(attempt.createdAt)}</td><td><span className="call-history-kind">{direct ? 'Directa' : 'Campaña'}</span></td><td><strong>{direct ? attempt.contact?.name || 'Sin nombre' : attempt.campaignContact?.contact?.name || 'Sin nombre'}</strong><small>{direct ? attempt.phoneNumber : attempt.campaignContact?.phoneNumber}</small></td><td>{direct ? 'Llamada desde el chat' : attempt.campaign?.name}</td><td>{attempt.account?.name || '—'}</td><td><span className={`call-status status-${String(attempt.status).toLowerCase()}`}>{CALL_STATUS_LABEL[attempt.status] || attempt.status}</span></td><td>{duration ? `${Math.floor(duration / 60)}m ${duration % 60}s` : '—'}</td><td>{attempt.errorMessage || attempt.endedReason || '—'}</td><td>{direct && !['STARTING', 'RINGING', 'CONNECTED', 'PLAYING'].includes(String(attempt.status)) && <button type="button" className="btn secondary small" onClick={() => clearDirect([attempt])} aria-label="Eliminar del historial" title="Eliminar del historial"><Ui name="trash" size={14} /></button>}{canRedial && <button type="button" className="btn secondary small" onClick={() => onRedial(attempt)} title="Crear una campaña para volver a llamar a este contacto"><Glyph c="↻" size={13} /> Rellamar</button>}</td></tr>; })}</tbody></table></div>
+      : attempts.length ? <div className="list-empty-filtered">Ninguna llamada coincide con los filtros. <button type="button" className="btn secondary small" onClick={() => { setFilters(EMPTY_FILTERS); setKind(''); }}>Limpiar filtros</button></div>
+      : <EmptyState text="Todavía no hay llamadas registradas" />}
+  </section>;
 }
 
 function AudioLibrary({ audios, onChange }: { audios: CallAudio[]; onChange: () => void }) {

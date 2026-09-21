@@ -13,8 +13,8 @@ beforeEach(async () => {
 async function setupOrgWithAgents() {
   const org = await createOrganization(prisma, { slug: 'acme' });
   const owner = await createUser(prisma, { organizationId: org.id, email: 'owner@acme.test', role: 'OWNER' });
-  const agentA = await createUser(prisma, { organizationId: org.id, email: 'agenta@acme.test', role: 'AGENT' });
-  const agentB = await createUser(prisma, { organizationId: org.id, email: 'agentb@acme.test', role: 'AGENT' });
+  const agentA = await createUser(prisma, { organizationId: org.id, email: 'agenta@acme.test', role: 'AGENT', autoChat: true });
+  const agentB = await createUser(prisma, { organizationId: org.id, email: 'agentb@acme.test', role: 'AGENT', autoChat: true });
   const dept = await prisma.department.create({ data: { organizationId: org.id, name: 'Ventas' } });
   await prisma.departmentMember.create({ data: { departmentId: dept.id, userId: agentA.id } });
   return { org, owner, agentA, agentB, dept };

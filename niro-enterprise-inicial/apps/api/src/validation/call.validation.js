@@ -24,7 +24,8 @@ const createCallCampaignSchema = z.object({
   surveyOptions: z.array(z.object({
     key: z.string().trim().min(1).max(10), label: z.string().trim().min(1).max(120),
     replyMessage: z.string().trim().max(1000).optional().nullable(),
-    action: z.enum(['NONE', 'INTERESTED', 'FOLLOW_UP', 'OPT_OUT']).default('NONE')
+    action: z.enum(['NONE', 'INTERESTED', 'FOLLOW_UP', 'OPT_OUT']).default('NONE'),
+    crmStage: z.enum(['abiertas', 'pendientes', 'clientes', 'interesados', 'cerradas']).optional().nullable()
   })).max(10).default([])
 }).superRefine((data, ctx) => {
   if (data.contactIds.length === 0 && data.tagFilter.length === 0) {

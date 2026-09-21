@@ -71,6 +71,8 @@ app.use('/api/org/contacts', contactsRoutes);
 app.use('/api/org/conversations', conversationsRoutes);
 app.use('/api/org/orders', ordersRoutes);
 app.use('/api/org/reports', reportsRoutes);
+app.use('/api/org/sms', require('./routes/sms.routes'));
+app.use('/api/org/management', require('./routes/management.routes'));
 app.use('/api/org/whatsapp', whatsappRoutes);
 app.use('/api/org/campaigns', campaignsRoutes);
 app.use('/api/org/quick-replies', require('./routes/quick-replies.routes'));

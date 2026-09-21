@@ -14,7 +14,7 @@ const menuOptionSchema = z.object({
 
 const botNodeSchema = z.object({
   id: z.string().min(1).max(80),
-  type: z.enum(['start', 'message', 'keyword', 'condition', 'ai', 'crm', 'agent', 'end']),
+  type: z.enum(['start', 'message', 'menu', 'keyword', 'condition', 'ai', 'crm', 'agent', 'end']),
   title: z.string().min(1).max(120),
   description: z.string().max(500).optional().default(''),
   position: z.object({ x: z.number().finite().min(0).max(5000), y: z.number().finite().min(0).max(5000) }),
@@ -55,7 +55,8 @@ const createUserSchema = z.object({
   email: z.string().email(),
   role: z.enum(ORG_ROLES),
   password: z.string().min(10).optional(),
-  departmentIds: z.array(z.string().min(1)).max(50).optional()
+  departmentIds: z.array(z.string().min(1)).max(50).optional(),
+  autoChat: z.boolean().optional()
 });
 
 const updateUserSchema = z
@@ -64,7 +65,8 @@ const updateUserSchema = z
     role: z.enum(ORG_ROLES).optional(),
     active: z.boolean().optional(),
     permissions: z.record(z.string(), z.boolean()).optional(),
-    departmentIds: z.array(z.string().min(1)).max(50).optional()
+    departmentIds: z.array(z.string().min(1)).max(50).optional(),
+    autoChat: z.boolean().optional()
   })
   .refine((data) => Object.keys(data).length > 0, { message: 'No hay cambios para aplicar' });
 
