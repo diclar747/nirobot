@@ -9,6 +9,7 @@ import { Modal } from '../components/Modal';
 import { PageHeader, Pill } from '../components/PageKit';
 import { IconLayers } from '../components/icons';
 import type { Conversation, OrgUser, Department, Message } from '../types';
+import { Ui } from '../components/Ui';
 
 export function CrmBoard() {
   const navigate = useNavigate();
@@ -246,7 +247,7 @@ function BoardCard({
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 1 }}>
             {contact.phone ? (
               <span style={{ fontSize: 11, color: 'var(--primary-glow)', fontWeight: 600 }}>
-                📞 {formatPhone(contact.phone)}
+                <Ui name="phone" size={14} /> {formatPhone(contact.phone)}
               </span>
             ) : (
               <span style={{ fontSize: 11, color: 'var(--text-dim)' }}>Sin teléfono</span>
@@ -264,12 +265,12 @@ function BoardCard({
         <div className="crm-board-card-tags" style={{ marginTop: 6, display: 'flex', gap: 4, flexWrap: 'wrap' }}>
           {conversation.assignedTo && (
             <span className="crm-board-card-chip agent" style={{ fontSize: 10.5, padding: '2px 6px' }}>
-              👤 {conversation.assignedTo.name}
+              <Ui name="user" size={14} /> {conversation.assignedTo.name}
             </span>
           )}
           {conversation.department && (
             <span className="crm-board-card-chip" style={{ fontSize: 10.5, padding: '2px 6px', background: 'var(--bg-surface-2)' }}>
-              🏢 {conversation.department.name}
+              <Ui name="building" size={14} /> {conversation.department.name}
             </span>
           )}
           {extraTags.map((t) => (
@@ -430,7 +431,7 @@ function ContactDetailModal({
             {contact.phone && (
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 3 }}>
                 <span style={{ fontSize: 13, color: 'var(--primary-glow)', fontWeight: 600 }}>
-                  📞 {formatPhone(contact.phone)}
+                  <Ui name="phone" size={14} /> {formatPhone(contact.phone)}
                 </span>
                 {cleanPhone && (
                   <a
@@ -447,14 +448,14 @@ function ContactDetailModal({
                       fontWeight: 700
                     }}
                   >
-                    Abrir en WhatsApp ↗
+                    Abrir en WhatsApp <Ui name="external" size={14} />
                   </a>
                 )}
               </div>
             )}
             {contact.email && (
               <div style={{ fontSize: 12, color: 'var(--text-dim)', marginTop: 2 }}>
-                ✉️ {contact.email}
+                <Ui name="mail" size={14} /> {contact.email}
               </div>
             )}
           </div>
@@ -516,7 +517,7 @@ function ContactDetailModal({
         {/* Internal Notes Section */}
         <div style={{ borderTop: '1px solid var(--border-color)', paddingTop: 14 }}>
           <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-main)', marginBottom: 8 }}>
-            📝 Notas Internas del Cliente ({notes.length})
+            <Ui name="note" size={16} /> Notas Internas del Cliente ({notes.length})
           </div>
 
           <div
@@ -579,7 +580,7 @@ function ContactDetailModal({
               onOpenChat();
             }}
           >
-            💬 Abrir Conversación en Chat →
+            <Ui name="chat" size={16} /> Abrir Conversación en Chat <Ui name="arrow-right" size={14} />
           </button>
           <button type="button" className="btn secondary" onClick={onClose}>
             Cerrar

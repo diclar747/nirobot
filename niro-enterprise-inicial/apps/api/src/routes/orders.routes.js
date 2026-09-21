@@ -1,4 +1,5 @@
 const express = require('express');
+const { requirePermission } = require('../lib/permissions');
 const { prisma } = require('../lib/prisma');
 const { audit } = require('../lib/audit');
 const { requireAuth, requireCsrf } = require('../middleware/auth');
@@ -13,6 +14,7 @@ function requireOrgContext(req, _res, next) {
 }
 
 router.use(requireAuth, requireOrgContext);
+router.use(requirePermission('orders'));
 
 const ORDER_INCLUDE = {
   contact: true,

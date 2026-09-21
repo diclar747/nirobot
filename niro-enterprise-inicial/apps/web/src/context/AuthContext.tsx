@@ -34,6 +34,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     refreshMe().finally(() => setLoading(false));
   }, [refreshMe]);
 
+  // Si el administrador cambia tus permisos, se reflejan al volver a esta pestaña.
+  useEffect(() => {
+    let last = 0;
+    const onFocus = () => {
+      if (Date.now() - last < 15000) return;
+      last = Date.now();
+      refreshMe().catch(() => {});
+    };
+    window.addEventListener('focus', onFocus);
+    return () => window.removeEventListener('focus', onFocus);
+  }, [refreshMe]);
+
   const login = useCallback(async (email: string, password: string) => {
     const data = await apiPost<{ user: CurrentUser }>('/api/auth/login', { email, password });
     setUser(data.user);

@@ -1,4 +1,5 @@
 const express = require('express');
+const { requirePermission } = require('../lib/permissions');
 const { prisma } = require('../lib/prisma');
 const { audit } = require('../lib/audit');
 const { requireAuth, requireRole, requireCsrf } = require('../middleware/auth');
@@ -17,6 +18,7 @@ function requireOrgContext(req, _res, next) {
 }
 
 router.use(requireAuth, requireOrgContext);
+router.use(requirePermission('bot'));
 
 async function getSettings(organizationId) {
   const settings = await prisma.organizationSettings.findUnique({
@@ -37,7 +39,7 @@ router.get('/', async (req, res, next) => {
   }
 });
 
-router.patch('/', requireRole('OWNER', 'ADMIN', 'SUPERVISOR'), requireCsrf, async (req, res, next) => {
+router.patch('/', requireCsrf, async (req, res, next) => {
   try {
     const flow = botFlowSchema.parse(req.body.flow || req.body);
     const settings = await prisma.organizationSettings.update({ where: { organizationId: req.auth.organizationId }, data: { botFlow: flow } });
@@ -55,7 +57,7 @@ router.patch('/', requireRole('OWNER', 'ADMIN', 'SUPERVISOR'), requireCsrf, asyn
   }
 });
 
-router.post('/test', requireRole('OWNER', 'ADMIN', 'SUPERVISOR'), requireCsrf, async (req, res, next) => {
+router.post('/test', requireCsrf, async (req, res, next) => {
   try {
     const data = botFlowTestSchema.parse(req.body);
     const settings = await getSettings(req.auth.organizationId);

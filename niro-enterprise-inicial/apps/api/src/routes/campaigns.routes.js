@@ -1,4 +1,5 @@
 const express = require('express');
+const { requirePermission } = require('../lib/permissions');
 const { prisma } = require('../lib/prisma');
 const { audit } = require('../lib/audit');
 const { requireAuth, requireRole, requireCsrf } = require('../middleware/auth');
@@ -19,6 +20,7 @@ function requireOrgContext(req, _res, next) {
 }
 
 router.use(requireAuth, requireOrgContext);
+router.use(requirePermission('campaigns'));
 
 const CAMPAIGN_INCLUDE = { attachment: true, createdBy: { select: { id: true, name: true } } };
 
@@ -71,7 +73,7 @@ router.get('/audience', async (req, res, next) => {
   }
 });
 
-router.post('/', requireRole('OWNER', 'ADMIN', 'SUPERVISOR'), requireCsrf, async (req, res, next) => {
+router.post('/', requireCsrf, async (req, res, next) => {
   try {
     const data = createCampaignSchema.parse(req.body);
     const unknownVariables = findUnknownVariables(data.message);
@@ -151,7 +153,7 @@ router.post('/', requireRole('OWNER', 'ADMIN', 'SUPERVISOR'), requireCsrf, async
   }
 });
 
-router.post('/:id/attachment', requireRole('OWNER', 'ADMIN', 'SUPERVISOR'), requireCsrf, upload.single('file'), async (req, res, next) => {
+router.post('/:id/attachment', requireCsrf, upload.single('file'), async (req, res, next) => {
   try {
     if (!req.file) throw new HttpError(400, 'Falta el archivo');
     const campaign = await prisma.campaign.findFirst({
@@ -220,7 +222,7 @@ router.get('/:id', async (req, res, next) => {
   }
 });
 
-router.post('/:id/start', requireRole('OWNER', 'ADMIN', 'SUPERVISOR'), requireCsrf, async (req, res, next) => {
+router.post('/:id/start', requireCsrf, async (req, res, next) => {
   try {
     const campaign = await prisma.campaign.findFirst({
       where: { id: req.params.id, organizationId: req.auth.organizationId }
@@ -246,7 +248,7 @@ router.post('/:id/start', requireRole('OWNER', 'ADMIN', 'SUPERVISOR'), requireCs
   }
 });
 
-router.post('/:id/pause', requireRole('OWNER', 'ADMIN', 'SUPERVISOR'), requireCsrf, async (req, res, next) => {
+router.post('/:id/pause', requireCsrf, async (req, res, next) => {
   try {
     const campaign = await prisma.campaign.findFirst({
       where: { id: req.params.id, organizationId: req.auth.organizationId }
@@ -267,7 +269,7 @@ router.post('/:id/pause', requireRole('OWNER', 'ADMIN', 'SUPERVISOR'), requireCs
   }
 });
 
-router.post('/:id/cancel', requireRole('OWNER', 'ADMIN', 'SUPERVISOR'), requireCsrf, async (req, res, next) => {
+router.post('/:id/cancel', requireCsrf, async (req, res, next) => {
   try {
     const campaign = await prisma.campaign.findFirst({
       where: { id: req.params.id, organizationId: req.auth.organizationId }
@@ -288,7 +290,7 @@ router.post('/:id/cancel', requireRole('OWNER', 'ADMIN', 'SUPERVISOR'), requireC
   }
 });
 
-router.post('/:id/retry-failed', requireRole('OWNER', 'ADMIN', 'SUPERVISOR'), requireCsrf, async (req, res, next) => {
+router.post('/:id/retry-failed', requireCsrf, async (req, res, next) => {
   try {
     const campaign = await prisma.campaign.findFirst({
       where: { id: req.params.id, organizationId: req.auth.organizationId }
@@ -306,7 +308,7 @@ router.post('/:id/retry-failed', requireRole('OWNER', 'ADMIN', 'SUPERVISOR'), re
   }
 });
 
-router.post('/:id/resend', requireRole('OWNER', 'ADMIN', 'SUPERVISOR'), requireCsrf, async (req, res, next) => {
+router.post('/:id/resend', requireCsrf, async (req, res, next) => {
   try {
     const campaign = await prisma.campaign.findFirst({
       where: { id: req.params.id, organizationId: req.auth.organizationId }

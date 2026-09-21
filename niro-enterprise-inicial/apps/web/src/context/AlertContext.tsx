@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import '../styles/alerts.css';
+import { Ui, type UiIconName } from '../components/Ui';
 
 export type AlertTone = 'success' | 'error' | 'warning' | 'info';
 
@@ -33,11 +34,11 @@ type AlertContextValue = {
 
 const AlertContext = createContext<AlertContextValue | null>(null);
 
-const TONE_META: Record<AlertTone, { icon: string; title: string }> = {
-  success: { icon: '✓', title: 'Listo' },
-  error: { icon: '!', title: 'Ocurrió un problema' },
-  warning: { icon: '!', title: 'Atención' },
-  info: { icon: 'i', title: 'Información' }
+const TONE_META: Record<AlertTone, { icon: UiIconName; title: string }> = {
+  success: { icon: 'check-circle', title: 'Listo' },
+  error: { icon: 'x-circle', title: 'Ocurrió un problema' },
+  warning: { icon: 'alert', title: 'Atención' },
+  info: { icon: 'info', title: 'Información' }
 };
 
 export function AlertProvider({ children }: { children: ReactNode }) {
@@ -101,7 +102,7 @@ export function AlertProvider({ children }: { children: ReactNode }) {
           const meta = TONE_META[toast.tone];
           return (
             <div key={toast.id} className={`modern-toast ${toast.tone}`} role={toast.tone === 'error' ? 'alert' : 'status'}>
-              <span className="modern-toast-icon" aria-hidden="true">{meta.icon}</span>
+              <span className="modern-toast-icon" aria-hidden="true"><Ui name={meta.icon} size={18} /></span>
               <div className="modern-toast-content">
                 <strong>{toast.title}</strong>
                 <span>{toast.message}</span>

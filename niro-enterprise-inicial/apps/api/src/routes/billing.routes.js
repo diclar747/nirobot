@@ -23,12 +23,16 @@ router.get('/status', async (req, res, next) => {
   try {
     const org = await loadOrg(req);
     const access = billing.accessFor(org);
+    // Agentes y supervisores solo necesitan saber si la cuenta está habilitada: nada de precios ni pagos.
+    if (!['OWNER', 'ADMIN'].includes(req.auth.role)) {
+      return res.json({ access: { state: access.state, blocked: access.blocked, msLeft: 0, endsAt: null, priceGs: 0, planName: '', planDays: 0 }, payments: [], online: false, seats: null, restricted: true });
+    }
     const payments = await prisma.billingPayment.findMany({ where: { organizationId: org.id, status: { in: ['paid', 'pending'] } }, orderBy: { createdAt: 'desc' }, take: 12 });
     res.json({ access: { ...access, msLeft: access.msLeft }, payments: payments.map(sanitizePayment), online: billing.winsapConfigured(), seats: await billing.seatInfo(org.id) });
   } catch (err) { next(err); }
 });
 
-router.get('/plans', async (_req, res, next) => {
+router.get('/plans', requireRole('OWNER', 'ADMIN'), async (_req, res, next) => {
   try {
     const plans = await prisma.plan.findMany({ where: { active: true }, orderBy: [{ sortOrder: 'asc' }, { priceGs: 'asc' }] });
     res.json({ plans: plans.map((p) => ({ id: p.id, name: p.name, description: p.description, priceGs: p.priceGs, maxAgents: p.maxAgents, features: p.features, popular: p.popular })) });
@@ -48,7 +52,7 @@ router.post('/checkout', requireRole('OWNER', 'ADMIN'), requireCsrf, async (req,
 });
 
 // El cliente vuelve del pago (o toca "Ya pagué"): consultamos a Winsap y activamos.
-router.post('/verify', requireCsrf, async (req, res, next) => {
+router.post('/verify', requireRole('OWNER', 'ADMIN'), requireCsrf, async (req, res, next) => {
   try {
     const activated = await billing.syncPendingPayments(req.auth.organizationId).catch((err) => { console.error('[billing] verify', err.message); return 0; });
     const org = await loadOrg(req);

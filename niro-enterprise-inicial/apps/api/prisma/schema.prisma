@@ -146,6 +146,7 @@ model User {
   callDirectRecords  CallDirectRecord[]   @relation("CallDirectRecordCreator")
   apiKeys            ApiKey[]
   pushSubscriptions  PushSubscription[]
+  permissions        Json?
 }
 
 model Department {

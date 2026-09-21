@@ -3,6 +3,7 @@ import Plyr from 'plyr';
 import WaveSurfer from 'wavesurfer.js';
 import 'plyr/dist/plyr.css';
 import '../styles/media-players.css';
+import { Ui } from './Ui';
 
 function formatClock(seconds: number) {
   if (!Number.isFinite(seconds) || seconds < 0) return '0:00';
@@ -101,7 +102,7 @@ export function WaveAudio({ src, outbound }: { src: string; outbound?: boolean }
   return (
     <div className={`media-audio ${outbound ? 'out' : 'in'}`}>
       <button type="button" className="media-audio-play" onClick={toggle} aria-label={playing ? 'Pausar' : 'Reproducir'}>
-        {playing ? '❚❚' : '▶'}
+        <Ui name={playing ? 'pause' : 'play'} size={16} />
       </button>
       <div className="media-audio-body">
         <div ref={holder} className="media-audio-wave" />

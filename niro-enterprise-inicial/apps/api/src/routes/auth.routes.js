@@ -160,6 +160,7 @@ function sanitizeUser(user) {
     role: user.role,
     organizationId: user.organizationId,
     mustChangePassword: user.mustChangePassword,
+    permissions: require('../lib/permissions').effectivePermissions(user),
     organization: user.organization
       ? { id: user.organization.id, name: user.organization.name, slug: user.organization.slug }
       : null

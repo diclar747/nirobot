@@ -1,4 +1,5 @@
 const express = require('express');
+const { requirePermission } = require('../lib/permissions');
 const { prisma } = require('../lib/prisma');
 const { audit } = require('../lib/audit');
 const { HttpError } = require('../lib/errors');
@@ -14,6 +15,7 @@ function requireOrgContext(req, _res, next) {
 }
 
 router.use(requireAuth, requireOrgContext);
+router.use('/api-keys', requirePermission('developers'));
 
 const KEY_INCLUDE = {
   createdBy: { select: { id: true, name: true, email: true } },

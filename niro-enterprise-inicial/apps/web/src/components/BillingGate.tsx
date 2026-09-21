@@ -3,8 +3,10 @@ import { Link, useLocation } from 'react-router-dom';
 import { apiGet, apiPost } from '../lib/api';
 import { getSocket } from '../lib/socket';
 import { useAuth } from '../context/AuthContext';
+import { isAdminRole } from '../lib/permissions';
 import { BillingPage } from '../routes/Billing';
 import '../styles/billing.css';
+import { Ui } from './Ui';
 
 export interface BillingAccess {
   state: 'trial' | 'active' | 'expired' | 'exempt';
@@ -41,6 +43,7 @@ export function BillingGate({ children }: { children: ReactNode }) {
   const [notices, setNotices] = useState<Notice[]>([]);
   const [locked, setLocked] = useState(false);
   const enabled = Boolean(user && user.role !== 'SUPERADMIN');
+  const admin = isAdminRole(user);
 
   const refresh = useCallback(async () => {
     if (!enabled) return;
@@ -71,22 +74,36 @@ export function BillingGate({ children }: { children: ReactNode }) {
   }
 
   if (!enabled) return <>{children}</>;
-  if (locked || status?.access.blocked) return <BillingPage status={status} onRefresh={refresh} expired />;
+  if (locked || status?.access.blocked) {
+    // Solo el administrador compra el plan: el resto ve un aviso simple, sin precios ni pagos.
+    if (!admin) {
+      return (
+        <div className="billing-page wall">
+          <div className="billing-card" style={{ textAlign: 'center' }}>
+            <span className="billing-tag expired">Cuenta pausada</span>
+            <h1>El acceso está temporalmente pausado</h1>
+            <p className="billing-lead">El plan de tu cuenta necesita renovarse. Avisale al administrador de tu empresa para que lo active y puedas seguir trabajando.</p>
+          </div>
+        </div>
+      );
+    }
+    return <BillingPage status={status} onRefresh={refresh} expired />;
+  }
 
   const access = status?.access;
-  const showTrial = access?.state === 'trial';
-  const showRenew = access?.state === 'active' && access.msLeft < 3 * 24 * 3600 * 1000;
+  const showTrial = admin && access?.state === 'trial';
+  const showRenew = admin && access?.state === 'active' && access.msLeft < 3 * 24 * 3600 * 1000;
   return (
     <>
       {showTrial && access && (
         <div className={`billing-banner ${access.msLeft < 3 * 3600 * 1000 ? 'urgent' : ''}`}>
-          <span>⏳ <b>Prueba gratuita:</b> te quedan <b>{formatLeft(access.msLeft)}</b>. Después activá el plan de {formatGs(access.priceGs)} por mes.</span>
+          <span><Ui name="clock" size={16} /> <b>Prueba gratuita:</b> te quedan <b>{formatLeft(access.msLeft)}</b>. Después activá el plan de {formatGs(access.priceGs)} por mes.</span>
           {location.pathname !== '/billing' && <Link to="/billing" className="billing-banner-btn">Activar plan</Link>}
         </div>
       )}
       {showRenew && access && (
         <div className="billing-banner urgent">
-          <span>🔔 Tu plan vence en <b>{formatLeft(access.msLeft)}</b>. Renovalo para no perder el acceso.</span>
+          <span><Ui name="clock" size={16} /> Tu plan vence en <b>{formatLeft(access.msLeft)}</b>. Renovalo para no perder el acceso.</span>
           <Link to="/billing" className="billing-banner-btn">Renovar</Link>
         </div>
       )}

@@ -60,7 +60,8 @@ const updateUserSchema = z
   .object({
     name: z.string().min(2).max(120).optional(),
     role: z.enum(ORG_ROLES).optional(),
-    active: z.boolean().optional()
+    active: z.boolean().optional(),
+    permissions: z.record(z.string(), z.boolean()).optional()
   })
   .refine((data) => Object.keys(data).length > 0, { message: 'No hay cambios para aplicar' });
 

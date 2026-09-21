@@ -6,6 +6,7 @@ import { getSocket } from '../lib/socket';
 import { WhatsAppConnectModal } from '../components/WhatsAppConnectModal';
 import { NiroMascot } from '../components/NiroMascot';
 import type { DashboardStats, AgentPresence } from '../types';
+import { Ui } from '../components/Ui';
 
 type WhatsAppStatus = 'disconnected' | 'connecting' | 'qr' | 'connected';
 
@@ -252,7 +253,7 @@ export function Home() {
         <div className="dashboard-hero-content">
           <div className="dashboard-hero-left">
             <h1 className="dashboard-hero-title">
-              Hola, {user?.name.split(' ')[0] || ''} 👋
+              Hola, {user?.name.split(' ')[0] || ''}
             </h1>
             <p className="dashboard-hero-subtitle">
               Niro está activo y atendiendo tus clientes
@@ -402,7 +403,7 @@ export function Home() {
 
             <div className="chart-side-stats">
               <div className="side-stat-row">
-                <div className="stat-icon-circle blue">💬</div>
+                <div className="stat-icon-circle blue"><Ui name="chat" size={22} /></div>
                 <div>
                   <div className="stat-value">{msgStats?.total ?? 0}</div>
                   <div className="stat-title">Mensajes totales</div>
@@ -410,7 +411,7 @@ export function Home() {
               </div>
 
               <div className="side-stat-row">
-                <div className="stat-icon-circle green">⚡</div>
+                <div className="stat-icon-circle green"><Ui name="zap" size={22} /></div>
                 <div>
                   <div className="stat-value">{botResolvedPct}%</div>
                   <div className="stat-title">Respondidos por IA</div>
@@ -418,7 +419,7 @@ export function Home() {
               </div>
 
               <div className="side-stat-row">
-                <div className="stat-icon-circle orange">👥</div>
+                <div className="stat-icon-circle orange"><Ui name="users" size={22} /></div>
                 <div>
                   <div className="stat-value">{transferredPct}%</div>
                   <div className="stat-title">Respondidos por agentes</div>
@@ -495,7 +496,7 @@ export function Home() {
               className="table-card-link"
               onClick={() => navigate('/inbox')}
             >
-              Ver todas →
+              Ver todas <Ui name="arrow-right" size={14} />
             </button>
           </div>
 
@@ -566,10 +567,10 @@ export function Home() {
         <div className="footer-brand-title">NIRO</div>
         <div className="footer-brand-slogan">TU NEGOCIO CON INTELIGENCIA REAL</div>
         <div className="footer-brand-tags">
-          <span className="footer-tag">💬 WhatsApp</span>
-          <span className="footer-tag">🚀 Automatiza</span>
-          <span className="footer-tag">🛒 Vende</span>
-          <span className="footer-tag">📊 Crece</span>
+          <span className="footer-tag"><Ui name="chat" size={14} /> WhatsApp</span>
+          <span className="footer-tag"><Ui name="zap" size={14} /> Automatiza</span>
+          <span className="footer-tag"><Ui name="cart" size={14} /> Vende</span>
+          <span className="footer-tag"><Ui name="chart" size={14} /> Crece</span>
         </div>
       </footer>
 

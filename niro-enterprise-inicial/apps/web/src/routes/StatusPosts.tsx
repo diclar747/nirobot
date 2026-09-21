@@ -6,6 +6,7 @@ import { EmptyState, PageHeader, PageShell, Panel, Pill, StatCard, StatGrid, typ
 import { StatusCampaigns } from '../components/StatusCampaigns';
 import type { Contact } from '../types';
 import '../styles/status-posts.css';
+import { Ui } from '../components/Ui';
 
 type PostStatus = 'draft' | 'scheduled' | 'processing' | 'published' | 'failed' | 'cancelled' | 'deleted' | 'expired';
 
@@ -200,7 +201,7 @@ export function StatusPosts() {
   return (
     <PageShell>
       <PageHeader
-        icon="✦"
+        icon={<Ui name="megaphone" size={24} />}
         title="Estados de WhatsApp"
         subtitle="Publicá historias de 24 horas desde Nirobot: ahora, programadas o en campañas que cambian solas cada N horas."
         actions={<Pill tone={metrics?.connected ? 'success' : 'danger'} dot>{metrics?.connected ? 'WhatsApp conectado' : 'WhatsApp desconectado'}</Pill>}
@@ -225,8 +226,8 @@ export function StatusPosts() {
           <div className="sp-form">
             <div className="sp-seg" role="tablist">
               <button type="button" className={contentType === 'text' ? 'on' : ''} onClick={() => { setContentType('text'); setFile(null); }}>Aa Texto</button>
-              <button type="button" className={contentType === 'image' ? 'on' : ''} onClick={() => { setContentType('image'); setFile(null); }}>🖼 Imagen</button>
-              <button type="button" className={contentType === 'video' ? 'on' : ''} onClick={() => { setContentType('video'); setFile(null); }}>🎬 Video</button>
+              <button type="button" className={contentType === 'image' ? 'on' : ''} onClick={() => { setContentType('image'); setFile(null); }}><Ui name="image" size={14} /> Imagen</button>
+              <button type="button" className={contentType === 'video' ? 'on' : ''} onClick={() => { setContentType('video'); setFile(null); }}><Ui name="video" size={14} /> Video</button>
             </div>
 
             {contentType === 'text' ? (
@@ -321,7 +322,7 @@ export function StatusPosts() {
         {loading ? (
           <p className="sp-loading">Cargando…</p>
         ) : posts.length === 0 ? (
-          <EmptyState icon="✦" title="Todavía no publicaste estados" text="Creá el primero arriba. Se mantiene visible 24 horas." />
+          <EmptyState icon={<Ui name="megaphone" size={24} />} title="Todavía no publicaste estados" text="Creá el primero arriba. Se mantiene visible 24 horas." />
         ) : (
           <ul className="sp-history">
             {posts.map((post) => {

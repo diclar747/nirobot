@@ -5,6 +5,7 @@ import { useAuth } from '../context/AuthContext';
 import { Modal } from '../components/Modal';
 import { PageHeader, PageShell, StatCard, StatGrid } from '../components/PageKit';
 import '../styles/contacts.css';
+import { Ui } from '../components/Ui';
 
 interface DirContact {
   id: string; name: string | null; phone: string | null; email: string | null; avatarUrl: string | null;
@@ -94,7 +95,7 @@ export function Contacts() {
 
   async function sendToCrm(contact: DirContact, target: string) {
     setMenuFor(null);
-    try { await apiPost(`/api/org/contacts/${contact.id}/crm`, { stage: target }); flash(`${contact.name || formatPhone(contact.phone)} → ${target}`); await load(); }
+    try { await apiPost(`/api/org/contacts/${contact.id}/crm`, { stage: target }); flash(`${contact.name || formatPhone(contact.phone)}: enviado a ${target}`); await load(); }
     catch (err) { flash(err instanceof ApiError ? err.message : 'No se pudo enviar al CRM'); }
   }
 
@@ -117,8 +118,8 @@ export function Contacts() {
     <PageShell>
       <PageHeader title="Contactos" subtitle="Todos los contactos de tu WhatsApp en un solo lugar: editá, etiquetá y enviá al CRM."
         actions={<>
-          <button className="btn secondary" onClick={sync} disabled={syncing}>{syncing ? 'Sincronizando…' : '↻ Sincronizar teléfono'}</button>
-          <a className="btn" href="/api/org/contacts/export.csv" download>⬇ Descargar contactos</a>
+          <button className="btn secondary" onClick={sync} disabled={syncing}>{syncing ? 'Sincronizando…' : <><Ui name="refresh" size={16} /> Sincronizar teléfono</>}</button>
+          <a className="btn" href="/api/org/contacts/export.csv" download><Ui name="download" size={16} /> Descargar contactos</a>
         </>} />
 
       <StatGrid>
@@ -129,7 +130,7 @@ export function Contacts() {
       </StatGrid>
 
       <div className="contacts-toolbar">
-        <input className="input contacts-search" placeholder="🔎 Buscar por nombre, teléfono o email…" value={query} onChange={(e) => setQuery(e.target.value)} />
+        <input className="input contacts-search" placeholder="Buscar por nombre, teléfono o email…" value={query} onChange={(e) => setQuery(e.target.value)} />
         <select className="input" value={stage} onChange={(e) => { setStage(e.target.value); setPage(1); }}>
           <option value="">Todas las etapas CRM</option>{CRM_STAGES.map((s) => <option key={s.key} value={s.key}>{s.key}</option>)}
         </select>
@@ -157,17 +158,17 @@ export function Contacts() {
                   <button type="button" className="contact-menu-btn" aria-label="Acciones" onClick={(e) => { e.stopPropagation(); setMenuFor(menuFor === c.id ? null : c.id); }}>⋮</button>
                   {menuFor === c.id && (
                     <div className="contact-menu" onClick={(e) => e.stopPropagation()}>
-                      <button type="button" onClick={() => { setMenuFor(null); setEdit(c); }}>✏️ Editar contacto</button>
-                      {c.conversationId && <button type="button" onClick={() => navigate(`/inbox?conversation=${c.conversationId}`)}>💬 Abrir chat</button>}
+                      <button type="button" onClick={() => { setMenuFor(null); setEdit(c); }}><Ui name="edit" size={16} /> Editar contacto</button>
+                      {c.conversationId && <button type="button" onClick={() => navigate(`/inbox?conversation=${c.conversationId}`)}><Ui name="chat" size={16} /> Abrir chat</button>}
                       <div className="contact-menu-label">Enviar al CRM</div>
-                      {CRM_STAGES.map((s) => <button type="button" key={s.key} onClick={() => sendToCrm(c, s.key)}><i style={{ background: s.color }} /> {s.key}{c.crmStage === s.key ? ' ✓' : ''}</button>)}
-                      {canDelete && <><div className="contact-menu-sep" /><button type="button" className="danger" onClick={() => { setMenuFor(null); setRemove(c); }}>🗑️ Eliminar contacto</button></>}
+                      {CRM_STAGES.map((s) => <button type="button" key={s.key} onClick={() => sendToCrm(c, s.key)}><i style={{ background: s.color }} /> {s.key}{c.crmStage === s.key && <Ui name="check" size={14} style={{ marginLeft: 'auto' }} />}</button>)}
+                      {canDelete && <><div className="contact-menu-sep" /><button type="button" className="danger" onClick={() => { setMenuFor(null); setRemove(c); }}><Ui name="trash" size={16} /> Eliminar contacto</button></>}
                     </div>
                   )}
                 </div>
               </div>
               <div className="contact-card-tags">
-                {c.crmStage && <span className="contact-chip crm" style={{ borderColor: stageColor(c.crmStage), color: stageColor(c.crmStage) }}>◈ {c.crmStage}</span>}
+                {c.crmStage && <span className="contact-chip crm" style={{ borderColor: stageColor(c.crmStage), color: stageColor(c.crmStage) }}><Ui name="tag" size={12} /> {c.crmStage}</span>}
                 {c.tags.slice(0, 3).map((t) => <span key={t} className="contact-chip"># {t}</span>)}
                 {c.tags.length > 3 && <span className="contact-chip more">+{c.tags.length - 3}</span>}
               </div>
@@ -182,9 +183,9 @@ export function Contacts() {
 
       {data && data.pages > 1 && (
         <div className="contacts-pager">
-          <button className="btn secondary small" disabled={page <= 1} onClick={() => setPage(page - 1)}>← Anterior</button>
+          <button className="btn secondary small" disabled={page <= 1} onClick={() => setPage(page - 1)}><Ui name="arrow-left" size={14} /> Anterior</button>
           {pageNumbers.map((p) => <button key={p} className={`btn small ${p === data.page ? '' : 'secondary'}`} onClick={() => setPage(p)}>{p}</button>)}
-          <button className="btn secondary small" disabled={page >= data.pages} onClick={() => setPage(page + 1)}>Siguiente →</button>
+          <button className="btn secondary small" disabled={page >= data.pages} onClick={() => setPage(page + 1)}>Siguiente <Ui name="arrow-right" size={14} /></button>
           <span>{data.total} contactos</span>
         </div>
       )}

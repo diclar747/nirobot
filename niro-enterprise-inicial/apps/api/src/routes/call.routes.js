@@ -1,4 +1,5 @@
 const express = require('express');
+const { requirePermission } = require('../lib/permissions');
 const multer = require('multer');
 const { prisma } = require('../lib/prisma');
 const { requireAuth, requireRole, requireCsrf } = require('../middleware/auth');
@@ -30,6 +31,7 @@ function requireOrgContext(req, _res, next) {
 }
 
 router.use(requireAuth, requireOrgContext);
+router.use(requirePermission('calls'));
 
 function currentAccountStatus(organizationId, account) {
   const status = whatsapp.getStatus(organizationId);
@@ -85,7 +87,7 @@ router.post('/accounts/:id/disconnect', requireRole('OWNER', 'ADMIN'), requireCs
   } catch (err) { next(err); }
 });
 
-router.post('/direct', requireRole('OWNER', 'ADMIN', 'SUPERVISOR', 'AGENT'), requireCsrf, async (req, res, next) => {
+router.post('/direct', requireCsrf, async (req, res, next) => {
   try {
     const conversationId = String(req.body?.conversationId || '').trim();
     if (!conversationId) throw new HttpError(400, 'Falta seleccionar una conversación');
@@ -148,7 +150,7 @@ router.get('/audios/ai/status', async (_req, res) => {
   res.json({ tts: tts.status() });
 });
 
-router.post('/audios', requireRole('OWNER', 'ADMIN', 'SUPERVISOR'), requireCsrf, audioUpload.single('file'), async (req, res, next) => {
+router.post('/audios', requireCsrf, audioUpload.single('file'), async (req, res, next) => {
   try {
     if (!req.file) throw new HttpError(400, 'Falta el archivo de audio');
     let normalized;
@@ -176,7 +178,7 @@ router.post('/audios', requireRole('OWNER', 'ADMIN', 'SUPERVISOR'), requireCsrf,
   } catch (err) { next(err); }
 });
 
-router.post('/audios/ai/generate', requireRole('OWNER', 'ADMIN', 'SUPERVISOR'), requireCsrf, async (req, res, next) => {
+router.post('/audios/ai/generate', requireCsrf, async (req, res, next) => {
   try {
     const text = String(req.body?.text || '').trim();
     if (!text) throw new HttpError(400, 'Escribí el texto que querés convertir en audio');
@@ -205,7 +207,7 @@ router.post('/audios/ai/generate', requireRole('OWNER', 'ADMIN', 'SUPERVISOR'), 
   } catch (err) { next(err); }
 });
 
-router.patch('/audios/:id', requireRole('OWNER', 'ADMIN', 'SUPERVISOR'), requireCsrf, async (req, res, next) => {
+router.patch('/audios/:id', requireCsrf, async (req, res, next) => {
   try {
     const audio = await prisma.callAudio.findFirst({ where: { id: req.params.id, organizationId: req.auth.organizationId } });
     if (!audio) throw new HttpError(404, 'Audio no encontrado');
@@ -270,7 +272,7 @@ router.get('/campaigns', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-router.post('/campaigns', requireRole('OWNER', 'ADMIN', 'SUPERVISOR'), requireCsrf, async (req, res, next) => {
+router.post('/campaigns', requireCsrf, async (req, res, next) => {
   try {
     const data = createCallCampaignSchema.parse(req.body);
     const organizationId = req.auth.organizationId;
@@ -335,7 +337,7 @@ router.get('/campaigns/:id', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-router.post('/campaigns/:id/start', requireRole('OWNER', 'ADMIN', 'SUPERVISOR'), requireCsrf, async (req, res, next) => {
+router.post('/campaigns/:id/start', requireCsrf, async (req, res, next) => {
   try {
     const campaign = await calls.startCampaign(req.auth.organizationId, req.params.id);
     await writeCallAudit({ organizationId: req.auth.organizationId, campaignId: campaign.id, userId: req.auth.userId, action: 'call.campaign.started', entityType: 'CallCampaign', entityId: campaign.id });
@@ -343,7 +345,7 @@ router.post('/campaigns/:id/start', requireRole('OWNER', 'ADMIN', 'SUPERVISOR'),
   } catch (err) { next(err); }
 });
 
-router.post('/campaigns/:id/pause', requireRole('OWNER', 'ADMIN', 'SUPERVISOR'), requireCsrf, async (req, res, next) => {
+router.post('/campaigns/:id/pause', requireCsrf, async (req, res, next) => {
   try {
     const existing = await calls.findCampaign(req.auth.organizationId, req.params.id);
     if (!existing) throw new HttpError(404, 'Campaña de llamadas no encontrada');
@@ -358,7 +360,7 @@ router.post('/campaigns/:id/pause', requireRole('OWNER', 'ADMIN', 'SUPERVISOR'),
   } catch (err) { next(err); }
 });
 
-router.post('/campaigns/:id/resume', requireRole('OWNER', 'ADMIN', 'SUPERVISOR'), requireCsrf, async (req, res, next) => {
+router.post('/campaigns/:id/resume', requireCsrf, async (req, res, next) => {
   try {
     const campaign = await calls.startCampaign(req.auth.organizationId, req.params.id);
     await writeCallAudit({ organizationId: req.auth.organizationId, campaignId: campaign.id, userId: req.auth.userId, action: 'call.campaign.resumed', entityType: 'CallCampaign', entityId: campaign.id });
@@ -366,7 +368,7 @@ router.post('/campaigns/:id/resume', requireRole('OWNER', 'ADMIN', 'SUPERVISOR')
   } catch (err) { next(err); }
 });
 
-router.post('/campaigns/:id/cancel', requireRole('OWNER', 'ADMIN', 'SUPERVISOR'), requireCsrf, async (req, res, next) => {
+router.post('/campaigns/:id/cancel', requireCsrf, async (req, res, next) => {
   try {
     const campaign = await calls.cancelCampaign(req.auth.organizationId, req.params.id);
     await writeCallAudit({ organizationId: req.auth.organizationId, campaignId: campaign.id, userId: req.auth.userId, action: 'call.campaign.cancelled', entityType: 'CallCampaign', entityId: campaign.id });

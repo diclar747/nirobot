@@ -5,6 +5,7 @@ import { useAuth } from '../context/AuthContext';
 import { PageHeader } from '../components/PageKit';
 import { IconChart } from '../components/icons';
 import type { ConversationStatus, OrderStatus } from '../types';
+import { Ui } from '../components/Ui';
 
 interface Summary {
   period: { days: number };
@@ -227,18 +228,18 @@ export function Reports() {
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, marginBottom: 20 }}>
         <div className="card" style={{ padding: 22, borderRadius: 14, background: 'var(--bg-surface)' }}>
           <h3 style={{ margin: '0 0 16px', fontSize: 15, fontWeight: 800, color: 'var(--text-main)' }}>
-            📋 Conversaciones por Estado
+            <Ui name="clipboard" size={16} /> Conversaciones por Estado
           </h3>
           <ModernBarList rows={conversationStatusRows} color="linear-gradient(90deg, #0284c7 0%, #38bdf8 100%)" />
         </div>
 
         <div className="card" style={{ padding: 22, borderRadius: 14, background: 'var(--bg-surface)' }}>
           <h3 style={{ margin: '0 0 16px', fontSize: 15, fontWeight: 800, color: 'var(--text-main)' }}>
-            🌐 Conversaciones por Canal de Entrada
+            <Ui name="globe" size={16} /> Conversaciones por Canal de Entrada
           </h3>
           <ModernBarList
             rows={summary.conversations.byChannel.map((c) => ({
-              label: c.channel === 'whatsapp' ? '🟢 WhatsApp' : c.channel === 'web' ? '🌐 Widget Web' : `📱 ${c.channel}`,
+              label: c.channel === 'whatsapp' ? 'WhatsApp' : c.channel === 'web' ? 'Widget Web' : c.channel,
               count: c.count
             }))}
             color="linear-gradient(90deg, #10b981 0%, #34d399 100%)"
@@ -250,7 +251,7 @@ export function Reports() {
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, marginBottom: 20 }}>
         <div className="card" style={{ padding: 22, borderRadius: 14, background: 'var(--bg-surface)' }}>
           <h3 style={{ margin: '0 0 16px', fontSize: 15, fontWeight: 800, color: 'var(--text-main)' }}>
-            👤 Desempeño y Carga por Agente
+            <Ui name="user" size={16} /> Desempeño y Carga por Agente
           </h3>
           <ModernBarList
             rows={summary.conversations.byAgent.map((a) => ({ label: a.name, count: a.count }))}
@@ -260,7 +261,7 @@ export function Reports() {
 
         <div className="card" style={{ padding: 22, borderRadius: 14, background: 'var(--bg-surface)' }}>
           <h3 style={{ margin: '0 0 16px', fontSize: 15, fontWeight: 800, color: 'var(--text-main)' }}>
-            🏢 Volumen por Departamento
+            <Ui name="building" size={16} /> Volumen por Departamento
           </h3>
           <ModernBarList
             rows={summary.conversations.byDepartment.map((d) => ({ label: d.name, count: d.count }))}
@@ -272,7 +273,7 @@ export function Reports() {
       {/* Row 3: Pedidos por Estado */}
       <div className="card" style={{ padding: 22, borderRadius: 14, background: 'var(--bg-surface)', marginBottom: 20 }}>
         <h3 style={{ margin: '0 0 16px', fontSize: 15, fontWeight: 800, color: 'var(--text-main)' }}>
-          🛒 Estado de Pedidos y Logística
+          <Ui name="cart" size={16} /> Estado de Pedidos y Logística
         </h3>
         <ModernBarList rows={orderStatusRows} color="linear-gradient(90deg, #2563eb 0%, #60a5fa 100%)" />
       </div>
@@ -281,7 +282,7 @@ export function Reports() {
       {canSeeAudit && (
         <div className="card" style={{ padding: 22, borderRadius: 14, background: 'var(--bg-surface)' }}>
           <h3 style={{ margin: '0 0 16px', fontSize: 15, fontWeight: 800, color: 'var(--text-main)' }}>
-            🔒 Registro de Auditoría de Operaciones
+            <Ui name="lock" size={16} /> Registro de Auditoría de Operaciones
           </h3>
           <div style={{ overflowX: 'auto' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>

@@ -1,4 +1,5 @@
 const express = require('express');
+const { requirePermission } = require('../lib/permissions');
 const { prisma } = require('../lib/prisma');
 const { audit } = require('../lib/audit');
 const { emitToOrg, emitToUser } = require('../lib/realtime');
@@ -289,7 +290,7 @@ router.post('/:id/claim', requireCsrf, async (req, res, next) => {
   }
 });
 
-router.post('/:id/transfer', requireCsrf, async (req, res, next) => {
+router.post('/:id/transfer', requirePermission('transferChats'), requireCsrf, async (req, res, next) => {
   try {
     const { targetUserId, departmentId } = req.body;
     const note = typeof req.body.note === 'string' ? req.body.note.slice(0, 500) : undefined;
@@ -381,7 +382,7 @@ router.post('/:id/transfer', requireCsrf, async (req, res, next) => {
   }
 });
 
-router.post('/:id/transfer-response', requireCsrf, async (req, res, next) => {
+router.post('/:id/transfer-response', requirePermission('transferChats'), requireCsrf, async (req, res, next) => {
   try {
     const { action } = req.body; // 'accept' | 'reject'
     const reason = typeof req.body.reason === 'string' ? req.body.reason.slice(0, 500) : undefined;

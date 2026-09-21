@@ -6,6 +6,7 @@ import { contactLabel, formatPhone, formatTime, initials, isUsablePhone, phoneDi
 import { CRM_STAGES, deriveStage, statusForStage, tagsForStage, type CrmStage } from '../lib/crmStage';
 import { Modal } from '../components/Modal';
 import { PlyrVideo, WaveAudio } from '../components/MediaPlayers';
+import { Ui, type UiIconName } from '../components/Ui';
 import { StatusStories } from '../components/StatusStories';
 import { AgentsDropPanel, setConversationDragData } from '../components/AgentsDropPanel';
 import { useAlerts } from '../context/AlertContext';
@@ -133,7 +134,7 @@ export function Inbox() {
         showToast('Mensaje quitado de destacados');
       } else {
         next.add(msgId);
-        showToast('⭐ Mensaje guardado en destacados');
+        showToast('Mensaje guardado en destacados');
       }
       try {
         localStorage.setItem('niro_starred_messages', JSON.stringify(Array.from(next)));
@@ -219,8 +220,8 @@ export function Inbox() {
 
   const gridTemplate = leftCollapsed
     ? rightCollapsed
-      ? '1fr 56px'
-      : '1fr 340px'
+      ? '72px 1fr 56px'
+      : '72px 1fr 340px'
     : rightCollapsed
     ? '320px 1fr 56px'
     : '320px 1fr 340px';
@@ -249,7 +250,7 @@ export function Inbox() {
                     padding: '2px 6px'
                   }}
                 >
-                  ◀
+                  <Ui name="chevron-left" size={16} />
                 </button>
               </div>
               <div style={{ display: 'flex', gap: 6 }}>
@@ -296,8 +297,8 @@ export function Inbox() {
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
               />
-              <span style={{ position: 'absolute', left: 11, top: '50%', transform: 'translateY(-50%)', opacity: 0.5, fontSize: 13 }}>
-                🔍
+              <span style={{ position: 'absolute', left: 11, top: '50%', transform: 'translateY(-50%)', opacity: 0.5, display: 'flex' }}>
+                <Ui name="search" size={15} />
               </span>
             </div>
           </div>
@@ -336,7 +337,7 @@ export function Inbox() {
                     <div className="crm-conv-preview" style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
                       {c.contact.phone ? (
                         <span style={{ color: 'var(--primary-glow)', fontWeight: 600, fontSize: 11.5 }}>
-                          📞 {formatPhone(c.contact.phone)}
+                          <Ui name="phone" size={12} /> {formatPhone(c.contact.phone)}
                         </span>
                       ) : null}
                       <span style={{ color: 'var(--text-dim)', fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -348,7 +349,7 @@ export function Inbox() {
                       <StageBadge conversation={c} />
                       {c.assignedTo && (
                         <span style={{ fontSize: 10.5, color: 'var(--text-dim)' }}>
-                          👤 {c.assignedTo.name.split(' ')[0]}
+                          <Ui name="user" size={12} /> {c.assignedTo.name.split(' ')[0]}
                         </span>
                       )}
                     </div>
@@ -358,6 +359,35 @@ export function Inbox() {
             })}
           </div>
         </div>
+      )}
+
+      {leftCollapsed && (
+        <aside className="crm-conv-rail" aria-label="Conversaciones minimizadas">
+          <button type="button" className="crm-conv-rail-btn" onClick={() => setLeftCollapsed(false)} title="Mostrar lista de conversaciones" aria-label="Mostrar lista de conversaciones"><Ui name="chevron-right" size={18} /></button>
+          <button type="button" className="crm-conv-rail-btn accent" onClick={() => setShowNew(true)} title="Nueva conversación" aria-label="Nueva conversación"><Ui name="plus" size={20} /></button>
+          <div className="crm-conv-rail-tabs">
+            {([['all', 'chat', 'Todas'], ['clients', 'users', 'Clientes'], ['internal', 'lock', 'Internas']] as [string, UiIconName, string][]).map(([key, icon, label]) => (
+              <button type="button" key={key} className={`crm-conv-rail-btn ${tab === key ? 'active' : ''}`} onClick={() => setTab(key as typeof tab)} title={label} aria-label={label}><Ui name={icon} size={20} /></button>
+            ))}
+          </div>
+          <div className="crm-conv-rail-sep" />
+          <div className="crm-conv-rail-list">
+            {filteredConversations.map((c) => (
+              <button
+                type="button"
+                key={c.id}
+                className={`crm-conv-rail-avatar ${selected?.id === c.id ? 'active' : ''}`}
+                onClick={() => setSelectedId(c.id)}
+                title={`${contactLabel(c.contact)}${c.contact.phone ? ` · ${formatPhone(c.contact.phone)}` : ''}`}
+                aria-label={contactLabel(c.contact)}
+              >
+                <Avatar contact={c.contact} />
+                <i className="crm-conv-rail-dot" style={{ background: stageDotColor(c) }} />
+              </button>
+            ))}
+            {!loadingList && filteredConversations.length === 0 && <span className="crm-conv-rail-empty">Sin chats</span>}
+          </div>
+        </aside>
       )}
 
       {/* =========================================================
@@ -409,7 +439,7 @@ export function Inbox() {
       {incomingTransfer && (
         <div className="crm-transfer-banner">
           <div>
-            <strong>🔄 Nueva conversación transferida</strong>
+            <strong><Ui name="transfer" size={16} /> Nueva conversación transferida</strong>
             <span>
               {incomingTransfer.fromAgent} te transfirió a {contactLabel(incomingTransfer.conversation.contact)}
               {incomingTransfer.note ? ` — "${incomingTransfer.note}"` : ''}
@@ -477,7 +507,7 @@ export function Inbox() {
           onForwarded={(targetId) => {
             setForwardMessage(null);
             setSelectedId(targetId);
-            showToast('✅ Mensaje reenviado con éxito');
+            showToast('Mensaje reenviado con éxito');
           }}
         />
       )}
@@ -492,7 +522,7 @@ export function Inbox() {
             setConversations((prev) =>
               prev.map((c) => (c.contact.id === updated.id ? { ...c, contact: updated } : c))
             );
-            showToast('✅ Contacto actualizado correctamente');
+            showToast('Contacto actualizado correctamente');
           }}
         />
       )}
@@ -545,7 +575,7 @@ function LightboxModal({ url, fileName, onClose }: { url: string; fileName: stri
           className="btn small"
           style={{ background: 'rgba(255,255,255,0.2)', color: '#fff', border: '1px solid rgba(255,255,255,0.3)', textDecoration: 'none' }}
         >
-          ⬇️ Descargar
+          <Ui name="download" size={14} /> Descargar
         </a>
         <button
           type="button"
@@ -564,7 +594,7 @@ function LightboxModal({ url, fileName, onClose }: { url: string; fileName: stri
             justifyContent: 'center'
           }}
         >
-          ✕
+          <Ui name="x" size={16} />
         </button>
       </div>
 
@@ -729,13 +759,13 @@ function ActiveChatWindow({
       setDirectCall(result.call);
       if (!result.call.audioToken) throw new Error('El servidor no habilitó el audio de la llamada');
       await audio.attach(result.call.id, result.call.audioToken);
-      showToast(`📞 ${directCallStatusLabel(result.call.status)} a ${name}`);
+      showToast(`${directCallStatusLabel(result.call.status)} a ${name}`);
     } catch (err) {
       audio.stop();
       if (callIdRef.current) void apiPost(`/api/org/wa-calls/direct/${callIdRef.current}/hangup`, {}).catch(() => {});
       const message = err instanceof Error ? err.message : 'No se pudo iniciar la llamada';
       setDirectCallError(message);
-      showToast(`⚠️ ${message}`);
+      showToast(`${message}`);
     } finally {
       setDirectCallBusy(false);
     }
@@ -748,7 +778,7 @@ function ActiveChatWindow({
       const result = await apiPost<{ call: DirectCall }>(`/api/org/wa-calls/direct/${directCall.id}/hangup`, {});
       setDirectCall(result.call);
       audioRef.current?.stop(); audioRef.current = null; callIdRef.current = null;
-      showToast('📴 Llamada finalizada');
+      showToast('Llamada finalizada');
     } catch (err) {
       const message = err instanceof ApiError ? err.message : 'No se pudo finalizar la llamada';
       setDirectCallError(message);
@@ -874,7 +904,7 @@ function ActiveChatWindow({
     try {
       await apiDelete(`/api/org/conversations/${conversation.id}/messages/${message.id}`);
       setMessages((prev) => prev.filter((m) => m.id !== message.id));
-      showToast('🗑️ Mensaje eliminado');
+      showToast('Mensaje eliminado');
     } catch (err) {
       console.error(err);
     }
@@ -993,7 +1023,7 @@ function ActiveChatWindow({
               title="Mostrar lista de conversaciones"
               style={{ fontSize: 13 }}
             >
-              ▶
+              <Ui name="chevron-right" size={16} />
             </button>
           )}
 
@@ -1008,7 +1038,7 @@ function ActiveChatWindow({
                 </span>
                 {conversation.contact.phone && (
                   <span style={{ fontSize: 12, color: 'var(--primary-glow)', fontWeight: 600 }}>
-                    📞 {formatPhone(conversation.contact.phone)}
+                    <Ui name="phone" size={12} /> {formatPhone(conversation.contact.phone)}
                   </span>
                 )}
               </div>
@@ -1021,7 +1051,7 @@ function ActiveChatWindow({
                     rel="noreferrer"
                     style={{ color: '#25d366', textDecoration: 'none', fontWeight: 700 }}
                   >
-                    WhatsApp ↗
+                    WhatsApp <Ui name="external" size={12} />
                   </a>
                 )}
               </div>
@@ -1038,7 +1068,7 @@ function ActiveChatWindow({
             title="Enviar esta conversación al tablero CRM"
           >
             {CRM_STAGES.map((s) => (
-              <option key={s.key} value={s.key}>📋 {s.label}</option>
+              <option key={s.key} value={s.key}>{s.label}</option>
             ))}
           </select>
           <button
@@ -1050,12 +1080,12 @@ function ActiveChatWindow({
             disabled={conversation.channel !== 'whatsapp' || !cleanPhone || directCallBusy}
             style={directCall && DIRECT_CALL_ACTIVE_STATUSES.has(directCall.status) ? { background: 'rgba(239, 68, 68, 0.12)', color: '#dc2626' } : undefined}
           >
-            {directCallBusy ? '⏳' : directCall && DIRECT_CALL_ACTIVE_STATUSES.has(directCall.status) ? '📴' : '📞'}
+            <Ui name={directCallBusy ? 'clock' : directCall && DIRECT_CALL_ACTIVE_STATUSES.has(directCall.status) ? 'phone-off' : 'phone'} />
           </button>
           {directCall && DIRECT_CALL_ACTIVE_STATUSES.has(directCall.status) && (
             <button type="button" className="composer-action-btn" aria-label={callMuted ? 'Activar micrófono' : 'Silenciar micrófono'} aria-pressed={callMuted}
               onClick={() => { audioRef.current?.mute(!callMuted); setCallMuted(!callMuted); }}>
-              {callMuted ? '🔇' : '🎙️'}
+              <Ui name={callMuted ? 'mic-off' : 'mic'} />
             </button>
           )}
           <button
@@ -1064,7 +1094,7 @@ function ActiveChatWindow({
             title="Transferir chat a otro agente"
             onClick={onOpenTransfer}
           >
-            🔄
+            <Ui name="transfer" />
           </button>
           <button
             type="button"
@@ -1072,7 +1102,7 @@ function ActiveChatWindow({
             title="Crear pedido"
             onClick={onOpenOrder}
           >
-            🛒
+            <Ui name="cart" />
           </button>
           <button
             type="button"
@@ -1081,7 +1111,7 @@ function ActiveChatWindow({
             onClick={onToggleRight}
             style={!rightCollapsed ? { background: 'var(--primary-soft)', color: 'var(--primary-glow)' } : undefined}
           >
-            ℹ️
+            <Ui name="info" />
           </button>
         </div>
       </div>
@@ -1101,7 +1131,7 @@ function ActiveChatWindow({
             fontSize: 12
           }}
         >
-          <span>{directCallError || (directCall ? `📞 ${directCallStatusLabel(directCall.status, directCall.endedReason)}` : '')}</span>
+          <span>{directCallError || (directCall ? directCallStatusLabel(directCall.status, directCall.endedReason) : '')}</span>
           {directCallError && <button type="button" className="composer-action-btn" onClick={() => setDirectCallError(null)} aria-label="Cerrar error">×</button>}
         </div>
       )}
@@ -1120,7 +1150,7 @@ function ActiveChatWindow({
           }}
         >
           <div style={{ fontSize: 12.5, color: 'var(--text-main)' }}>
-            <strong style={{ color: 'var(--primary-glow)' }}>🔄 Transferencia: </strong>
+            <strong style={{ color: 'var(--primary-glow)' }}><Ui name="transfer" size={14} /> Transferencia: </strong>
             <span>{lastTransferNote.content.replace('🔄 [TRANSFERENCIA]: ', '')}</span>
           </div>
           <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
@@ -1131,7 +1161,7 @@ function ActiveChatWindow({
               onClick={() => handleTransferResponse('accept')}
               style={{ background: '#10b981', color: '#fff', fontSize: 11.5, padding: '4px 10px' }}
             >
-              ✓ Aceptar
+              <Ui name="check" size={16} /> Aceptar
             </button>
             <button
               type="button"
@@ -1140,7 +1170,7 @@ function ActiveChatWindow({
               onClick={() => handleTransferResponse('reject')}
               style={{ color: '#ef4444', borderColor: 'rgba(239, 68, 68, 0.4)', fontSize: 11.5, padding: '4px 10px' }}
             >
-              ✕ Rechazar
+              <Ui name="x" size={16} /> Rechazar
             </button>
           </div>
         </div>
@@ -1183,7 +1213,7 @@ function ActiveChatWindow({
                     title="Más emojis..."
                     onClick={() => setExtendedEmojiFor(m)}
                   >
-                    ➕
+                    <Ui name="plus" size={16} />
                   </button>
                 </div>
 
@@ -1212,7 +1242,7 @@ function ActiveChatWindow({
                           setMenuOpenFor(null);
                         }}
                       >
-                        <span>↩️</span> Responder
+                        <Ui name="reply" size={16} /> Responder
                       </button>
                       <button
                         type="button"
@@ -1222,7 +1252,7 @@ function ActiveChatWindow({
                           setMenuOpenFor(null);
                         }}
                       >
-                        <span>😊</span> Reaccionar
+                        <Ui name="smile" size={16} /> Reaccionar
                       </button>
                       <button
                         type="button"
@@ -1232,7 +1262,7 @@ function ActiveChatWindow({
                           setMenuOpenFor(null);
                         }}
                       >
-                        <span>➡️</span> Reenviar
+                        <Ui name="forward" size={16} /> Reenviar
                       </button>
                       {m.content && (
                         <button
@@ -1240,11 +1270,11 @@ function ActiveChatWindow({
                           className="crm-wa-menu-item"
                           onClick={() => {
                             navigator.clipboard.writeText(m.content);
-                            showToast('📋 Texto copiado al portapapeles');
+                            showToast('Texto copiado al portapapeles');
                             setMenuOpenFor(null);
                           }}
                         >
-                          <span>📋</span> Copiar texto
+                          <Ui name="copy" size={16} /> Copiar texto
                         </button>
                       )}
                       <button
@@ -1255,7 +1285,7 @@ function ActiveChatWindow({
                           setMenuOpenFor(null);
                         }}
                       >
-                        <span>⭐</span> {isStarred ? 'Quitar de destacados' : 'Destacar mensaje'}
+                        <Ui name="star" size={16} /> {isStarred ? 'Quitar de destacados' : 'Destacar mensaje'}
                       </button>
                       <div className="crm-wa-menu-divider" />
                       {m.direction !== 'INBOUND' && (
@@ -1265,7 +1295,7 @@ function ActiveChatWindow({
                           style={{ color: 'var(--danger)' }}
                           onClick={() => handleDeleteMessage(m)}
                         >
-                          <span>🗑️</span> Eliminar mensaje
+                          <Ui name="trash" size={16} /> Eliminar mensaje
                         </button>
                       )}
                       <button
@@ -1276,7 +1306,7 @@ function ActiveChatWindow({
                           setMenuOpenFor(null);
                         }}
                       >
-                        <span>🔄</span> Transferir chat
+                        <Ui name="transfer" size={16} /> Transferir chat
                       </button>
                       <button
                         type="button"
@@ -1286,7 +1316,7 @@ function ActiveChatWindow({
                           setMenuOpenFor(null);
                         }}
                       >
-                        <span>🛒</span> Crear pedido
+                        <Ui name="cart" size={16} /> Crear pedido
                       </button>
                     </div>
                   )}
@@ -1327,7 +1357,7 @@ function ActiveChatWindow({
 
               {/* Bubble Meta (Time, Starred icon, Delivery status) */}
               <div className="chat-bubble-meta" style={m.direction === 'OUTBOUND' ? { alignSelf: 'flex-end' } : {}}>
-                {isStarred && <span title="Mensaje destacado" style={{ color: '#f59e0b', fontSize: 11 }}>⭐</span>}
+                {isStarred && <Ui name="star" size={12} style={{ color: '#f59e0b' }} title="Mensaje destacado" />}
                 <MessageAuthor message={m} /> · {formatTime(m.createdAt)}
                 {m.direction === 'OUTBOUND' && <MessageTicks status={m.deliveryStatus} />}
               </div>
@@ -1364,7 +1394,7 @@ function ActiveChatWindow({
             <strong>Respondiendo a {replyTo.direction === 'INBOUND' ? 'Cliente' : replyTo.sender?.name || 'Agente'}</strong>
             <span>{replyTo.content || '[adjunto]'}</span>
           </div>
-          <button type="button" onClick={() => setReplyTo(null)}>✕</button>
+          <button type="button" onClick={() => setReplyTo(null)}><Ui name="x" size={16} /></button>
         </div>
       )}
 
@@ -1383,7 +1413,7 @@ function ActiveChatWindow({
           title="Nota interna (no se envía al contacto)"
           style={mode === 'note' ? { background: '#fef08a', color: '#854d0e', borderColor: '#facc15' } : undefined}
         >
-          📝
+          <Ui name="note" />
         </button>
 
         <input
@@ -1400,7 +1430,7 @@ function ActiveChatWindow({
           disabled={uploading}
           title="Adjuntar archivo, imagen, video o documento"
         >
-          📎
+          <Ui name="paperclip" />
         </button>
 
         <div style={{ position: 'relative' }}>
@@ -1410,7 +1440,7 @@ function ActiveChatWindow({
             onClick={() => setShowMoreMenu((v) => !v)}
             title="Más opciones"
           >
-            ➕
+            <Ui name="plus" />
           </button>
           {showMoreMenu && (
             <div className="crm-emoji-picker composer" style={{ flexDirection: 'column', minWidth: 170, alignItems: 'stretch', padding: 6 }}>
@@ -1419,21 +1449,21 @@ function ActiveChatWindow({
                 style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', fontSize: 13, padding: '7px 8px' }}
                 onClick={() => { setShowMoreMenu(false); setShowPollModal(true); }}
               >
-                📊 Crear encuesta
+                <Ui name="chart" size={16} /> Crear encuesta
               </button>
               <button
                 type="button"
                 style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', fontSize: 13, padding: '7px 8px' }}
                 onClick={() => { setShowMoreMenu(false); setShowContactShareModal(true); }}
               >
-                📇 Compartir contacto
+                <Ui name="contact" size={16} /> Compartir contacto
               </button>
               <button
                 type="button"
                 style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', fontSize: 13, padding: '7px 8px' }}
                 onClick={() => { setShowMoreMenu(false); setShowCameraModal(true); }}
               >
-                📷 Tomar foto
+                <Ui name="camera" size={16} /> Tomar foto
               </button>
             </div>
           )}
@@ -1446,7 +1476,7 @@ function ActiveChatWindow({
           disabled={uploading || mode === 'note'}
           title={recording ? `Detener y enviar nota de voz (${recordingSeconds}s)` : 'Grabar nota de voz'}
         >
-          {recording ? '⏹️' : '🎙️'}
+          <Ui name={recording ? 'stop' : 'mic'} />
         </button>
 
         <div style={{ position: 'relative' }}>
@@ -1456,7 +1486,7 @@ function ActiveChatWindow({
             onClick={() => setShowEmojiPicker((v) => !v)}
             title="Insertar emoji"
           >
-            😊
+            <Ui name="smile" />
           </button>
           {showEmojiPicker && (
             <div className="crm-emoji-picker composer">
@@ -1482,7 +1512,7 @@ function ActiveChatWindow({
         />
 
         <button className="btn-send-message" type="submit" disabled={sending || recording || !content.trim()}>
-          ➤
+          <Ui name="send" />
         </button>
       </form>
 
@@ -1583,7 +1613,7 @@ function CameraModal({ onClose, onCapture }: { onClose: () => void; onCapture: (
             disabled={capturing}
             style={{ width: '100%', justifyContent: 'center', marginTop: 12 }}
           >
-            {capturing ? 'Capturando...' : '📷 Capturar y enviar'}
+            {capturing ? 'Capturando...' : <><Ui name="camera" size={16} /> Capturar y enviar</>}
           </button>
         </>
       )}
@@ -1663,7 +1693,7 @@ function CreatePollModal({
                 placeholder={`Opción ${idx + 1}`}
               />
               {options.length > 2 && (
-                <button type="button" className="btn secondary small" onClick={() => removeOption(idx)}>✕</button>
+                <button type="button" className="btn secondary small" onClick={() => removeOption(idx)}><Ui name="x" size={14} /></button>
               )}
             </div>
           ))}
@@ -1675,7 +1705,7 @@ function CreatePollModal({
         {error && <p style={{ color: 'var(--danger)', fontSize: 12.5 }}>{error}</p>}
 
         <button type="submit" className="btn" disabled={submitting} style={{ width: '100%', justifyContent: 'center', marginTop: 10 }}>
-          {submitting ? 'Enviando...' : 'Enviar encuesta →'}
+          {submitting ? 'Enviando...' : <>Enviar encuesta <Ui name="arrow-right" size={14} /></>}
         </button>
       </form>
     </Modal>
@@ -1766,20 +1796,20 @@ function ShareContactModal({
 
 const MEDIA_PLACEHOLDERS = new Set(['🎤 Audio', '🖼️ Imagen', '🎬 Video', '📄 Documento', '🩿 Sticker', '🎭 Sticker', 'Audio', 'Imagen', 'Video', 'Sticker', 'Documento']);
 
-const AUTHOR_LABELS: Record<string, { icon: string; label: string }> = {
-  bot: { icon: '🤖', label: 'Bot' },
-  ai: { icon: '✨', label: 'Asistente IA' },
-  phone: { icon: '📱', label: 'Desde el teléfono' }
+const AUTHOR_LABELS: Record<string, { icon: UiIconName; label: string }> = {
+  bot: { icon: 'bot' as UiIconName, label: 'Bot' },
+  ai: { icon: 'sparkles' as UiIconName, label: 'Asistente IA' },
+  phone: { icon: 'smartphone' as UiIconName, label: 'Desde el teléfono' }
 };
 
 function MessageAuthor({ message }: { message: Message }) {
-  if (message.direction === 'NOTE') return <span className="chat-author">📝 Nota interna{message.sender ? ` · ${message.sender.name}` : ''}</span>;
+  if (message.direction === 'NOTE') return <span className="chat-author"><Ui name="note" size={12} /> Nota interna{message.sender ? ` · ${message.sender.name}` : ''}</span>;
   if (message.direction === 'INBOUND') return <span className="chat-author">Cliente</span>;
-  if (message.sender) return <span className="chat-author agent" title="Agente que respondió">👤 {message.sender.name}</span>;
-  if (message.viaCampaign) return <span className="chat-author campaign">📣 Campaña</span>;
-  if (message.viaApi) return <span className="chat-author api">🔌 API</span>;
+  if (message.sender) return <span className="chat-author agent" title="Agente que respondió"><Ui name="user" size={12} /> {message.sender.name}</span>;
+  if (message.viaCampaign) return <span className="chat-author campaign"><Ui name="megaphone" size={12} /> Campaña</span>;
+  if (message.viaApi) return <span className="chat-author api"><Ui name="plug" size={12} /> API</span>;
   const kind = AUTHOR_LABELS[message.senderKind || 'bot'] || AUTHOR_LABELS.bot;
-  return <span className={`chat-author ${message.senderKind || 'bot'}`}>{kind.icon} {kind.label}</span>;
+  return <span className={`chat-author ${message.senderKind || 'bot'}`}><Ui name={kind.icon} size={12} /> {kind.label}</span>;
 }
 
 // Igual que WhatsApp: ✓ enviado, ✓✓ gris entregado, ✓✓ azul leído.
@@ -1795,13 +1825,18 @@ function MessageTicks({ status }: { status: string }) {
   return <span className={`chat-msg-ticks ${map[status] ? status : 'sent'}`} title={item.title}>{item.text}</span>;
 }
 
+function stageDotColor(conversation: Conversation) {
+  const stage = deriveStage(conversation);
+  return CRM_STAGES.find((item) => item.key === stage)?.color || '#64748b';
+}
+
 function MessageBody({ message }: { message: Message }) {
   if (message.contentType === 'poll') {
     try {
       const poll = JSON.parse(message.content) as { question: string; options: string[] };
       return (
         <div className="crm-poll-card">
-          <div className="crm-poll-question">📊 {poll.question}</div>
+          <div className="crm-poll-question"><Ui name="chart" size={16} /> {poll.question}</div>
           {poll.options.map((opt, idx) => (
             <div key={idx} className="crm-poll-option">○ {opt}</div>
           ))}
@@ -1817,7 +1852,7 @@ function MessageBody({ message }: { message: Message }) {
       const shared = JSON.parse(message.content) as { name: string; phone: string | null };
       return (
         <div className="crm-contact-card">
-          <span className="crm-contact-card-icon">👤</span>
+          <span className="crm-contact-card-icon"><Ui name="user" size={20} /></span>
           <div>
             <div className="crm-contact-card-name">{shared.name}</div>
             {shared.phone && <div className="crm-contact-card-phone">{formatPhone(shared.phone)}</div>}
@@ -1863,7 +1898,7 @@ function AttachmentContent({
           style={{ cursor: 'pointer', borderRadius: 8, maxWidth: '100%', maxHeight: 280, display: 'block' }}
           title="Clic para ampliar imagen"
         />
-        <a href={url} download={message.attachment.fileName} className="crm-msg-download-btn" title="Descargar">⬇️</a>
+        <a href={url} download={message.attachment.fileName} className="crm-msg-download-btn" title="Descargar"><Ui name="download" size={16} /></a>
       </div>
     );
   }
@@ -1871,7 +1906,7 @@ function AttachmentContent({
     return (
       <div className="crm-msg-media-wrap">
         <PlyrVideo src={url} />
-        <a href={url} download={message.attachment.fileName} className="crm-msg-download-btn" title="Descargar">⬇️</a>
+        <a href={url} download={message.attachment.fileName} className="crm-msg-download-btn" title="Descargar"><Ui name="download" size={16} /></a>
       </div>
     );
   }
@@ -1880,7 +1915,7 @@ function AttachmentContent({
   }
   return (
     <a href={url} target="_blank" rel="noreferrer" className="crm-msg-document">
-      <span>📄</span>
+      <Ui name="note" size={20} />
       <span>{message.attachment.fileName}</span>
     </a>
   );
@@ -1899,11 +1934,11 @@ function ContactInfoRail({
   const label = contactLabel(conversation.contact);
 
   const iconItems = [
-    { icon: '👤', label: 'Información del contacto' },
-    { icon: '🏷️', label: 'Etapa y etiquetas CRM' },
-    { icon: '👥', label: 'Agentes' },
-    { icon: '⚡', label: 'Acciones rápidas' },
-    { icon: '📝', label: 'Notas del cliente' }
+    { icon: 'user' as UiIconName, label: 'Información del contacto' },
+    { icon: 'tag' as UiIconName, label: 'Etapa y etiquetas CRM' },
+    { icon: 'users' as UiIconName, label: 'Agentes' },
+    { icon: 'zap' as UiIconName, label: 'Acciones rápidas' },
+    { icon: 'note' as UiIconName, label: 'Notas del cliente' }
   ];
 
   return (
@@ -1915,7 +1950,7 @@ function ContactInfoRail({
         title="Mostrar información del contacto"
         aria-label="Mostrar información del contacto"
       >
-        ◀
+        <Ui name="chevron-left" size={16} />
       </button>
 
       <div className="crm-info-rail-avatar" title={label}>
@@ -1933,7 +1968,7 @@ function ContactInfoRail({
           title={`Mostrar ${item.label.toLowerCase()}`}
           aria-label={`Mostrar ${item.label}`}
         >
-          <span aria-hidden="true">{item.icon}</span>
+          <Ui name={item.icon} size={18} />
         </button>
       ))}
     </aside>
@@ -2050,7 +2085,7 @@ function ContactInfoPanel({
             title="Cerrar información del contacto"
             aria-label="Cerrar información del contacto"
           >
-            ✕
+            <Ui name="x" size={16} />
           </button>
         </div>
       </div>
@@ -2078,7 +2113,7 @@ function ContactInfoPanel({
           style={{ marginTop: 8, padding: '4px 12px', fontSize: 11.5 }}
           onClick={onEditContact}
         >
-          ✏️ Editar contacto
+          <Ui name="edit" size={14} /> Editar contacto
         </button>
 
         <div className="field" style={{ width: '100%', marginTop: 10 }}>
@@ -2093,7 +2128,7 @@ function ContactInfoPanel({
         <div className="crm-contact-meta-list">
           {conversation.contact.phone && (
             <div className="crm-contact-meta-item">
-              <span>📞</span> {formatPhone(conversation.contact.phone)}
+              <Ui name="phone" size={14} /> {formatPhone(conversation.contact.phone)}
               {cleanPhone && (
                 <a
                   href={`https://wa.me/${cleanPhone}`}
@@ -2101,14 +2136,14 @@ function ContactInfoPanel({
                   rel="noreferrer"
                   style={{ marginLeft: 'auto', fontSize: 11, color: '#25d366', textDecoration: 'none', fontWeight: 700 }}
                 >
-                  WhatsApp ↗
+                  WhatsApp <Ui name="external" size={12} />
                 </a>
               )}
             </div>
           )}
           {conversation.contact.email && (
             <div className="crm-contact-meta-item">
-              <span>✉️</span> {conversation.contact.email}
+              <Ui name="mail" size={14} /> {conversation.contact.email}
             </div>
           )}
         </div>
@@ -2141,21 +2176,21 @@ function ContactInfoPanel({
           className="crm-quick-action-btn"
           onClick={onOpenTransfer}
         >
-          <span>🔄</span> Transferir conversación
+          <Ui name="transfer" size={18} /> Transferir conversación
         </button>
         <button
           type="button"
           className="crm-quick-action-btn"
           onClick={onOpenTransfer}
         >
-          <span>👤</span> Asignar agente
+          <Ui name="user-plus" size={18} /> Asignar agente
         </button>
         <button
           type="button"
           className="crm-quick-action-btn"
           onClick={onOpenOrder}
         >
-          <span>🛒</span> Crear pedido / cotización
+          <Ui name="cart" size={18} /> Crear pedido / cotización
         </button>
         <button
           type="button"
@@ -2163,7 +2198,7 @@ function ContactInfoPanel({
           onClick={handleMarkResolved}
           disabled={resolving || conversation.status === 'RESOLVED'}
         >
-          <span>✔️</span> {conversation.status === 'RESOLVED' ? 'Resuelta' : resolving ? 'Marcando...' : 'Marcar como resuelto'}
+          <Ui name="check-circle" size={18} /> {conversation.status === 'RESOLVED' ? 'Resuelta' : resolving ? 'Marcando...' : 'Marcar como resuelto'}
         </button>
       </div>
 
@@ -2293,7 +2328,7 @@ function ForwardMessageModal({
                   <div style={{ fontWeight: 600, fontSize: 13, color: 'var(--text-main)' }}>{contactLabel(c.contact)}</div>
                   {c.contact.phone && <div style={{ fontSize: 11, color: 'var(--text-dim)' }}>{formatPhone(c.contact.phone)}</div>}
                 </div>
-                {isSelected && <span style={{ color: 'var(--primary-glow)', fontWeight: 700 }}>✓</span>}
+                {isSelected && <Ui name="check" size={16} style={{ color: 'var(--primary-glow)' }} />}
               </div>
             );
           })}
@@ -2553,7 +2588,7 @@ function TransferConversationModal({
           disabled={submitting}
           style={{ width: '100%', justifyContent: 'center', marginTop: 10 }}
         >
-          {submitting ? 'Transfiriendo...' : 'Confirmar Transferencia →'}
+          {submitting ? 'Transfiriendo...' : <>Confirmar Transferencia <Ui name="arrow-right" size={14} /></>}
         </button>
       </form>
     </Modal>
@@ -2668,7 +2703,7 @@ function CreateOrderModal({
           disabled={submitting}
           style={{ width: '100%', justifyContent: 'center', marginTop: 10 }}
         >
-          {submitting ? 'Registrando...' : 'Generar Pedido y Enviar a WhatsApp →'}
+          {submitting ? 'Registrando...' : <>Generar Pedido y Enviar a WhatsApp <Ui name="arrow-right" size={14} /></>}
         </button>
       </form>
     </Modal>

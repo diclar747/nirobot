@@ -24,3 +24,24 @@
 .chat-author.ai { background: rgba(236, 72, 153, 0.16); color: #db2777; }
 .chat-author.phone { background: rgba(14, 165, 233, 0.16); color: #0284c7; }
 .chat-author.campaign, .chat-author.api { background: rgba(245, 158, 11, 0.16); color: #b45309; }
+
+/* Lista de conversaciones minimizada: avatares + menú */
+.crm-conv-rail { display: flex; flex-direction: column; align-items: center; gap: 8px; min-height: 0; padding: 10px 0; border-right: 1px solid var(--border-color); background: var(--bg-surface); }
+.crm-conv-rail-btn { display: grid; width: 40px; height: 36px; flex-shrink: 0; place-items: center; border: 0; border-radius: 10px; background: transparent; color: var(--text-muted); cursor: pointer; font-size: 16px; }
+.crm-conv-rail-btn:hover { background: var(--bg-surface-hover); }
+.crm-conv-rail-btn.active { background: var(--primary-soft); color: var(--primary-text); }
+.crm-conv-rail-btn.accent { background: #10b981; color: #fff; font-size: 20px; }
+.crm-conv-rail-tabs { display: flex; flex-direction: column; gap: 2px; }
+.crm-conv-rail-sep { width: 32px; height: 1px; background: var(--border-color); }
+.crm-conv-rail-list { display: flex; flex: 1; flex-direction: column; align-items: center; gap: 10px; width: 100%; min-height: 0; padding: 4px 0; overflow-y: auto; scrollbar-width: none; }
+.crm-conv-rail-list::-webkit-scrollbar { display: none; }
+.crm-conv-rail-avatar { position: relative; display: grid; width: 46px; height: 46px; flex-shrink: 0; place-items: center; padding: 0; border: 2px solid transparent; border-radius: 50%; background: transparent; cursor: pointer; transition: transform .12s, border-color .12s; }
+.crm-conv-rail-avatar:hover { transform: scale(1.08); }
+.crm-conv-rail-avatar.active { border-color: #10b981; }
+.crm-conv-rail-dot { position: absolute; right: -1px; bottom: -1px; width: 12px; height: 12px; border: 2px solid var(--bg-surface); border-radius: 50%; }
+.crm-conv-rail-empty { color: var(--text-dim); font-size: 10px; writing-mode: vertical-rl; }
+
+/* Íconos unificados (componente Ui): mismo estilo que el menú */
+.ui-icon { display: inline-block; flex-shrink: 0; vertical-align: -0.2em; }
+.crm-wa-menu-item .ui-icon, .crm-info-action .ui-icon { margin-right: 2px; opacity: .9; }
+.composer-action-btn .ui-icon, .crm-chat-header .composer-action-btn .ui-icon { width: 20px; height: 20px; }

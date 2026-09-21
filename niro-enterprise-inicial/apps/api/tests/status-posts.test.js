@@ -157,7 +157,7 @@ describe('publicar estados desde Nirobot', () => {
     await waitFor(copy.body.post.id, 'published');
   });
 
-  test('un AGENT no accede y otra organización no ve las publicaciones ajenas', async () => {
+  test('un AGENT solo accede si el admin lo habilita y otra organización no ve las publicaciones ajenas', async () => {
     const { session } = await setup();
     const created = await post(session, { contentType: 'text', textContent: 'privado', audienceType: 'ALL' });
     const other = await createOrganization(prisma, { slug: 'otra-co' });
@@ -168,6 +168,9 @@ describe('publicar estados desde Nirobot', () => {
     expect((await foreign.agent.get(`/api/org/status-posts/${created.body.post.id}`)).status).toBe(404);
     expect((await foreign.agent.delete(`/api/org/status-posts/${created.body.post.id}`).set('X-CSRF-Token', foreign.csrfToken)).status).toBe(404);
     const agentSession = await loginAgent(app, 'agente@otra.test');
+    // Por defecto un agente puede usar estados; el admin puede quitárselo.
+    expect((await agentSession.agent.get('/api/org/status-posts')).status).toBe(200);
+    await prisma.user.updateMany({ where: { email: 'agente@otra.test' }, data: { permissions: { statuses: false } } });
     expect((await agentSession.agent.get('/api/org/status-posts')).status).toBe(403);
     expect((await request(app).get('/api/org/status-posts')).status).toBe(401);
   });

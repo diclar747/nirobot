@@ -4,6 +4,7 @@ import { useAuth } from '../context/AuthContext';
 import { Modal } from '../components/Modal';
 import { EmptyState, LoadingRows, PageHeader, PageShell, Panel, Pill, StatCard, StatGrid } from '../components/PageKit';
 import type { AiAgent, AiAgentCategory, AiChatTurn, AiStatus, AiUsageSummary } from '../types';
+import { Ui } from '../components/Ui';
 
 const CATEGORY_LABEL: Record<AiAgentCategory, string> = {
   CHAT: 'Chat general',
@@ -128,7 +129,7 @@ export function AiAgents() {
                 </div>
                 <div className="page-card-footer">
                   <button className="btn secondary small" style={{ marginLeft: 'auto' }} onClick={() => setChatAgent(a)}>
-                    💬 Probar
+                    <Ui name="chat" size={14} /> Probar
                   </button>
                 </div>
               </div>

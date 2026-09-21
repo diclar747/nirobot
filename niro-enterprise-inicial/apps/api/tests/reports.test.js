@@ -34,12 +34,14 @@ describe('Reportes', () => {
     expect(res.body.orders.revenue).toBe(2000);
   });
 
-  test('un AGENT no puede ver los reportes', async () => {
+  test('un AGENT ve reportes por defecto, pero no si el admin se los restringe', async () => {
     const org = await createOrganization(prisma, { slug: 'acme' });
     await createUser(prisma, { organizationId: org.id, email: 'owner@acme.test', role: 'OWNER' });
     const agentUser = await createUser(prisma, { organizationId: org.id, email: 'agent@acme.test', role: 'AGENT' });
     const { agent } = await loginAgent(app, agentUser.email);
 
+    expect((await agent.get('/api/org/reports/summary')).status).toBe(200);
+    await prisma.user.update({ where: { id: agentUser.id }, data: { permissions: { reports: false } } });
     const res = await agent.get('/api/org/reports/summary');
     expect(res.status).toBe(403);
   });

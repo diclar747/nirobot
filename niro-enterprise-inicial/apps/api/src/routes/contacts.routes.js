@@ -1,4 +1,5 @@
 const express = require('express');
+const { requirePermission } = require('../lib/permissions');
 const { prisma } = require('../lib/prisma');
 const { audit } = require('../lib/audit');
 const { z } = require('zod');
@@ -93,7 +94,7 @@ function contactWhere(req) {
 }
 
 // Directorio paginado para el dashboard de contactos.
-router.get('/directory', async (req, res, next) => {
+router.get('/directory', requirePermission('contacts'), async (req, res, next) => {
   try {
     const page = Math.max(1, Number(req.query.page) || 1);
     const limit = Math.min(100, Math.max(1, Number(req.query.limit) || 24));
@@ -122,7 +123,7 @@ router.get('/directory', async (req, res, next) => {
 });
 
 // Descarga de TODOS los contactos (CSV compatible con Excel).
-router.get('/export.csv', async (req, res, next) => {
+router.get('/export.csv', requirePermission('contactsExport'), async (req, res, next) => {
   try {
     const rows = await prisma.contact.findMany({
       where: { organizationId: req.auth.organizationId },
@@ -145,7 +146,7 @@ router.get('/export.csv', async (req, res, next) => {
 });
 
 // Enviar un contacto a una etapa/etiqueta del CRM (crea la conversación si todavía no existe).
-router.post('/:id/crm', requireCsrf, async (req, res, next) => {
+router.post('/:id/crm', requirePermission('crm'), requireCsrf, async (req, res, next) => {
   try {
     const stage = String(req.body?.stage || '');
     if (!CRM_STAGE_TAGS.includes(stage)) throw new HttpError(400, 'Etapa de CRM inválida');
@@ -169,7 +170,7 @@ router.post('/:id/crm', requireCsrf, async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-router.delete('/:id', requireRole('OWNER', 'ADMIN', 'SUPERVISOR'), requireCsrf, async (req, res, next) => {
+router.delete('/:id', requirePermission('contactsDelete'), requireCsrf, async (req, res, next) => {
   try {
     const existing = await prisma.contact.findFirst({ where: { id: req.params.id, organizationId: req.auth.organizationId } });
     if (!existing) throw new HttpError(404, 'Contacto no encontrado');

@@ -7,10 +7,12 @@ import { NiroMascot } from './NiroMascot';
 import { WhatsAppConnectModal } from './WhatsAppConnectModal';
 import { NotificationBell } from './NotificationBell';
 import { BillingGate } from './BillingGate';
+import { can, isAdminRole } from '../lib/permissions';
 import { apiGet } from '../lib/api';
 import { getSocket } from '../lib/socket';
 import '../styles/app-theme.css';
 import '../styles/ui-fixes.css';
+import { Ui } from './Ui';
 
 type WhatsAppStatus = 'disconnected' | 'connecting' | 'qr' | 'connected';
 
@@ -167,7 +169,7 @@ export function Layout() {
   const isSuperadmin = user.role === 'SUPERADMIN';
   const canManageUsers = ['OWNER', 'ADMIN', 'SUPERVISOR'].includes(user.role);
   const canManageSettings = ['OWNER', 'ADMIN'].includes(user.role);
-  const canSeeReports = ['OWNER', 'ADMIN', 'SUPERVISOR'].includes(user.role);
+  const isAdmin = isAdminRole(user);
 
   return (
     <div ref={appShellRef} className={`modern-app-shell ${sidebarCollapsed ? 'sidebar-collapsed' : ''}`}>
@@ -260,7 +262,7 @@ export function Layout() {
               </NavLink>
             )}
 
-            {!isSuperadmin && (
+            {!isSuperadmin && can(user, 'contacts') &&(
               <NavLink to="/contactos" className={({ isActive }) => `sidebar-nav-item ${isActive ? 'active' : ''}`}>
                 <div className="sidebar-nav-item-content">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -274,7 +276,7 @@ export function Layout() {
               </NavLink>
             )}
 
-            {!isSuperadmin && (
+            {!isSuperadmin && isAdmin &&(
               <NavLink to="/billing" className={({ isActive }) => `sidebar-nav-item ${isActive ? 'active' : ''}`}>
                 <div className="sidebar-nav-item-content">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -299,7 +301,7 @@ export function Layout() {
               </NavLink>
             )}
 
-            {!isSuperadmin && (
+            {!isSuperadmin && can(user, 'aiAgents') &&(
               <NavLink to="/ai-agents" className={({ isActive }) => `sidebar-nav-item ${isActive ? 'active' : ''}`}>
                 <div className="sidebar-nav-item-content">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -314,7 +316,7 @@ export function Layout() {
               </NavLink>
             )}
 
-            {!isSuperadmin && (
+            {!isSuperadmin && can(user, 'bot') &&(
               <NavLink to="/bot" className={({ isActive }) => `sidebar-nav-item ${isActive ? 'active' : ''}`}>
                 <div className="sidebar-nav-item-content">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -328,7 +330,7 @@ export function Layout() {
               </NavLink>
             )}
 
-            {!isSuperadmin && (
+            {!isSuperadmin && can(user, 'orders') &&(
               <NavLink to="/orders" className={({ isActive }) => `sidebar-nav-item ${isActive ? 'active' : ''}`}>
                 <div className="sidebar-nav-item-content">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -341,7 +343,7 @@ export function Layout() {
               </NavLink>
             )}
 
-            {!isSuperadmin && (
+            {!isSuperadmin && can(user, 'crm') &&(
               <NavLink to="/board" className={({ isActive }) => `sidebar-nav-item ${isActive ? 'active' : ''}`}>
                 <div className="sidebar-nav-item-content">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -354,7 +356,7 @@ export function Layout() {
               </NavLink>
             )}
 
-            {!isSuperadmin && canSeeReports && (
+            {!isSuperadmin && can(user, 'reports') &&(
               <NavLink to="/reports" className={({ isActive }) => `sidebar-nav-item ${isActive ? 'active' : ''}`}>
                 <div className="sidebar-nav-item-content">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -367,7 +369,7 @@ export function Layout() {
               </NavLink>
             )}
 
-            {!isSuperadmin && canSeeReports && (
+            {!isSuperadmin && can(user, 'campaigns') &&(
               <NavLink to="/campaigns" className={({ isActive }) => `sidebar-nav-item ${isActive ? 'active' : ''}`}>
                 <div className="sidebar-nav-item-content">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -379,7 +381,7 @@ export function Layout() {
               </NavLink>
             )}
 
-            {!isSuperadmin && canSeeReports && (
+            {!isSuperadmin && can(user, 'statuses') &&(
               <NavLink to="/estados" className={({ isActive }) => `sidebar-nav-item ${isActive ? 'active' : ''}`}>
                 <div className="sidebar-nav-item-content">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -391,7 +393,7 @@ export function Layout() {
               </NavLink>
             )}
 
-            {!isSuperadmin && canSeeReports && (
+            {!isSuperadmin && can(user, 'calls') &&(
               <NavLink to="/llamadas" className={({ isActive }) => `sidebar-nav-item ${isActive ? 'active' : ''}`}>
                 <div className="sidebar-nav-item-content">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -419,7 +421,7 @@ export function Layout() {
               </button>
             )}
 
-            {!isSuperadmin && (
+            {!isSuperadmin && can(user, 'developers') &&(
               <NavLink to="/desarrolladores" className={({ isActive }) => `sidebar-nav-item ${isActive ? 'active' : ''}`}>
                 <div className="sidebar-nav-item-content">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -576,14 +578,14 @@ export function Layout() {
                     className="dropdown-item"
                     onClick={() => { setShowUserMenu(false); navigate('/settings'); }}
                   >
-                    ⚙ Configuración
+                    <Ui name="settings" size={16} /> Configuración
                   </button>
                   <button
                     type="button"
                     className="dropdown-item"
                     onClick={() => { setShowUserMenu(false); setShowWhatsAppModal(true); }}
                   >
-                    💬 Estado WhatsApp ({waStatus === 'connected' ? 'Conectado' : waStatus === 'connecting' || waStatus === 'qr' ? 'Reconectando' : 'Desconectado'})
+                    <Ui name="chat" size={16} /> Estado WhatsApp ({waStatus === 'connected' ? 'Conectado' : waStatus === 'connecting' || waStatus === 'qr' ? 'Reconectando' : 'Desconectado'})
                   </button>
                   <div className="dropdown-divider" />
                   <button

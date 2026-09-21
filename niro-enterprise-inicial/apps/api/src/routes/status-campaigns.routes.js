@@ -1,4 +1,5 @@
 const express = require('express');
+const { requirePermission } = require('../lib/permissions');
 const { z } = require('zod');
 const { prisma } = require('../lib/prisma');
 const { audit } = require('../lib/audit');
@@ -17,7 +18,7 @@ const MIN_LEAD_MS = 30 * 1000;
 router.use(requireAuth, (req, _res, next) => {
   if (!req.auth.organizationId) return next(new HttpError(403, 'Esta acción requiere pertenecer a una organización'));
   next();
-}, requireRole('OWNER', 'ADMIN', 'SUPERVISOR'));
+}, requirePermission('statuses'));
 
 // Multipart fields arrive as strings: accept JSON arrays, comma lists or real arrays.
 const list = z.preprocess((value) => {

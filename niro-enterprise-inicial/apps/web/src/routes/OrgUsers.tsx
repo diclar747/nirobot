@@ -8,6 +8,8 @@ import { EmptyState, LoadingRows, PageHeader, PageShell, Panel, PersonCell, Pill
 import { IconUsers } from '../components/icons';
 import { Link } from 'react-router-dom';
 import type { SeatInfo } from '../components/BillingGate';
+import type { PermissionDef } from '../lib/permissions';
+import { Ui } from '../components/Ui';
 
 const ROLE_LABEL: Record<UserRole, string> = {
   SUPERADMIN: 'Superadmin',
@@ -93,7 +95,7 @@ export function OrgUsers() {
         actions={
           canManage && (
             seats?.full ? (
-              <Link className="btn secondary" to="/billing" title="Llegaste al límite de agentes de tu plan">⬆ Mejorar plan para sumar agentes</Link>
+              <Link className="btn secondary" to="/billing" title="Llegaste al límite de agentes de tu plan"><Ui name="upgrade" size={16} /> Mejorar plan para sumar agentes</Link>
             ) : (
               <button className="btn" onClick={() => setShowCreate(true)}>
                 + Nuevo usuario
@@ -106,7 +108,7 @@ export function OrgUsers() {
       {error && <div className="alert error">{error}</div>}
       {seats && (
         <div className={`alert ${seats.full ? 'error' : ''}`} style={{ marginBottom: 12 }}>
-          👥 Agentes en uso: <b>{seats.agentsUsed}</b> de <b>{seats.maxAgents}</b>{seats.planName ? ` · ${seats.planName}` : ''}.
+          <Ui name="users" size={16} /> Agentes en uso: <b>{seats.agentsUsed}</b> de <b>{seats.maxAgents}</b>{seats.planName ? ` · ${seats.planName}` : ''}.
           {seats.full ? <> Llegaste al límite. <Link to="/billing">Mejorá tu plan</Link> para sumar más.</> : ` Te quedan ${Math.max(0, seats.maxAgents - seats.agentsUsed)}.`}
         </div>
       )}
@@ -295,8 +297,15 @@ function EditUserModal({
   const [name, setName] = useState(user.name);
   const [role, setRole] = useState<UserRole>(user.role);
   const [active, setActive] = useState(user.active);
+  const [defs, setDefs] = useState<PermissionDef[]>([]);
+  const [perms, setPerms] = useState<Record<string, boolean>>(() => ({ ...(user.permissions || {}) }));
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const restrictable = role === 'AGENT' || role === 'SUPERVISOR';
+  useEffect(() => { apiGet<{ permissions: PermissionDef[] }>('/api/org/permissions').then((r) => setDefs(r.permissions)).catch(() => {}); }, []);
+  const isOn = (key: string) => perms[key] !== false;
+  const disabledCount = defs.filter((d) => !isOn(d.key)).length;
+  const groups = Array.from(new Set(defs.map((d) => d.group)));
   const roleOptions = ORG_ROLES.filter((r) => r !== 'OWNER' || canGrantOwner || user.role === 'OWNER');
 
   async function handleSubmit(e: FormEvent) {
@@ -304,7 +313,7 @@ function EditUserModal({
     setError(null);
     setSubmitting(true);
     try {
-      await apiPatch(`/api/org/users/${user.id}`, { name, role, active });
+      await apiPatch(`/api/org/users/${user.id}`, { name, role, active, ...(restrictable && defs.length ? { permissions: Object.fromEntries(defs.map((d) => [d.key, isOn(d.key)])) } : {}) });
       onSaved();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'No se pudo guardar el usuario');
@@ -314,7 +323,7 @@ function EditUserModal({
   }
 
   return (
-    <Modal title={`Editar ${user.name}`} onClose={onClose}>
+    <Modal title={`Editar ${user.name}`} onClose={onClose} className="perm-modal">
       {error && <div className="alert error">{error}</div>}
       <form onSubmit={handleSubmit}>
         <div className="field">
@@ -337,7 +346,28 @@ function EditUserModal({
             Usuario activo
           </label>
         </div>
-        <button className="btn" type="submit" disabled={submitting} style={{ width: '100%', justifyContent: 'center' }}>
+        {restrictable ? (
+          <div className="perm-panel">
+            <div className="perm-head">
+              <div><strong>Permisos de este usuario</strong><small>{disabledCount === 0 ? 'Tiene todas las funciones activas.' : `${disabledCount} función${disabledCount > 1 ? 'es' : ''} desactivada${disabledCount > 1 ? 's' : ''}.`}</small></div>
+              <button type="button" className="btn secondary small" onClick={() => setPerms({})} disabled={disabledCount === 0}>Activar todo</button>
+            </div>
+            {groups.map((group) => (
+              <div key={group} className="perm-group">
+                <span className="perm-group-title">{group}</span>
+                {defs.filter((d) => d.group === group).map((d) => (
+                  <label key={d.key} className={`perm-row ${isOn(d.key) ? 'on' : 'off'}`}>
+                    <span><b>{d.label}</b><small>{d.description}</small></span>
+                    <input type="checkbox" role="switch" checked={isOn(d.key)} onChange={(e) => setPerms((prev) => ({ ...prev, [d.key]: e.target.checked }))} />
+                  </label>
+                ))}
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="perm-note"><Ui name="crown" size={16} /> Los propietarios y administradores siempre tienen todas las funciones.</p>
+        )}
+        <button className="btn" type="submit" disabled={submitting} style={{ width: '100%', justifyContent: 'center', marginTop: 12 }}>
           {submitting ? 'Guardando…' : 'Guardar cambios'}
         </button>
       </form>

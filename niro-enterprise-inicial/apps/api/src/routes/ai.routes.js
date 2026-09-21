@@ -1,6 +1,7 @@
 // Agentes IA: proxy autenticado hacia la API de Niro IA (https://niro.cnid.com.py/docs).
 // La API key (NIRO_AI_API_KEY) vive solo acá, en el servidor — el frontend nunca la ve.
 const express = require('express');
+const { requirePermission } = require('../lib/permissions');
 const { prisma } = require('../lib/prisma');
 const { audit } = require('../lib/audit');
 const { requireAuth, requireRole, requireCsrf } = require('../middleware/auth');
@@ -74,7 +75,7 @@ router.get('/status', async (req, res, next) => {
 
 // Prueba rápida del bot de WhatsApp/widget con el prompt actual de la organización, sin
 // necesidad de una conversación real. Útil desde Ajustes para validar el tono antes de activarlo.
-router.post('/chat/test', enforceAiQuota, requireRole('OWNER', 'ADMIN', 'SUPERVISOR'), requireCsrf, async (req, res, next) => {
+router.post('/chat/test', enforceAiQuota, requirePermission('aiAgents'), requireCsrf, async (req, res, next) => {
   try {
     const data = testChatSchema.parse(req.body);
     const settings = await prisma.organizationSettings.findUnique({
@@ -102,7 +103,7 @@ router.get('/agents', async (req, res, next) => {
   }
 });
 
-router.post('/agents', requireRole('OWNER', 'ADMIN', 'SUPERVISOR'), requireCsrf, async (req, res, next) => {
+router.post('/agents', requirePermission('aiAgents'), requireCsrf, async (req, res, next) => {
   try {
     const data = createAgentSchema.parse(req.body);
     const agent = await niroAi.createAgent(data);

@@ -3,6 +3,7 @@ import { apiGet, apiPost, apiDelete, ApiError } from '../lib/api';
 import { Modal } from '../components/Modal';
 import { EmptyState, LoadingRows, PageHeader, PageShell, Panel, PersonCell, Pill, StatCard, StatGrid, type Tone } from '../components/PageKit';
 import { formatGs } from '../components/BillingGate';
+import { Ui } from '../components/Ui';
 
 interface Customer {
   id: string; name: string; active: boolean; createdAt: string; phone: string | null;
@@ -62,7 +63,7 @@ export function SuperadminBilling() {
   return (
     <PageShell>
       <PageHeader title="Clientes y cobros" subtitle={`Plan mensual ${s ? formatGs(s.priceGs) : ''} · 24 h de prueba por teléfono conectado`}
-        actions={<button className="btn" onClick={() => setShowNotice('broadcast')}>📣 Enviar aviso</button>} />
+        actions={<button className="btn" onClick={() => setShowNotice('broadcast')}><Ui name="megaphone" size={16} /> Enviar aviso</button>} />
       {error && <div className="campaign-alert error" style={{ marginBottom: 12 }}>{error}</div>}
       <StatGrid>
         <StatCard label="Clientes" value={s?.total ?? '—'} hint="Teléfonos conectados" tone="primary" />
@@ -120,7 +121,7 @@ export function SuperadminBilling() {
               <button className="btn small" onClick={() => action(`/api/superadmin/billing/organizations/${detail.customer.id}/grant`, { days: 30, ...(grantPlan || detail.customer.plan?.id ? { planId: grantPlan || detail.customer.plan?.id } : {}) }, detail.customer)}>+30 días de plan</button>
               <button className="btn secondary small" onClick={() => action(`/api/superadmin/billing/organizations/${detail.customer.id}/trial`, { hours: 24 }, detail.customer)}>+24 h de prueba</button>
               <button className="btn secondary small" onClick={() => action(`/api/superadmin/billing/organizations/${detail.customer.id}/exempt`, { exempt: detail.customer.state !== 'exempt' }, detail.customer)}>{detail.customer.state === 'exempt' ? 'Quitar sin cargo' : 'Marcar sin cargo'}</button>
-              <button className="btn secondary small" onClick={() => { setShowNotice(detail.customer); setDetail(null); }}>📣 Avisar</button>
+              <button className="btn secondary small" onClick={() => { setShowNotice(detail.customer); setDetail(null); }}><Ui name="megaphone" size={14} /> Avisar</button>
             </div>
             <div><h4 style={{ margin: '0 0 6px' }}>Usuarios ({detail.data.users.length})</h4>
               {detail.data.users.map((u) => <div key={u.id} style={{ fontSize: 13, padding: '3px 0' }}>{u.name} · {u.email} · <Pill tone={u.active ? 'success' : 'neutral'}>{u.role}</Pill></div>)}</div>

@@ -33,6 +33,7 @@ function sanitizeOrgUser(user, whatsappProfile = null) {
     active: user.active,
     mustChangePassword: user.mustChangePassword,
     createdAt: user.createdAt,
+    permissions: require('../lib/permissions').effectivePermissions(user),
     whatsapp: whatsappProfile
   };
 }
@@ -55,6 +56,10 @@ async function getOwnOrg(organizationId) {
   if (!organization) throw new HttpError(404, 'Organización no encontrada');
   return organization;
 }
+
+router.get('/permissions', (_req, res) => {
+  res.json({ permissions: require('../lib/permissions').PERMISSIONS });
+});
 
 router.get('/', async (req, res, next) => {
   try {
@@ -218,6 +223,17 @@ router.patch('/users/:id', requireRole('OWNER', 'ADMIN'), requireCsrf, async (re
       });
       if (activeOwners <= 1) throw new HttpError(400, 'Debe existir al menos un propietario activo');
     }
+
+    // Permisos: solo se editan en supervisores y agentes; propietario y administrador siempre tienen todo.
+    if (typeof data.permissions !== 'undefined') {
+      const perms = require('../lib/permissions');
+      const finalRole = data.role || target.role;
+      if (!perms.isRestrictable(finalRole)) throw new HttpError(400, 'Los administradores siempre tienen todos los permisos');
+      data.permissions = perms.normalizePermissionsInput(data.permissions) || {};
+      // Guardamos solo las restricciones (false); lo demás queda activo por defecto.
+      data.permissions = Object.fromEntries(Object.entries(data.permissions).filter(([, v]) => v === false));
+    }
+    if (data.role && !require('../lib/permissions').isRestrictable(data.role)) data.permissions = {};
 
     // Reactivar a un usuario también ocupa un puesto del plan.
     if (data.active === true && target.active === false) await require('../lib/billing').assertCanAddUser(req.auth.organizationId);

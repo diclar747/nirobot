@@ -5,6 +5,7 @@ import { useAuth } from '../context/AuthContext';
 import { formatGs, formatLeft, type BillingStatus, type PlanInfo } from '../components/BillingGate';
 import { Logo } from '../components/Logo';
 import '../styles/billing.css';
+import { Ui } from '../components/Ui';
 
 const BENEFITS = [
   'Conversaciones ilimitadas con tu WhatsApp conectado',
@@ -116,7 +117,7 @@ export function BillingPage({ status: initial, onRefresh, expired }: { status: B
                   {isCurrent && <em className="billing-plan-flag current">Tu plan</em>}
                   <b>{plan.name}</b>
                   <strong>{formatGs(plan.priceGs)}<small>/mes</small></strong>
-                  <span className="billing-plan-agents">👥 {plan.maxAgents === 0 ? 'Solo el propietario' : `${plan.maxAgents} agente${plan.maxAgents === 1 ? '' : 's'} + propietario`}</span>
+                  <span className="billing-plan-agents"><Ui name="users" size={15} /> {plan.maxAgents === 0 ? 'Solo el propietario' : `${plan.maxAgents} agente${plan.maxAgents === 1 ? '' : 's'} + propietario`}</span>
                   {plan.description && <span className="billing-plan-desc">{plan.description}</span>}
                 </button>
               );
@@ -125,7 +126,7 @@ export function BillingPage({ status: initial, onRefresh, expired }: { status: B
         ) : (
           <div className="billing-price"><strong>{formatGs(price)}</strong><span>por mes · pago con tarjeta o QR</span></div>
         )}
-        <ul className="billing-benefits">{BENEFITS.map((item) => <li key={item}>✓ {item}</li>)}</ul>
+        <ul className="billing-benefits">{BENEFITS.map((item) => <li key={item}><Ui name="check" size={15} /> {item}</li>)}</ul>
         {status?.seats && <p className="billing-seats">Tu equipo: <b>{status.seats.agentsUsed}</b> de <b>{status.seats.maxAgents}</b> agentes en uso{status.seats.planName ? ` (${status.seats.planName})` : ''}.</p>}
 
         {error && <div className="billing-alert error">{error}</div>}
@@ -140,7 +141,7 @@ export function BillingPage({ status: initial, onRefresh, expired }: { status: B
         ) : (
           <div className="billing-alert error">Solo el administrador de la cuenta puede activar el plan. Pedile que lo haga.</div>
         )}
-        <p className="billing-secure">🔒 Pago procesado por Winsap · Bancard. No guardamos datos de tu tarjeta.</p>
+        <p className="billing-secure"><Ui name="lock" size={14} /> Pago procesado por Winsap · Bancard. No guardamos datos de tu tarjeta.</p>
 
         {status && status.payments.length > 0 && (
           <div className="billing-history">

@@ -40,3 +40,15 @@
 .billing-plan-flag { position: absolute; top: -9px; right: 10px; padding: 2px 9px; border-radius: 999px; background: #8b5cf6; color: #fff; font-size: 10.5px; font-style: normal; font-weight: 800; }
 .billing-plan-flag.current { background: #0284c7; }
 .billing-seats { margin: 0 0 14px; color: var(--text-muted); font-size: 13px; }
+
+/* Permisos por usuario */
+.modal.perm-modal { max-width: 640px; }
+.perm-panel { margin-top: 14px; padding: 12px; border: 1px solid var(--border-color); border-radius: 14px; background: var(--bg-surface-2); }
+.perm-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 8px; }
+.perm-head strong, .perm-head small { display: block; } .perm-head small { margin-top: 2px; color: var(--text-muted); font-size: 12px; }
+.perm-group { margin-top: 10px; } .perm-group-title { display: block; margin-bottom: 4px; color: var(--text-dim); font-size: 10.5px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
+.perm-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 10px; border-radius: 10px; cursor: pointer; }
+.perm-row:hover { background: var(--bg-surface-hover); } .perm-row b { display: block; font-size: 13.5px; } .perm-row small { display: block; color: var(--text-muted); font-size: 11.5px; }
+.perm-row.off b { color: var(--danger); text-decoration: line-through; }
+.perm-row input { width: 38px; height: 20px; flex-shrink: 0; accent-color: #10b981; cursor: pointer; }
+.perm-note { margin: 12px 0 0; padding: 10px 12px; border-radius: 10px; background: var(--primary-soft); color: var(--text-muted); font-size: 13px; }

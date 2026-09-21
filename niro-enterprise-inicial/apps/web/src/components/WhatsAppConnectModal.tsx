@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Modal } from './Modal';
 import { apiGet, apiPost, ApiError } from '../lib/api';
 import { getSocket } from '../lib/socket';
+import { Ui } from './Ui';
 
 type WhatsAppStatus = 'disconnected' | 'connecting' | 'qr' | 'connected';
 
@@ -115,7 +116,7 @@ export function WhatsAppConnectModal({ onClose }: { onClose: () => void }) {
 
         {!loading && state.status === 'disconnected' && (
           <div style={{ padding: '10px 0' }}>
-            <div style={{ fontSize: 32, marginBottom: 10 }}>📵</div>
+            <div style={{ fontSize: 32, marginBottom: 10 }}><Ui name="phone-off" size={36} /></div>
             <h4 style={{ margin: '0 0 8px 0', fontSize: 16 }}>WhatsApp no conectado</h4>
             <p style={{ fontSize: 13, color: 'var(--text-muted)', margin: '0 0 18px 0' }}>
               Conectá un número real de WhatsApp escaneando un código QR desde el teléfono de la empresa.

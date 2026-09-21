@@ -51,12 +51,18 @@ export function App() {
               </Route>
 
               <Route element={<ProtectedRoute roles={['OWNER', 'ADMIN', 'SUPERVISOR', 'AGENT']} />}>
-                <Route path="/billing" element={<Billing />} />
-                <Route path="/contactos" element={<Contacts />} />
                 <Route path="/inbox" element={<Inbox />} />
               </Route>
 
-              <Route element={<ProtectedRoute roles={['OWNER', 'ADMIN', 'SUPERVISOR', 'AGENT']} />}>
+              <Route element={<ProtectedRoute roles={['OWNER', 'ADMIN']} />}>
+                <Route path="/billing" element={<Billing />} />
+              </Route>
+
+              <Route element={<ProtectedRoute roles={['OWNER', 'ADMIN', 'SUPERVISOR', 'AGENT']} permission="contacts" />}>
+                <Route path="/contactos" element={<Contacts />} />
+              </Route>
+
+              <Route element={<ProtectedRoute roles={['OWNER', 'ADMIN', 'SUPERVISOR', 'AGENT']} permission="crm" />}>
                 <Route path="/board" element={<CrmBoard />} />
               </Route>
 
@@ -68,17 +74,23 @@ export function App() {
                 <Route path="/departments" element={<OrgDepartments />} />
               </Route>
 
-              <Route element={<ProtectedRoute roles={['OWNER', 'ADMIN', 'SUPERVISOR', 'AGENT']} />}>
+              <Route element={<ProtectedRoute roles={['OWNER', 'ADMIN', 'SUPERVISOR', 'AGENT']} permission="orders" />}>
                 <Route path="/orders" element={<Orders />} />
               </Route>
 
-              <Route element={<ProtectedRoute roles={['OWNER', 'ADMIN', 'SUPERVISOR']} />}>
+              <Route element={<ProtectedRoute roles={['OWNER', 'ADMIN', 'SUPERVISOR', 'AGENT']} permission="reports" />}>
                 <Route path="/reports" element={<Reports />} />
               </Route>
 
-              <Route element={<ProtectedRoute roles={['OWNER', 'ADMIN', 'SUPERVISOR']} />}>
+              <Route element={<ProtectedRoute roles={['OWNER', 'ADMIN', 'SUPERVISOR', 'AGENT']} permission="campaigns" />}>
                 <Route path="/campaigns" element={<Campaigns />} />
+              </Route>
+
+              <Route element={<ProtectedRoute roles={['OWNER', 'ADMIN', 'SUPERVISOR', 'AGENT']} permission="calls" />}>
                 <Route path="/llamadas" element={<CallCampaigns />} />
+              </Route>
+
+              <Route element={<ProtectedRoute roles={['OWNER', 'ADMIN', 'SUPERVISOR', 'AGENT']} permission="statuses" />}>
                 <Route path="/estados" element={<StatusPosts />} />
               </Route>
 
@@ -86,15 +98,16 @@ export function App() {
                 <Route path="/settings" element={<OrgSettings />} />
               </Route>
 
-              <Route element={<ProtectedRoute roles={['OWNER', 'ADMIN', 'SUPERVISOR', 'AGENT']} />}>
-                {/* Named /desarrolladores (not /api): the backend already owns /api/* for its own
-                    routes, so a frontend route at /api served the API's JSON banner instead of
-                    this page on a direct visit or reload. */}
+              <Route element={<ProtectedRoute roles={['OWNER', 'ADMIN', 'SUPERVISOR', 'AGENT']} permission="developers" />}>
+                {/* Named /desarrolladores (not /api): the backend already owns /api/* for its own routes. */}
                 <Route path="/desarrolladores" element={<ApiPortal />} />
               </Route>
 
-              <Route element={<ProtectedRoute roles={['OWNER', 'ADMIN', 'SUPERVISOR', 'AGENT']} />}>
+              <Route element={<ProtectedRoute roles={['OWNER', 'ADMIN', 'SUPERVISOR', 'AGENT']} permission="aiAgents" />}>
                 <Route path="/ai-agents" element={<AiAgents />} />
+              </Route>
+
+              <Route element={<ProtectedRoute roles={['OWNER', 'ADMIN', 'SUPERVISOR', 'AGENT']} permission="bot" />}>
                 <Route path="/bot" element={<BotFlow />} />
               </Route>
             </Route>

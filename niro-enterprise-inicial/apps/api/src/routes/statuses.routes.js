@@ -1,4 +1,5 @@
 const express = require('express');
+const { requirePermission } = require('../lib/permissions');
 const { prisma } = require('../lib/prisma');
 const { requireAuth } = require('../middleware/auth');
 const { HttpError } = require('../lib/errors');
@@ -14,6 +15,7 @@ function requireOrgContext(req, _res, next) {
 }
 
 router.use(requireAuth, requireOrgContext);
+router.use(requirePermission('statuses'));
 
 router.get('/', async (req, res, next) => {
   try {

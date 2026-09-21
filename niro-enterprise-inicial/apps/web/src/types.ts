@@ -9,6 +9,7 @@ export interface CurrentUser {
   role: UserRole;
   organizationId: string | null;
   mustChangePassword: boolean;
+  permissions?: Record<string, boolean>;
   organization: { id: string; name: string; slug: string } | null;
 }
 
@@ -20,6 +21,7 @@ export interface OrgUser {
   active: boolean;
   mustChangePassword: boolean;
   createdAt: string;
+  permissions?: Record<string, boolean>;
   whatsapp?: {
     name: string | null;
     phone: string | null;

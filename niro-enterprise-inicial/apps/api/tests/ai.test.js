@@ -78,8 +78,9 @@ describe('Agentes IA — /api/org/ai', () => {
     expect(messages[1]).toEqual({ role: 'user', content: 'hola' });
   });
 
-  test('POST /chat/test rechaza a un AGENT (requiere OWNER/ADMIN/SUPERVISOR)', async () => {
+  test('POST /chat/test rechaza a un AGENT si el admin le quitó los agentes de IA', async () => {
     const { agent, csrfToken } = await setupOrg('AGENT');
+    await prisma.user.updateMany({ where: { role: 'AGENT' }, data: { permissions: { aiAgents: false } } });
     const res = await agent.post('/api/org/ai/chat/test').set('X-CSRF-Token', csrfToken).send({ message: 'hola' });
     expect(res.status).toBe(403);
   });
@@ -127,8 +128,9 @@ describe('Agentes IA — /api/org/ai', () => {
     expect(logs).toHaveLength(1);
   });
 
-  test('POST /agents rechaza a un AGENT', async () => {
+  test('POST /agents rechaza a un AGENT si el admin le quitó los agentes de IA', async () => {
     const { agent, csrfToken } = await setupOrg('AGENT');
+    await prisma.user.updateMany({ where: { role: 'AGENT' }, data: { permissions: { aiAgents: false } } });
     const res = await agent
       .post('/api/org/ai/agents')
       .set('X-CSRF-Token', csrfToken)

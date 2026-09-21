@@ -4,6 +4,7 @@ import { getSocket } from '../lib/socket';
 import { useAlerts } from '../context/AlertContext';
 import { EmptyState, Panel, Pill, type Tone } from './PageKit';
 import type { Contact } from '../types';
+import { Ui } from './Ui';
 
 type Campaign = {
   id: string;
@@ -215,9 +216,9 @@ export function StatusCampaigns({ contacts }: { contacts: Contact[] }) {
                     <small className="sc-when">Sale: {formatDateTime(new Date(new Date(startAt).getTime() + index * intervalHours * 3600 * 1000).toISOString())}</small>
                   </div>
                   <span className="sc-move">
-                    <button type="button" disabled={index === 0} onClick={() => setItems((cur) => { const c = [...cur]; [c[index - 1], c[index]] = [c[index], c[index - 1]]; return c; })} aria-label="Subir">↑</button>
+                    <button type="button" disabled={index === 0} onClick={() => setItems((cur) => { const c = [...cur]; [c[index - 1], c[index]] = [c[index], c[index - 1]]; return c; })} aria-label="Subir"><Ui name="upgrade" size={14} /></button>
                     <button type="button" disabled={index === items.length - 1} onClick={() => setItems((cur) => { const c = [...cur]; [c[index + 1], c[index]] = [c[index], c[index + 1]]; return c; })} aria-label="Bajar">↓</button>
-                    <button type="button" disabled={items.length === 1} onClick={() => setItems((cur) => cur.filter((i) => i.key !== item.key))} aria-label="Quitar">✕</button>
+                    <button type="button" disabled={items.length === 1} onClick={() => setItems((cur) => cur.filter((i) => i.key !== item.key))} aria-label="Quitar"><Ui name="x" size={14} /></button>
                   </span>
                 </li>
               ))}
@@ -240,7 +241,7 @@ export function StatusCampaigns({ contacts }: { contacts: Contact[] }) {
 
       <Panel title="Campañas" flush>
         {campaigns.length === 0 ? (
-          <EmptyState icon="✦" title="Todavía no hay campañas" text="Creá una y los estados se publicarán solos en el intervalo que elijas." />
+          <EmptyState icon={<Ui name="megaphone" size={28} />} title="Todavía no hay campañas" text="Creá una y los estados se publicarán solos en el intervalo que elijas." />
         ) : (
           <ul className="sp-history">
             {campaigns.map((c) => {

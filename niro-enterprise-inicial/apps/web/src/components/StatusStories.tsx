@@ -4,6 +4,7 @@ import { apiGet } from '../lib/api';
 import { getSocket } from '../lib/socket';
 import { initials } from '../lib/format';
 import '../styles/status-stories.css';
+import { Ui } from './Ui';
 
 export type StoryItem = {
   id: string;
@@ -61,7 +62,7 @@ function StoryAvatar({ group, size }: { group: StoryGroup; size: number }) {
   }
   return (
     <span className="story-avatar-fallback" style={{ width: size, height: size, fontSize: size * 0.38 }}>
-      {group.fromMe ? '✦' : initials(group.name)}
+      {group.fromMe ? <Ui name="plus" size={18} /> : initials(group.name)}
     </span>
   );
 }
@@ -267,10 +268,10 @@ function StoryViewer({
           </span>
           {item.kind === 'video' && (
             <button type="button" className="story-icon-btn" onMouseDown={(e) => e.stopPropagation()} onClick={() => setMuted((value) => !value)} aria-label={muted ? 'Activar sonido' : 'Silenciar'}>
-              {muted ? '🔇' : '🔊'}
+              <Ui name={muted ? 'mic-off' : 'volume'} size={18} />
             </button>
           )}
-          <button type="button" className="story-icon-btn" onMouseDown={(e) => e.stopPropagation()} onClick={onClose} aria-label="Cerrar">✕</button>
+          <button type="button" className="story-icon-btn" onMouseDown={(e) => e.stopPropagation()} onClick={onClose} aria-label="Cerrar"><Ui name="x" size={18} /></button>
         </header>
 
         <div className="story-media" style={item.kind === 'text' ? { background: item.backgroundColor || '#0e1a38' } : undefined}>
