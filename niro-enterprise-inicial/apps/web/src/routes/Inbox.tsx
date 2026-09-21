@@ -7,6 +7,7 @@ import { CRM_STAGES, deriveStage, statusForStage, tagsForStage, type CrmStage } 
 import { Modal } from '../components/Modal';
 import { PlyrVideo, WaveAudio } from '../components/MediaPlayers';
 import { Ui, type UiIconName } from '../components/Ui';
+import { EmojiPicker } from '../components/EmojiPicker';
 import { StatusStories } from '../components/StatusStories';
 import { AgentsDropPanel, setConversationDragData } from '../components/AgentsDropPanel';
 import { useAlerts } from '../context/AlertContext';
@@ -24,15 +25,6 @@ import {
 type ConvFilterTab = 'all' | 'clients' | 'internal';
 
 const QUICK_REACTIONS = ['👍', '❤️', '😂', '😮', '😢', '🙏'];
-const EXTENDED_EMOJIS = [
-  '👍', '❤️', '😂', '😮', '😢', '🙏', '🔥', '🎉',
-  '👏', '💯', '🥳', '🚀', '🙌', '🤝', '💔', '😴',
-  '🤖', '🛒', '📦', '⭐', '✨', '⚡', '💡', '✅',
-  '❌', '😍', '🤩', '😎', '🤔', '🙄', '🤫', '🥺',
-  '😭', '🤯', '🤗', '🤓', '😇', '🤠', '😷', '💪',
-  '👀', '💬', '📞', '📍', '💰', '🏷️', '📋', '🛍️'
-];
-const COMPOSER_EMOJIS = ['😀', '😂', '😍', '👍', '🙏', '🎉', '❤️', '😢', '😮', '🔥', '✅', '❌'];
 const DIRECT_CALL_ACTIVE_STATUSES = new Set(['STARTING', 'RINGING', 'CONNECTED']);
 
 type DirectCall = {
@@ -671,6 +663,16 @@ function ActiveChatWindow({
   const [menuOpenFor, setMenuOpenFor] = useState<string | null>(null);
   const [extendedEmojiFor, setExtendedEmojiFor] = useState<Message | null>(null);
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
+  const chatInputRef = useRef<HTMLInputElement | null>(null);
+
+  function insertEmojiInComposer(emoji: string) {
+    const input = chatInputRef.current;
+    if (!input) { setContent((prev) => prev + emoji); return; }
+    const start = input.selectionStart ?? content.length;
+    const end = input.selectionEnd ?? content.length;
+    setContent(content.slice(0, start) + emoji + content.slice(end));
+    requestAnimationFrame(() => { input.focus(); input.setSelectionRange(start + emoji.length, start + emoji.length); });
+  }
   const [showMoreMenu, setShowMoreMenu] = useState(false);
   const [showPollModal, setShowPollModal] = useState(false);
   const [showContactShareModal, setShowContactShareModal] = useState(false);
@@ -1371,18 +1373,7 @@ function ActiveChatWindow({
         <Modal title="Seleccionar reacción" onClose={() => setExtendedEmojiFor(null)}>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
             <div style={{ fontSize: 12.5, color: 'var(--text-muted)' }}>Elige un emoji para reaccionar al mensaje:</div>
-            <div className="crm-extended-emoji-grid">
-              {EXTENDED_EMOJIS.map((emoji) => (
-                <button
-                  key={emoji}
-                  type="button"
-                  className="crm-extended-emoji-btn"
-                  onClick={() => handleReact(extendedEmojiFor, emoji)}
-                >
-                  {emoji}
-                </button>
-              ))}
-            </div>
+            <EmojiPicker inline onClose={() => setExtendedEmojiFor(null)} onPick={(emoji) => handleReact(extendedEmojiFor, emoji)} />
           </div>
         </Modal>
       )}
@@ -1485,19 +1476,15 @@ function ActiveChatWindow({
             className="composer-action-btn"
             onClick={() => setShowEmojiPicker((v) => !v)}
             title="Insertar emoji"
+            data-emoji-toggle
           >
             <Ui name="smile" />
           </button>
-          {showEmojiPicker && (
-            <div className="crm-emoji-picker composer">
-              {COMPOSER_EMOJIS.map((e) => (
-                <button key={e} type="button" onClick={() => { setContent((prev) => prev + e); setShowEmojiPicker(false); }}>{e}</button>
-              ))}
-            </div>
-          )}
+          {showEmojiPicker && <EmojiPicker keepOpen onPick={insertEmojiInComposer} onClose={() => setShowEmojiPicker(false)} />}
         </div>
 
         <input
+          ref={chatInputRef}
           className="crm-chat-input"
           placeholder={
             mode === 'note'

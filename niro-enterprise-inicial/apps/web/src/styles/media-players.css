@@ -45,3 +45,11 @@
 .ui-icon { display: inline-block; flex-shrink: 0; vertical-align: -0.2em; }
 .crm-wa-menu-item .ui-icon, .crm-info-action .ui-icon { margin-right: 2px; opacity: .9; }
 .composer-action-btn .ui-icon, .crm-chat-header .composer-action-btn .ui-icon { width: 20px; height: 20px; }
+
+/* Selector de emojis profesional (emoji-mart) */
+.emoji-pro.popover { position: absolute; z-index: 60; bottom: calc(100% + 8px); left: 0; border-radius: 16px; overflow: hidden; box-shadow: 0 18px 60px rgba(0, 0, 0, .45); }
+.emoji-pro.inline { display: flex; justify-content: center; }
+.emoji-pro em-emoji-picker { --border-radius: 16px; --font-family: inherit; --rgb-accent: 16, 185, 129; height: 400px; max-height: 60vh; width: min(352px, 92vw); }
+.emoji-pro-loading { display: grid; place-items: center; gap: 10px; width: min(352px, 92vw); height: 220px; border-radius: 16px; background: var(--bg-surface); color: var(--text-muted); font-size: 13px; }
+.emoji-pro-spinner { width: 26px; height: 26px; border: 3px solid var(--border-color); border-top-color: #10b981; border-radius: 50%; animation: emoji-spin .8s linear infinite; }
+@keyframes emoji-spin { to { transform: rotate(360deg); } }

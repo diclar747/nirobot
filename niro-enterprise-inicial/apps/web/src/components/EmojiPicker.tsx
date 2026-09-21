@@ -1,32 +1,37 @@
-import { useMemo, useState } from 'react';
+import { Suspense, lazy, useEffect, useRef } from 'react';
+import { useTheme } from '../context/ThemeContext';
 
-const EMOJI_GROUPS: { key: string; icon: string; label: string; emojis: string[] }[] = [
-  { key: 'caras', icon: '😀', label: 'Caras', emojis: '😀 😃 😄 😁 😆 😅 😂 🤣 😊 😇 🙂 🙃 😉 😌 😍 🥰 😘 😗 😙 😚 😋 😛 😜 🤪 😝 🤗 🤭 🤔 🤩 🥳 😎 🤓 😏 😒 😞 😔 😟 😕 🙁 😣 😖 😫 😩 🥺 😢 😭 😤 😠 😡 🤯 😳 🥵 🥶 😱 😨 😰 😥 😓 🤤 😴 🙄 😬 🤐 😷' .split(' ') },
-  { key: 'gestos', icon: '👋', label: 'Gestos', emojis: '👋 🤚 🖐️ ✋ 🖖 👌 🤌 ✌️ 🤞 🤟 🤘 🤙 👈 👉 👆 👇 ☝️ 👍 👎 ✊ 👊 🤛 🤜 👏 🙌 👐 🤲 🤝 🙏 ✍️ 💪 🦾 👀 👁️ 👂 👃 🧠' .split(' ') },
-  { key: 'corazones', icon: '❤️', label: 'Corazones', emojis: '❤️ 🧡 💛 💚 💙 💜 🖤 🤍 🤎 💔 ❣️ 💕 💞 💓 💗 💖 💘 💝 💟 ♥️ 😻 💌 💋 💯 💢 💥 💫 💦 💨 ✨ ⭐ 🌟 🔥 🎉 🎊 🎁 🎈' .split(' ') },
-  { key: 'negocios', icon: '💼', label: 'Negocios', emojis: '💼 📣 📢 📞 ☎️ 📱 💬 🗨️ ✉️ 📧 📩 📦 🛍️ 🛒 💰 💵 💳 🏷️ 🧾 📈 📊 📅 🗓️ ⏰ ⏳ 🚚 🏪 🏢 🏠 📍 🗺️ 🔔 🔗 ✅ ☑️ ✔️ ❌ ⚠️ ❗ ❓ 🆕 🆓 🔝 👉' .split(' ') },
-  { key: 'comida', icon: '🍕', label: 'Comida', emojis: '🍎 🍊 🍋 🍌 🍉 🍇 🍓 🍒 🍑 🥭 🍍 🥑 🍅 🥕 🌽 🥖 🧀 🍗 🍖 🍔 🍟 🍕 🌭 🌮 🌯 🥗 🍝 🍣 🍰 🎂 🍩 🍪 🍫 🍬 🍦 ☕ 🍵 🥤 🍺 🍷 🥂 🍾' .split(' ') },
-  { key: 'naturaleza', icon: '🌿', label: 'Naturaleza', emojis: '🐶 🐱 🐭 🐰 🦊 🐻 🐼 🐨 🐯 🦁 🐮 🐷 🐸 🐵 🐔 🐧 🐦 🦅 🦋 🐝 🌸 🌹 🌺 🌻 🌼 🌷 🌱 🌿 🍀 🌴 🌳 🌞 🌙 ⭐ ☀️ ⛅ 🌈 ☔ ❄️ 🌊' .split(' ') },
-  { key: 'objetos', icon: '⚽', label: 'Actividades', emojis: '⚽ 🏀 🏈 ⚾ 🎾 🏐 🎱 🏓 🥇 🏆 🏅 🎮 🎯 🎲 🎵 🎶 🎤 🎧 🎬 🎨 📚 💡 🔑 🔒 🎓 🚗 ✈️ 🚀 ⛱️ 🏖️ 🎄 🎃 🎁 🕯️ 🧸 💎 👑 👗 👟 🕶️' .split(' ') }
-];
+// La librería (~400 KB de datos de emojis) se descarga recién cuando alguien abre el selector.
+const EmojiMartPanel = lazy(() => import('./emoji/EmojiMartPanel'));
 
-export function EmojiPicker({ onPick, onClose }: { onPick: (emoji: string) => void; onClose: () => void }) {
-  const [group, setGroup] = useState(EMOJI_GROUPS[0].key);
-  const active = useMemo(() => EMOJI_GROUPS.find((item) => item.key === group) || EMOJI_GROUPS[0], [group]);
+/**
+ * Selector profesional de emojis para el chat, las campañas y las reacciones.
+ * - popover (por defecto): se cierra al hacer clic afuera o con Esc.
+ * - inline: se usa dentro de un modal (sin cerrarse solo).
+ */
+export function EmojiPicker({ onPick, onClose, inline = false, keepOpen = false }: { onPick: (emoji: string) => void; onClose: () => void; inline?: boolean; keepOpen?: boolean }) {
+  const { theme } = useTheme();
+  const ref = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (inline) return;
+    const onDown = (event: MouseEvent) => {
+      const target = event.target as Element;
+      if (target.closest?.('[data-emoji-toggle]')) return; // el botón que lo abre/cierra maneja su propio clic
+      if (ref.current && !ref.current.contains(target)) onClose();
+    };
+    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') onClose(); };
+    // el clic que abrió el selector ya pasó: escuchamos en el siguiente ciclo
+    const timer = window.setTimeout(() => document.addEventListener('mousedown', onDown), 0);
+    document.addEventListener('keydown', onKey);
+    return () => { window.clearTimeout(timer); document.removeEventListener('mousedown', onDown); document.removeEventListener('keydown', onKey); };
+  }, [inline, onClose]);
+
   return (
-    <div className="emoji-picker" role="dialog" aria-label="Selector de emojis">
-      <div className="emoji-picker-tabs">
-        {EMOJI_GROUPS.map((item) => (
-          <button type="button" key={item.key} className={item.key === group ? 'active' : ''} onClick={() => setGroup(item.key)} title={item.label} aria-label={item.label}>{item.icon}</button>
-        ))}
-        <button type="button" className="emoji-picker-close" onClick={onClose} aria-label="Cerrar selector">×</button>
-      </div>
-      <div className="emoji-picker-label">{active.label}</div>
-      <div className="emoji-picker-grid">
-        {active.emojis.map((emoji, index) => (
-          <button type="button" key={`${emoji}-${index}`} onClick={() => onPick(emoji)}>{emoji}</button>
-        ))}
-      </div>
+    <div ref={ref} className={`emoji-pro ${inline ? 'inline' : 'popover'}`} role="dialog" aria-label="Selector de emojis">
+      <Suspense fallback={<div className="emoji-pro-loading"><span className="emoji-pro-spinner" />Cargando emojis…</div>}>
+        <EmojiMartPanel dark={theme !== 'light'} onPick={(emoji) => { onPick(emoji); if (!keepOpen && !inline) onClose(); }} />
+      </Suspense>
     </div>
   );
 }
