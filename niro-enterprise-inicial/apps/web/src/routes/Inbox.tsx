@@ -8,6 +8,9 @@ import { Modal } from '../components/Modal';
 import { PlyrVideo, WaveAudio } from '../components/MediaPlayers';
 import { Ui, type UiIconName } from '../components/Ui';
 import { EmojiPicker } from '../components/EmojiPicker';
+import { QuickReplyManager, QuickReplyPopover, useQuickReplies } from '../components/QuickReplies';
+import { detectSlash, fillTemplate, rankReplies, type QuickReply } from '../lib/quickReplies';
+import { can } from '../lib/permissions';
 import { StatusStories } from '../components/StatusStories';
 import { AgentsDropPanel, setConversationDragData } from '../components/AgentsDropPanel';
 import { useAlerts } from '../context/AlertContext';
@@ -663,7 +666,7 @@ function ActiveChatWindow({
   const [menuOpenFor, setMenuOpenFor] = useState<string | null>(null);
   const [extendedEmojiFor, setExtendedEmojiFor] = useState<Message | null>(null);
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
-  const chatInputRef = useRef<HTMLInputElement | null>(null);
+  const chatInputRef = useRef<HTMLTextAreaElement | null>(null);
 
   function insertEmojiInComposer(emoji: string) {
     const input = chatInputRef.current;
@@ -678,6 +681,56 @@ function ActiveChatWindow({
   const [showContactShareModal, setShowContactShareModal] = useState(false);
   const [showCameraModal, setShowCameraModal] = useState(false);
   const [recording, setRecording] = useState(false);
+  const { user: me } = useAuth();
+  const quick = useQuickReplies();
+  const [caret, setCaret] = useState(0);
+  const [qrIndex, setQrIndex] = useState(0);
+  const [qrForced, setQrForced] = useState(false);
+  const [qrDismissed, setQrDismissed] = useState<string | null>(null);
+  const [qrManager, setQrManager] = useState<{ startNew: boolean; shortcut?: string } | null>(null);
+  const quickContext = { name: conversation.contact.name, phone: conversation.contact.phone, email: conversation.contact.email, agent: me?.name, company: me?.organization?.name };
+  const slash = detectSlash(content, caret);
+  const slashKey = slash ? `${slash.start}:${slash.query}` : null;
+  const qrOpen = !recording && (qrForced || (slash !== null && slashKey !== qrDismissed));
+  const qrItems = rankReplies(quick.items, qrForced && !slash ? '' : slash?.query || '').slice(0, 40);
+  const canManageQuick = can(me, 'quickReplies');
+
+  useEffect(() => { setQrIndex(0); }, [slashKey, qrForced, quick.items.length]);
+
+  // La barra de escribir crece con el texto (hasta 140 px), como en WhatsApp Web.
+  useEffect(() => {
+    const el = chatInputRef.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = `${Math.min(el.scrollHeight, 140)}px`;
+  }, [content]);
+
+  function pickQuickReply(reply: QuickReply) {
+    const text = fillTemplate(reply.content, quickContext);
+    const el = chatInputRef.current;
+    const pos = el?.selectionStart ?? caret;
+    const token = detectSlash(content, pos);
+    const before = token ? content.slice(0, token.start) : content.slice(0, pos);
+    const after = content.slice(pos);
+    const next = before + text + after;
+    setContent(next);
+    setQrForced(false);
+    setQrDismissed(null);
+    apiPost(`/api/org/quick-replies/${reply.id}/use`).catch(() => {});
+    const newCaret = (before + text).length;
+    setCaret(newCaret);
+    requestAnimationFrame(() => { el?.focus(); el?.setSelectionRange(newCaret, newCaret); });
+  }
+
+  function handleComposerKeyDown(event: React.KeyboardEvent<HTMLTextAreaElement>) {
+    if (qrOpen && qrItems.length > 0) {
+      if (event.key === 'ArrowDown') { event.preventDefault(); setQrIndex((i) => (i + 1) % qrItems.length); return; }
+      if (event.key === 'ArrowUp') { event.preventDefault(); setQrIndex((i) => (i - 1 + qrItems.length) % qrItems.length); return; }
+      if (event.key === 'Enter' || event.key === 'Tab') { event.preventDefault(); pickQuickReply(qrItems[qrIndex]); return; }
+    }
+    if (qrOpen && event.key === 'Escape') { event.preventDefault(); setQrForced(false); setQrDismissed(slashKey); return; }
+    if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); handleSendMessage(); }
+  }
   const [recordingSeconds, setRecordingSeconds] = useState(0);
   const [respondingTransfer, setRespondingTransfer] = useState(false);
   const [directCall, setDirectCall] = useState<DirectCall | null>(null);
@@ -1470,6 +1523,18 @@ function ActiveChatWindow({
           <Ui name={recording ? 'stop' : 'mic'} />
         </button>
 
+        <button
+          type="button"
+          className={`composer-action-btn ${qrOpen ? 'recording' : ''}`}
+          style={qrOpen ? { background: 'var(--primary-soft)', color: '#10b981' } : undefined}
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={() => { setQrForced((v) => !v); chatInputRef.current?.focus(); }}
+          title="Respuestas rápidas (o escribí / en el chat)"
+          aria-label="Respuestas rápidas"
+        >
+          <Ui name="zap" />
+        </button>
+
         <div style={{ position: 'relative' }}>
           <button
             type="button"
@@ -1483,25 +1548,38 @@ function ActiveChatWindow({
           {showEmojiPicker && <EmojiPicker keepOpen onPick={insertEmojiInComposer} onClose={() => setShowEmojiPicker(false)} />}
         </div>
 
-        <input
+        <textarea
           ref={chatInputRef}
-          className="crm-chat-input"
+          className="crm-chat-textarea"
+          rows={1}
           placeholder={
             mode === 'note'
               ? 'Escribir nota interna para el equipo...'
               : recording
                 ? `Grabando nota de voz… ${String(Math.floor(recordingSeconds / 60)).padStart(2, '0')}:${String(recordingSeconds % 60).padStart(2, '0')}`
-                : 'Escribe un mensaje...'
+                : 'Escribe un mensaje…  ( / para respuestas rápidas )'
           }
           value={content}
-          onChange={(e) => setContent(e.target.value)}
+          onChange={(e) => { setContent(e.target.value); setCaret(e.target.selectionStart ?? e.target.value.length); setQrForced(false); }}
+          onKeyDown={handleComposerKeyDown}
+          onKeyUp={(e) => setCaret(e.currentTarget.selectionStart ?? 0)}
+          onClick={(e) => setCaret(e.currentTarget.selectionStart ?? 0)}
           disabled={recording}
         />
+
+        {qrOpen && (
+          <QuickReplyPopover items={qrItems} query={qrForced && !slash ? '' : slash?.query || ''} activeIndex={qrIndex} context={quickContext} canManage={canManageQuick} loaded={quick.loaded}
+            onPick={pickQuickReply} onHover={setQrIndex}
+            onManage={() => { setQrForced(false); setQrManager({ startNew: false }); }}
+            onCreate={(shortcut) => { setQrForced(false); setQrManager({ startNew: true, shortcut }); }} />
+        )}
 
         <button className="btn-send-message" type="submit" disabled={sending || recording || !content.trim()}>
           <Ui name="send" />
         </button>
       </form>
+
+      {qrManager && <QuickReplyManager items={quick.items} context={quickContext} startNew={qrManager.startNew} initialShortcut={qrManager.shortcut} onClose={() => setQrManager(null)} onChanged={quick.reload} />}
 
       {showPollModal && (
         <CreatePollModal

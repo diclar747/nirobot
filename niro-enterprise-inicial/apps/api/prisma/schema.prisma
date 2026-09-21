@@ -89,6 +89,7 @@ model Organization {
   plan          Plan?                 @relation(fields: [planId], references: [id], onDelete: SetNull)
   billingPayments BillingPayment[]
   platformNotices PlatformNotice[]
+  quickReplies  QuickReply[]
   createdAt     DateTime              @default(now())
   updatedAt     DateTime              @updatedAt
   users         User[]
@@ -147,6 +148,7 @@ model User {
   apiKeys            ApiKey[]
   pushSubscriptions  PushSubscription[]
   permissions        Json?
+  quickReplies       QuickReply[]
 }
 
 model Department {
@@ -845,4 +847,25 @@ model Plan {
   createdAt   DateTime       @default(now())
   updatedAt   DateTime       @updatedAt
   organizations Organization[]
+}
+
+
+// Respuestas rápidas del chat: se despliegan escribiendo "/" y el atajo.
+model QuickReply {
+  id              String       @id @default(cuid())
+  organizationId  String
+  shortcut        String
+  title           String
+  content         String       @db.Text
+  shared          Boolean      @default(true)
+  createdByUserId String?
+  usageCount      Int          @default(0)
+  lastUsedAt      DateTime?
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+  organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  createdBy       User?        @relation(fields: [createdByUserId], references: [id], onDelete: SetNull)
+
+  @@unique([organizationId, shortcut])
+  @@index([organizationId, usageCount])
 }

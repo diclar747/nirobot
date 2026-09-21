@@ -11,6 +11,7 @@ const PERMISSIONS = [
   { key: 'contactsDelete', group: 'Contactos',  label: 'Eliminar contactos',        description: 'Borrar contactos y sus conversaciones.' },
   { key: 'crm',            group: 'Ventas',     label: 'CRM',                       description: 'Tablero CRM y enviar contactos a una etapa.' },
   { key: 'orders',         group: 'Ventas',     label: 'Pedidos',                   description: 'Ver y gestionar pedidos.' },
+  { key: 'quickReplies',   group: 'Atención',   label: 'Crear y editar respuestas rápidas', description: 'Crear plantillas para el chat (usarlas siempre se puede).' },
   { key: 'transferChats',  group: 'Atención',   label: 'Transferir chats',          description: 'Pasar conversaciones a otro agente o departamento.' },
   { key: 'reports',        group: 'Gestión',    label: 'Reportes',                  description: 'Ver reportes y métricas.' },
   { key: 'bot',            group: 'Automatización', label: 'Bot de flujos',         description: 'Ver y editar el flujo del bot.' },

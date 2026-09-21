@@ -73,6 +73,7 @@ app.use('/api/org/orders', ordersRoutes);
 app.use('/api/org/reports', reportsRoutes);
 app.use('/api/org/whatsapp', whatsappRoutes);
 app.use('/api/org/campaigns', campaignsRoutes);
+app.use('/api/org/quick-replies', require('./routes/quick-replies.routes'));
 app.use('/api/org/ai', aiRoutes);
 app.use('/api/org/bot-flow', botFlowRoutes);
 app.use('/api/org/push', pushRoutes);

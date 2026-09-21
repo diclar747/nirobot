@@ -2,7 +2,7 @@ import type { CurrentUser } from '../types';
 
 export type PermissionKey =
   | 'campaigns' | 'statuses' | 'calls' | 'contacts' | 'contactsExport' | 'contactsDelete'
-  | 'crm' | 'orders' | 'transferChats' | 'reports' | 'bot' | 'aiAgents' | 'developers';
+  | 'crm' | 'orders' | 'quickReplies' | 'transferChats' | 'reports' | 'bot' | 'aiAgents' | 'developers';
 
 export interface PermissionDef { key: PermissionKey; group: string; label: string; description: string }
 
