@@ -48,6 +48,16 @@ app.use(cors(corsOptionsDelegate));
 app.use(express.json({ limit: '2mb', verify: (req, _res, buf) => { req.rawBody = buf; } }));
 app.use(cookieParser());
 
+// Salud del servicio (para monitoreo/uptime): responde 200 si la API y la base están vivas.
+app.get('/api/health', async (_req, res) => {
+  try {
+    await require('./lib/prisma').prisma.$queryRaw`SELECT 1`;
+    res.json({ status: 'ok', uptime: Math.round(process.uptime()) });
+  } catch {
+    res.status(503).json({ status: 'degraded' });
+  }
+});
+
 app.use(publicRoutes);
 app.use('/api/auth', authRoutes);
 app.use('/api/superadmin', superadminRoutes);

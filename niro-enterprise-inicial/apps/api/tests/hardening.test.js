@@ -81,3 +81,11 @@ describe('entrega de mensajes por WhatsApp', () => {
     spy.mockRestore();
   });
 });
+
+describe('Salud del servicio', () => {
+  test('GET /api/health responde ok sin autenticación', async () => {
+    const res = await require('supertest')(app).get('/api/health');
+    expect(res.status).toBe(200);
+    expect(res.body.status).toBe('ok');
+  });
+});
