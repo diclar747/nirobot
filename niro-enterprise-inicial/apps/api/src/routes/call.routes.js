@@ -7,6 +7,7 @@ const { HttpError } = require('../lib/errors');
 const { audit } = require('../lib/audit');
 const { saveFile, resolvePath, deleteFile } = require('../lib/storage');
 const { extensionFor, safeDownloadName } = require('../lib/attachments');
+const { contactAvatarUrlFor } = require('../lib/avatars');
 const { createCallCampaignSchema } = require('../validation/call.validation');
 const whatsapp = require('../lib/whatsapp');
 const calls = require('../lib/callCampaigns');
@@ -287,7 +288,7 @@ router.get('/audience', async (req, res, next) => {
       take: 5000
     });
     res.json({
-      contacts: contacts.map(({ conversations, ...c }) => ({ ...c, crmTags: Array.from(new Set(conversations.flatMap((cv) => cv.tags))) }))
+      contacts: contacts.map(({ conversations, ...c }) => ({ ...c, avatarUrl: contactAvatarUrlFor(c.avatarUrl), crmTags: Array.from(new Set(conversations.flatMap((cv) => cv.tags))) }))
     });
   } catch (err) { next(err); }
 });

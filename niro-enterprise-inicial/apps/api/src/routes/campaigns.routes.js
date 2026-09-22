@@ -8,6 +8,7 @@ const { createCampaignSchema } = require('../validation/campaigns.validation');
 const { upload } = require('../middleware/upload');
 const { saveFile, deleteFile } = require('../lib/storage');
 const { extensionFor } = require('../lib/attachments');
+const { contactAvatarUrlFor } = require('../lib/avatars');
 const campaigns = require('../lib/campaigns');
 const whatsapp = require('../lib/whatsapp');
 const { findUnknownVariables, PUBLIC_VARIABLES } = require('../lib/campaignVariables');
@@ -313,7 +314,7 @@ router.get('/:id', async (req, res, next) => {
         readAt: r.readAt,
         waMessageId: r.waMessageId,
         contact: r.contact
-          ? { id: r.contact.id, name: r.contact.name, phone: r.contact.phone, avatarUrl: r.contact.avatarUrl }
+          ? { id: r.contact.id, name: r.contact.name, phone: r.contact.phone, avatarUrl: contactAvatarUrlFor(r.contact.avatarUrl) }
           : { id: r.id, name: r.groupName || 'Grupo', phone: null, avatarUrl: null, isGroup: true }
       }))
     });

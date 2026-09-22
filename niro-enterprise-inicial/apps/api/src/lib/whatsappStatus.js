@@ -6,6 +6,7 @@ const { prisma } = require('./prisma');
 const { emitToOrg } = require('./realtime');
 const { saveFile, deleteFile } = require('./storage');
 const { extensionFor } = require('./attachments');
+const { contactAvatarUrlFor } = require('./avatars');
 
 const STATUS_BROADCAST = 'status@broadcast';
 const STATUS_TTL_MS = 24 * 60 * 60 * 1000;
@@ -38,7 +39,7 @@ function sanitizeStatus(status, contact) {
     key: status.contactId || status.participantJid,
     name: (person && person.name) || status.displayName || status.phone || 'Contacto',
     phone: status.phone || (person && person.phone) || null,
-    avatarUrl: (person && person.avatarUrl) || null,
+    avatarUrl: contactAvatarUrlFor(person && person.avatarUrl),
     kind: status.kind,
     text: status.text || null,
     caption: status.caption || null,

@@ -14,6 +14,7 @@ const {
   addMemberSchema
 } = require('../validation/org.validation');
 const { HttpError } = require('../lib/errors');
+const { contactAvatarUrlFor } = require('../lib/avatars');
 
 const router = express.Router();
 
@@ -777,7 +778,7 @@ router.get('/dashboard-stats', async (req, res, next) => {
           name: c.contact.name,
           phone: c.contact.phone,
           email: c.contact.email,
-          avatarUrl: c.contact.avatarUrl
+          avatarUrl: contactAvatarUrlFor(c.contact.avatarUrl)
         },
         department: c.department ? { id: c.department.id, name: c.department.name } : null,
         lastMessage: c.messages[0]?.content || null

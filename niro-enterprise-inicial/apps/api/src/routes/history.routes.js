@@ -7,6 +7,7 @@ const { requirePermission } = require('../lib/permissions');
 const { requireAuth } = require('../middleware/auth');
 const { HttpError } = require('../lib/errors');
 const { sanitizeAttachment } = require('../lib/attachments');
+const { contactAvatarUrlFor } = require('../lib/avatars');
 const chatAccess = require('../lib/chatAccess');
 const whatsapp = require('../lib/whatsapp');
 
@@ -107,7 +108,7 @@ function sanitizeRow(m) {
   return {
     id: m.id,
     conversationId: m.conversationId,
-    contact: m.conversation.contact ? { id: m.conversation.contact.id, name: m.conversation.contact.name, phone: m.conversation.contact.phone, avatarUrl: m.conversation.contact.avatarUrl } : null,
+    contact: m.conversation.contact ? { id: m.conversation.contact.id, name: m.conversation.contact.name, phone: m.conversation.contact.phone, avatarUrl: contactAvatarUrlFor(m.conversation.contact.avatarUrl) } : null,
     department: m.conversation.department ? { id: m.conversation.departmentId, name: m.conversation.department.name } : null,
     direction: m.direction,
     contentType: m.contentType,

@@ -1,6 +1,7 @@
 const { prisma } = require('./prisma');
 const { emitToOrg, emitToConversation } = require('./realtime');
 const { sanitizeAttachment } = require('./attachments');
+const { contactAvatarUrlFor } = require('./avatars');
 
 const CONVERSATION_INCLUDE = {
   contact: true,
@@ -23,7 +24,7 @@ function sanitizeConversation(conversation) {
     tags: conversation.tags,
     createdAt: conversation.createdAt,
     updatedAt: conversation.updatedAt,
-    contact: conversation.contact,
+    contact: conversation.contact ? { ...conversation.contact, avatarUrl: contactAvatarUrlFor(conversation.contact.avatarUrl) } : null,
     department: conversation.department,
     assignedTo: conversation.assignedTo
   };

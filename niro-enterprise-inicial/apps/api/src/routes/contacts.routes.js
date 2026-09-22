@@ -7,16 +7,9 @@ const { requireAuth, requireRole, requireCsrf } = require('../middleware/auth');
 const { contactSchema } = require('../validation/conversations.validation');
 const { HttpError } = require('../lib/errors');
 const { resolvePath } = require('../lib/storage');
+const { contactAvatarUrlFor } = require('../lib/avatars');
 
 const router = express.Router();
-
-// avatarUrl es o bien un link externo puesto a mano (queda tal cual — validado como URL en el
-// schema de edición) o una storageKey ("orgId/archivo") de una foto que bajamos nosotros desde
-// WhatsApp; en ese segundo caso hay que armar la URL que la sirve.
-function contactAvatarUrlFor(value) {
-  if (!value) return null;
-  return /^https?:\/\//i.test(value) ? value : `/api/org/contacts/avatar/${value}`;
-}
 
 const CONSENT_STATUSES = ['UNKNOWN', 'GRANTED', 'DENIED', 'REVOKED'];
 const CONSENT_ROLES = ['OWNER', 'ADMIN', 'SUPERVISOR'];
