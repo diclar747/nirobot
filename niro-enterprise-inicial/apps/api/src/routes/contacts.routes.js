@@ -6,8 +6,17 @@ const { z } = require('zod');
 const { requireAuth, requireRole, requireCsrf } = require('../middleware/auth');
 const { contactSchema } = require('../validation/conversations.validation');
 const { HttpError } = require('../lib/errors');
+const { resolvePath } = require('../lib/storage');
 
 const router = express.Router();
+
+// avatarUrl es o bien un link externo puesto a mano (queda tal cual — validado como URL en el
+// schema de edición) o una storageKey ("orgId/archivo") de una foto que bajamos nosotros desde
+// WhatsApp; en ese segundo caso hay que armar la URL que la sirve.
+function contactAvatarUrlFor(value) {
+  if (!value) return null;
+  return /^https?:\/\//i.test(value) ? value : `/api/org/contacts/avatar/${value}`;
+}
 
 const CONSENT_STATUSES = ['UNKNOWN', 'GRANTED', 'DENIED', 'REVOKED'];
 const CONSENT_ROLES = ['OWNER', 'ADMIN', 'SUPERVISOR'];
@@ -31,6 +40,17 @@ function requireOrgContext(req, _res, next) {
 }
 
 router.use(requireAuth, requireOrgContext);
+
+router.get('/avatar/:orgId/:file', (req, res, next) => {
+  if (req.params.orgId !== req.auth.organizationId) return next(new HttpError(404, 'Imagen no encontrada'));
+  let filePath;
+  try {
+    filePath = resolvePath(`${req.params.orgId}/${req.params.file}`);
+  } catch {
+    return next(new HttpError(404, 'Imagen no encontrada'));
+  }
+  res.sendFile(filePath, (err) => { if (err && !res.headersSent) next(new HttpError(404, 'Imagen no encontrada')); });
+});
 
 router.get('/', async (req, res, next) => {
   try {
@@ -114,7 +134,7 @@ router.get('/directory', requirePermission('contacts'), async (req, res, next) =
     const totalAll = await prisma.contact.count({ where: { organizationId: req.auth.organizationId } });
     res.json({
       contacts: rows.map((c) => ({
-        id: c.id, name: c.name, phone: c.phone, email: c.email, avatarUrl: c.avatarUrl || null, tags: c.tags, createdAt: c.createdAt,
+        id: c.id, name: c.name, phone: c.phone, email: c.email, avatarUrl: contactAvatarUrlFor(c.avatarUrl), tags: c.tags, createdAt: c.createdAt,
         conversationId: c.conversations[0]?.id || null, crmStage: stageOf(c.conversations[0]?.tags)
       })),
       total, page, limit, pages: Math.max(1, Math.ceil(total / limit)), tags, stats: { total: totalAll, withName, withPhone }

@@ -20,7 +20,6 @@ const {
 } = require('@whiskeysockets/baileys');
 const { prisma } = require('./prisma');
 const { emitToOrg } = require('./realtime');
-const { renderWelcome, matchMenuOption } = require('./bot');
 const { runBotFlow, conversationUpdateData } = require('./botFlow');
 const { registerInboundResponse } = require('./callSurveys');
 const aiBot = require('./aiBot');
@@ -189,7 +188,25 @@ function publicStatus(organizationId) {
 const AVATAR_BACKFILL_DELAY_MS = Math.max(300, Number(process.env.WHATSAPP_AVATAR_BACKFILL_DELAY_MS || 800));
 const avatarBackfills = new Set();
 
-async function backfillContactAvatars(organizationId, sock) {
+// `sock.profilePictureUrl()` da un link firmado al CDN de WhatsApp que vence a las pocas horas —
+// si se guarda tal cual en la base, la foto termina rota. Se descarga la imagen y se guarda en
+// disco (mismo storage que el resto de los adjuntos); lo que se persiste es la storageKey, no el
+// link. Devuelve la storageKey, o null si no se pudo descargar.
+async function downloadAvatarToStorage(organizationId, sourceUrl) {
+  try {
+    const res = await fetch(sourceUrl, { signal: AbortSignal.timeout(15000) });
+    if (!res.ok) return null;
+    const mime = normalizeMimeType(res.headers.get('content-type'));
+    const ext = extensionFor(mime) || '.jpg';
+    const buffer = Buffer.from(await res.arrayBuffer());
+    if (!buffer.length) return null;
+    return await saveFile(organizationId, buffer, ext);
+  } catch {
+    return null;
+  }
+}
+
+async function backfillContactAvatars(organizationId, sock, { onProgress } = {}) {
   if (avatarBackfills.has(organizationId)) return { started: false };
   avatarBackfills.add(organizationId);
   const skipped = new Set();
@@ -213,6 +230,7 @@ async function backfillContactAvatars(organizationId, sock) {
         if (!current || current.sock !== sock || current.status !== 'connected' || current.pausedForCall) return { started: true, fetched, noPicture, interrupted: true };
         const jid = contact.externalId && /@(s\.whatsapp\.net|lid)$/.test(contact.externalId) ? contact.externalId : (contact.phone ? jidFromPhone(contact.phone) : null);
         skipped.add(contact.id);
+        if (onProgress) await onProgress({ processed: fetched + noPicture });
         if (!jid) continue;
         try {
           const url = await Promise.race([
@@ -220,8 +238,9 @@ async function backfillContactAvatars(organizationId, sock) {
             new Promise((_, reject) => { const t = setTimeout(() => reject(new Error('timeout')), 8000); t.unref?.(); })
           ]);
           consecutiveErrors = 0;
-          if (typeof url === 'string' && /^https?:\/\//i.test(url)) {
-            await prisma.contact.update({ where: { id: contact.id }, data: { avatarUrl: url } });
+          const key = typeof url === 'string' && /^https?:\/\//i.test(url) ? await downloadAvatarToStorage(organizationId, url) : null;
+          if (key) {
+            await prisma.contact.update({ where: { id: contact.id }, data: { avatarUrl: key } });
             fetched += 1;
           }
         } catch (err) {
@@ -407,6 +426,110 @@ async function listGroups(organizationId, { force = false } = {}) {
   return groups;
 }
 
+// Todos los grupos con sus integrantes (para el panel de Grupos). Los LID se traducen a teléfono cuando WhatsApp
+// tiene la equivalencia; si no, el integrante queda con el teléfono en null ("por identificar"), NUNCA se inventa uno.
+// Fotos de grupos e integrantes: se piden de a poco (mismo ritmo que los avatares de contactos) para no saturar a WhatsApp.
+// Reutiliza la foto ya guardada del Contact cuando el integrante coincide con un contacto conocido, así no se pide dos veces.
+async function backfillGroupAvatarsWithSock(organizationId, sock, { onProgress, stillConnected = () => true } = {}) {
+  let fetched = 0;
+  let processed = 0;
+  const cache = new Map();
+  async function pictureFor(jid) {
+    if (cache.has(jid)) return cache.get(jid);
+    try {
+      const url = await Promise.race([
+        sock.profilePictureUrl(jid, 'image'),
+        new Promise((_, reject) => { const t = setTimeout(() => reject(new Error('timeout')), 8000); t.unref?.(); })
+      ]);
+      const key = typeof url === 'string' && /^https?:\/\//i.test(url) ? await downloadAvatarToStorage(organizationId, url) : null;
+      const result = key || '';
+      cache.set(jid, result);
+      return result;
+    } catch {
+      cache.set(jid, '');
+      return '';
+    } finally {
+      await new Promise((resolve) => setTimeout(resolve, AVATAR_BACKFILL_DELAY_MS));
+    }
+  }
+
+  const groups = await prisma.whatsappGroup.findMany({ where: { organizationId, avatarUrl: null } });
+  for (const group of groups) {
+    if (!stillConnected()) return { started: true, fetched, processed, interrupted: true };
+    const key = await pictureFor(group.jid);
+    if (key) { await prisma.whatsappGroup.update({ where: { id: group.id }, data: { avatarUrl: key } }); fetched += 1; }
+    else await prisma.whatsappGroup.update({ where: { id: group.id }, data: { avatarUrl: '' } });
+    processed += 1;
+    if (onProgress) await onProgress({ processed });
+  }
+
+  const members = await prisma.whatsappGroupMember.findMany({ where: { avatarUrl: null, phone: { not: null }, group: { organizationId } } });
+  for (const member of members) {
+    if (!stillConnected()) return { started: true, fetched, processed, interrupted: true };
+    const contact = await prisma.contact.findFirst({ where: { organizationId, phone: member.phone, avatarUrl: { not: null } }, select: { avatarUrl: true } });
+    const key = contact && contact.avatarUrl ? contact.avatarUrl : await pictureFor(jidFromPhone(member.phone));
+    await prisma.whatsappGroupMember.update({ where: { id: member.id }, data: { avatarUrl: key || '' } });
+    if (key) fetched += 1;
+    processed += 1;
+    if (onProgress) await onProgress({ processed });
+  }
+  return { started: true, fetched, processed };
+}
+
+// Envoltorio que resuelve la sesión activa (usado en producción); backfillGroupAvatarsWithSock queda testeable sin sesión real.
+async function backfillGroupAvatars(organizationId, options = {}) {
+  const entry = sessions.get(organizationId);
+  if (!entry || entry.status !== 'connected' || !entry.sock) return { started: false };
+  const sock = entry.sock;
+  return backfillGroupAvatarsWithSock(organizationId, sock, { ...options, stillConnected: () => { const current = sessions.get(organizationId); return Boolean(current && current.sock === sock && current.status === 'connected'); } });
+}
+
+async function fetchGroupsDetailed(organizationId) {
+  const entry = sessions.get(organizationId);
+  if (!entry || entry.status !== 'connected' || !entry.sock) {
+    const error = new Error('Conectá WhatsApp para descargar tus grupos');
+    error.status = 409;
+    throw error;
+  }
+  const sock = entry.sock;
+  const selfPhone = phoneFromJid(sock.user && sock.user.id);
+  const all = await sock.groupFetchAllParticipating();
+  const raw = Object.values(all || {}).filter((group) => group && group.id && !group.isCommunityAnnounce);
+  const groups = [];
+  for (const group of raw) {
+    const members = [];
+    for (const participant of group.participants || []) {
+      const original = participant.id;
+      const lid = isLidJid(original) ? original : (participant.lid && isLidJid(participant.lid) ? participant.lid : null);
+      let phoneJid = participant.phoneNumber || (!isLidJid(original) ? original : null);
+      if (!phoneJid && lid) phoneJid = await resolvePhoneJid(sock, lid);
+      const digits = phoneFromJid(phoneJid);
+      const phone = /^\d{6,15}$/.test(digits || '') ? digits : null;
+      members.push({
+        jid: original,
+        lid,
+        phone,
+        name: (participant.name || participant.notify || (phone && entry.phoneContacts.get(phone)?.name)) || null,
+        role: participant.admin === 'superadmin' ? 'superadmin' : participant.admin ? 'admin' : null,
+        isSelf: Boolean(phone && phone === selfPhone)
+      });
+    }
+    const ownerJid = group.owner || group.subjectOwner || null;
+    const ownerPhone = ownerJid ? phoneFromJid(await resolvePhoneJid(sock, ownerJid)) : null;
+    groups.push({
+      jid: group.id,
+      name: group.subject || 'Grupo sin nombre',
+      description: group.desc || null,
+      ownerJid,
+      ownerPhone: /^\d{6,15}$/.test(ownerPhone || '') ? ownerPhone : null,
+      groupCreatedAt: group.creation ? new Date(Number(group.creation) * 1000) : null,
+      announce: Boolean(group.announce),
+      members
+    });
+  }
+  return groups;
+}
+
 function isLidJid(jid) {
   return !!(isLidUser(jid) || isHostedLidUser(jid));
 }
@@ -429,6 +552,8 @@ async function resolvePhoneJid(sock, jid) {
 async function rememberPhoneContacts(organizationId, contacts) {
   const entry = sessions.get(organizationId);
   if (!entry || !Array.isArray(contacts)) return;
+  // La libreta se recuerda en memoria (para poder importarla luego), pero solo se guarda en la base si el usuario lo autorizó.
+  const persist = (await require('./whatsappSync').getFlags(organizationId)).syncContactsEnabled;
   for (const contact of contacts) {
     const rawJid = contact && contact.id;
     if (!rawJid || !isRealPersonJid(rawJid)) continue;
@@ -438,8 +563,9 @@ async function rememberPhoneContacts(organizationId, contacts) {
     const previous = entry.phoneContacts.get(phone);
     const name = contact.name || contact.notify || contact.verifiedName || (previous && previous.name) || null;
     entry.phoneContacts.set(phone, { phone, name });
+    if (!persist) continue;
     const existing = await prisma.contact.findFirst({ where: { organizationId, OR: [{ phone }, { externalId: rawJid }] } });
-    if (!existing) await prisma.contact.create({ data: { organizationId, phone, externalId: rawJid, name } });
+    if (!existing) await prisma.contact.create({ data: { organizationId, phone, externalId: rawJid, name, tags: [require('./whatsappSync').IMPORTED_TAG] } });
     else if (((!existing.name || existing.name.replace(/\D/g, '') === phone) && name) || !existing.phone) await prisma.contact.update({ where: { id: existing.id }, data: { phone, ...((!existing.name || existing.name.replace(/\D/g, '') === phone) && name ? { name } : {}) } });
   }
 }
@@ -593,7 +719,8 @@ async function connectSession(organizationId, options = {}) {
     logger: pino({ level: 'silent' }),
     printQRInTerminal: false,
     browser: NIRO_BROWSER,
-    syncFullHistory: process.env.WHATSAPP_SYNC_FULL_HISTORY !== 'false'
+    // Solo se pide el historial completo si el usuario autorizó importarlo.
+    syncFullHistory: process.env.WHATSAPP_SYNC_FULL_HISTORY !== 'false' && (await require('./whatsappSync').getFlags(organizationId)).syncMessageHistoryEnabled
   };
   // If GitHub is unavailable, Baileys already knows a compatible bundled version.
   if (versionInfo && versionInfo.version) sockOptions.version = versionInfo.version;
@@ -602,10 +729,12 @@ async function connectSession(organizationId, options = {}) {
 
   sock.ev.on('creds.update', saveCreds);
 
-  sock.ev.on('messaging-history.set', (payload) => {
+  sock.ev.on('messaging-history.set', async (payload) => {
     // Los chats individuales también traen el nombre guardado en la libreta.
     const chatNames = (payload?.chats || []).map((chat) => ({ id: chat.id, name: chat.name }));
-    enqueueMessages(organizationId, sock, payload?.messages || [], true, [...chatNames, ...(payload?.contacts || [])])
+    // Sin autorización no se guarda ningún mensaje histórico (los contactos solo quedan en memoria; ver rememberPhoneContacts).
+    const allowHistory = (await require('./whatsappSync').getFlags(organizationId)).syncMessageHistoryEnabled;
+    enqueueMessages(organizationId, sock, allowHistory ? (payload?.messages || []) : [], true, [...chatNames, ...(payload?.contacts || [])])
       .catch(err => console.error('[whatsapp] history sync failed:', err.message));
   });
 
@@ -661,7 +790,9 @@ async function connectSession(organizationId, options = {}) {
       restoreQrHistory(organizationId, sock).catch(err => console.error('[whatsapp] restore history:', err.message));
       emitStatus(organizationId);
       // Let the history import settle first, then fetch profile pictures in the background.
-      const avatarTimer = setTimeout(() => { backfillContactAvatars(organizationId, sock).catch(() => {}); }, 20000);
+      // Baja los grupos (con integrantes) una vez que la conexión se asentó.
+      setTimeout(async () => { if (await require('./whatsappSync').isEnabled(organizationId, 'groups')) require('./whatsappGroups').syncGroups(organizationId).catch((err) => console.warn('[whatsapp] grupos no sincronizados:', err.message || err)); }, 12000);
+      const avatarTimer = setTimeout(async () => { if (await require('./whatsappSync').isEnabled(organizationId, 'avatars')) backfillContactAvatars(organizationId, sock).catch(() => {}); }, 20000);
       avatarTimer.unref?.();
     }
 
@@ -769,7 +900,9 @@ async function connectSession(organizationId, options = {}) {
       (whatsappStatus.isStatusBroadcast(message?.key?.remoteJid) ? statusMessages : chatMessages).push(message);
     }
     for (const message of statusMessages) {
-      whatsappStatus.handleStatusMessage(organizationId, sock, message, statusHelpers)
+      // Los estados de otras personas solo se guardan si el usuario lo autorizó (los propios se registran siempre).
+      const allowed = message?.key?.fromMe ? Promise.resolve(true) : require('./whatsappSync').isEnabled(organizationId, 'statuses');
+      allowed.then((ok) => ok && whatsappStatus.handleStatusMessage(organizationId, sock, message, statusHelpers))
         .catch((err) => console.error('[whatsapp] status sync failed:', err.message || err));
     }
     if (chatMessages.length === 0 && statusMessages.length > 0) return;
@@ -952,7 +1085,7 @@ async function shutdown() {
   }));
 }
 
-async function syncContacts(organizationId) {
+async function syncContacts(organizationId, { onProgress } = {}) {
   const entry = sessions.get(organizationId);
   if (!entry || entry.status !== 'connected') {
     const error = new Error('Conectá WhatsApp antes de sincronizar los contactos del teléfono');
@@ -967,7 +1100,12 @@ async function syncContacts(organizationId) {
 
   let imported = 0;
   let updated = 0;
+  let processed = 0;
+  const total = entry.phoneContacts.size;
+  if (onProgress) await onProgress({ total, processed });
   for (const candidate of entry.phoneContacts.values()) {
+    processed += 1;
+    if (onProgress && processed % 25 === 0) await onProgress({ total, processed });
     const existing = await prisma.contact.findFirst({ where: { organizationId, phone: candidate.phone } });
     if (existing) {
       const nameIsBlank = !existing.name || existing.name.replace(/\D/g, '') === candidate.phone;
@@ -977,7 +1115,7 @@ async function syncContacts(organizationId) {
       }
       continue;
     }
-    await prisma.contact.create({ data: { organizationId, phone: candidate.phone, name: candidate.name } });
+    await prisma.contact.create({ data: { organizationId, phone: candidate.phone, name: candidate.name, tags: [require('./whatsappSync').IMPORTED_TAG] } });
     imported += 1;
   }
   return { imported, updated, total: entry.phoneContacts.size };
@@ -997,7 +1135,10 @@ function enqueueMessages(organizationId, sock, messages, historical = false, con
   const next = previous.catch(() => {}).then(async () => {
     await rememberPhoneContacts(organizationId, contacts);
     for (const message of messages) await handleInboundMessage(organizationId, sock, message, { historical });
-    if (historical && messages.length) console.log(`[whatsapp] historial procesado: ${messages.length} mensajes para ${organizationId}`);
+    if (historical && messages.length && (await require('./whatsappSync').isEnabled(organizationId, 'message_history'))) {
+      console.log(`[whatsapp] historial procesado: ${messages.length} mensajes para ${organizationId}`);
+      await require('./whatsappSync').noteHistoryBatch(organizationId, messages.length).catch(() => {});
+    }
   });
   messageQueues.set(organizationId, next);
   next.finally(() => { if (messageQueues.get(organizationId) === next) messageQueues.delete(organizationId); }).catch(() => {});
@@ -1016,6 +1157,8 @@ async function restoreQrHistory(organizationId, sock) {
 
 async function handleInboundMessage(organizationId, sock, waMessage, { historical = false } = {}) {
   if (!waMessage?.key) return;
+  // Historial anterior del teléfono: solo con autorización expresa del usuario (los mensajes nuevos funcionan siempre).
+  if (historical && !(await require('./whatsappSync').isEnabled(organizationId, 'message_history'))) return;
   const fromMe = Boolean(waMessage.key.fromMe);
   const rawJid = waMessage.key.remoteJid;
   if (!rawJid || !isRealPersonJid(rawJid)) return;
@@ -1063,7 +1206,7 @@ async function handleInboundMessage(organizationId, sock, waMessage, { historica
       data: { phone, externalId: rawJid }
     });
   }
-  if (!historical) contact = await ensureContactAvatar(sock, contact, resolvedJid || rawJid);
+  if (!historical && (await require('./whatsappSync').isEnabled(organizationId, 'avatars'))) contact = await ensureContactAvatar(sock, contact, resolvedJid || rawJid);
 
   let conversation = await prisma.conversation.findFirst({
     where: { organizationId: organizationId, contactId: contact.id, channel: 'whatsapp', ...(historical ? {} : { status: { not: 'CLOSED' } }) },
@@ -1119,6 +1262,7 @@ async function handleInboundMessage(organizationId, sock, waMessage, { historica
       content: content.slice(0, 4000),
       contentType,
       waMessageId: waMessage.key.id || null,
+      imported: historical,
       quotedMessageId: null,
       quotedPreview: quoted ? quoted.preview : null,
       quotedSender: quoted ? quoted.sender : null,
@@ -1176,12 +1320,6 @@ async function handleInboundMessage(organizationId, sock, waMessage, { historica
         await sendBotMessage(conversation.id, organizationId, reply);
         if (phone) await sendText(organizationId, phone, reply).catch((err) => console.error('[whatsapp] flow welcome send failed', err));
       }
-    } else if (settings && settings.aiEnabled) {
-      const welcome = renderWelcome(settings);
-      await sendBotMessage(conversation.id, organizationId, welcome);
-      if (phone) {
-        await sendText(organizationId, phone, welcome).catch((err) => console.error('[whatsapp] welcome send failed', err));
-      }
     }
     return;
   }
@@ -1196,6 +1334,7 @@ async function handleInboundMessage(organizationId, sock, waMessage, { historica
       await sendBotMessage(conversation.id, organizationId, reply);
       if (phone) await sendText(organizationId, phone, reply).catch((err) => console.error('[whatsapp] flow reply send failed', err));
     }
+    if (flowResult.conversation && flowResult.conversation.handoff) await require('./botHandoff').announceHandoff({ organizationId, conversation: updated });
     if (flowResult.useAi && aiBot.shouldReply(updated, settings)) {
       const aiSettings = flowResult.aiPrompt ? { ...settings, systemPrompt: `${settings.systemPrompt || ''} ${flowResult.aiPrompt}`.trim() } : settings;
       const reply = await aiBot.generateReply(conversation.id, aiSettings, organizationName);
@@ -1206,36 +1345,6 @@ async function handleInboundMessage(organizationId, sock, waMessage, { historica
     }
     emitToOrg(organizationId, 'conversation:updated', { conversation: sanitizeConversation(updated) });
     return;
-  }
-
-  if (!updated.departmentId && settings && settings.aiEnabled) {
-    const option = caption ? matchMenuOption(settings, caption) : null;
-    if (option) {
-      updated = await prisma.conversation.update({
-        where: { id: conversation.id },
-        data: { departmentId: option.departmentId },
-        include: CONVERSATION_INCLUDE
-      });
-      const reply = 'Te derivamos a ' + option.label + '. En un momento te atienden.';
-      await sendBotMessage(conversation.id, organizationId, reply);
-      if (phone) {
-        await sendText(organizationId, phone, reply).catch((err) => console.error('[whatsapp] routing reply send failed', err));
-      }
-      emitToOrg(organizationId, 'conversation:updated', { conversation: sanitizeConversation(updated) });
-      return;
-    }
-  }
-
-  // No menu option matched (or there's no menu at all): let the AI answer freely, using the
-  // conversation history, as long as no human agent has claimed the chat yet.
-  if (aiBot.shouldReply(updated, settings)) {
-    const reply = await aiBot.generateReply(conversation.id, settings, organizationName);
-    if (reply && reply.content) {
-      await sendBotMessage(conversation.id, organizationId, reply.content, 'ai');
-      if (phone) {
-        await sendText(organizationId, phone, reply.content).catch((err) => console.error('[whatsapp] ai reply send failed', err));
-      }
-    }
   }
 }
 
@@ -1454,8 +1563,11 @@ module.exports = {
   getStatus: publicStatus,
   listSessions: listSessions,
   syncContacts: syncContacts,
+  fetchGroupsDetailed: fetchGroupsDetailed,
+  backfillGroupAvatars: backfillGroupAvatars,
+  backfillGroupAvatarsWithSock: backfillGroupAvatarsWithSock,
   listGroups: listGroups,
-  backfillAvatars: (organizationId) => { const entry = sessions.get(organizationId); return entry && entry.sock ? backfillContactAvatars(organizationId, entry.sock) : Promise.resolve({ started: false }); },
+  backfillAvatars: (organizationId, options) => { const entry = sessions.get(organizationId); return entry && entry.sock ? backfillContactAvatars(organizationId, entry.sock, options) : Promise.resolve({ started: false }); },
   ingestMessages: enqueueMessages,
   getSessionReference: (organizationId) => sessionDir(organizationId),
   sendText: sendText,
