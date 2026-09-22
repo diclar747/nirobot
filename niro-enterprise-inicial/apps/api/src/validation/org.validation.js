@@ -55,6 +55,8 @@ const createUserSchema = z.object({
   email: z.string().email(),
   role: z.enum(ORG_ROLES),
   password: z.string().min(10).optional(),
+  // Opcional: si se manda, se le avisa por WhatsApp con su usuario/contraseña al crearlo.
+  phone: z.string().trim().min(6).max(40).optional(),
   departmentIds: z.array(z.string().min(1)).max(50).optional(),
   autoChat: z.boolean().optional()
 });
@@ -64,6 +66,7 @@ const updateUserSchema = z
     name: z.string().min(2).max(120).optional(),
     role: z.enum(ORG_ROLES).optional(),
     active: z.boolean().optional(),
+    phone: z.string().trim().min(6).max(40).nullable().optional(),
     permissions: z.record(z.string(), z.boolean()).optional(),
     departmentIds: z.array(z.string().min(1)).max(50).optional(),
     autoChat: z.boolean().optional()

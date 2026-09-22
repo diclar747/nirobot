@@ -29,6 +29,7 @@ function sanitizeOrgUser(user, whatsappProfile = null) {
     id: user.id,
     name: user.name,
     email: user.email,
+    phone: user.phone || null,
     role: user.role,
     active: user.active,
     mustChangePassword: user.mustChangePassword,
@@ -175,6 +176,37 @@ router.get('/users', requireRole('OWNER', 'ADMIN', 'SUPERVISOR'), async (req, re
   }
 });
 
+function loginUrl() {
+  const origin = (process.env.PUBLIC_APP_URL || String(process.env.WEB_ORIGIN || '').split(',')[0] || '').trim().replace(/\/$/, '');
+  return origin ? `${origin}/login` : '';
+}
+
+// Bienvenida por WhatsApp al crear un usuario con teléfono: nunca hace fallar la creación —
+// si WhatsApp no está conectado o el envío falla, se informa en la respuesta y el admin puede
+// pasarle los datos a mano.
+async function sendWelcomeWhatsApp(organizationId, organization, { name, email, phone }, temporaryPassword) {
+  const first = String(name || '').trim().split(/\s+/)[0] || '';
+  const url = loginUrl();
+  const lines = [
+    `👋 ¡Hola${first ? ` ${first}` : ''}! Bienvenido/a a *Niro* 🎉`,
+    '',
+    `Ya tenés tu cuenta de acceso como agente de *${organization.name}*:`,
+    '',
+    `📧 Usuario: ${email}`,
+    `🔑 Contraseña: ${temporaryPassword}`,
+    url ? `🔗 Ingresá acá: ${url}` : null,
+    '',
+    'Te va a pedir cambiarla la primera vez que entres. ¡Éxitos! 🚀'
+  ].filter((line) => line !== null);
+  try {
+    await whatsapp.sendText(organizationId, phone, lines.join('\n'));
+    return { sent: true };
+  } catch (err) {
+    console.warn('[org] no se pudo enviar la bienvenida por WhatsApp:', err.message || err);
+    return { sent: false, error: err.message || 'No se pudo enviar el WhatsApp' };
+  }
+}
+
 router.post('/users', requireRole('OWNER', 'ADMIN'), requireCsrf, async (req, res, next) => {
   try {
     const data = createUserSchema.parse(req.body);
@@ -196,6 +228,7 @@ router.post('/users', requireRole('OWNER', 'ADMIN'), requireCsrf, async (req, re
           organizationId: req.auth.organizationId,
           name: data.name,
           email: data.email,
+          phone: data.phone || null,
           role: data.role,
           passwordHash,
           mustChangePassword: true,
@@ -219,8 +252,12 @@ router.post('/users', requireRole('OWNER', 'ADMIN'), requireCsrf, async (req, re
       metadata: { role: data.role, email: data.email }
     });
 
+    const whatsappWelcome = data.phone
+      ? await sendWelcomeWhatsApp(req.auth.organizationId, organization, { name: data.name, email: data.email, phone: data.phone }, temporaryPassword)
+      : null;
+
     const withAreas = await prisma.user.findUnique({ where: { id: user.id }, include: { memberships: { include: { department: { select: { id: true, name: true } } } } } });
-    res.status(201).json({ user: sanitizeOrgUser(withAreas || user), temporaryPassword: data.password ? undefined : temporaryPassword });
+    res.status(201).json({ user: sanitizeOrgUser(withAreas || user), temporaryPassword: data.password ? undefined : temporaryPassword, whatsappWelcome });
   } catch (err) {
     next(err);
   }
@@ -713,7 +750,7 @@ router.get('/dashboard-stats', async (req, res, next) => {
           revenueToday
         },
         bot: {
-          active: Boolean(settings?.aiEnabled),
+          active: Boolean(settings?.botFlow?.enabled && settings?.botFlow?.published),
           welcomeMessage: settings?.welcomeMessage || '',
           systemPrompt: settings?.systemPrompt || '',
           menuCount: Array.isArray(settings?.menuOptions) ? settings.menuOptions.length : 0

@@ -78,7 +78,7 @@ export function OrgUsers() {
   const [showCreate, setShowCreate] = useState(false);
   const [editing, setEditing] = useState<OrgUser | null>(null);
   const [seats, setSeats] = useState<SeatInfo | null>(null);
-  const [secret, setSecret] = useState<{ email: string; temporaryPassword: string } | null>(null);
+  const [secret, setSecret] = useState<{ email: string; temporaryPassword?: string; phone?: string; whatsapp?: { sent: boolean; error?: string } | null } | null>(null);
 
   const canManage = me ? ['OWNER', 'ADMIN'].includes(me.role) : false;
   const canGrantOwner = me?.role === 'OWNER';
@@ -260,11 +260,22 @@ export function OrgUsers() {
 
       {secret && (
         <Modal title="Contraseña temporal" onClose={() => setSecret(null)}>
-          <p>
-            Para <strong>{secret.email}</strong>. Se le pedirá cambiarla en el próximo inicio de sesión — compartila de forma
-            segura, no volverá a mostrarse.
-          </p>
-          <code className="secret">{secret.temporaryPassword}</code>
+          {secret.temporaryPassword && (
+            <>
+              <p>
+                Para <strong>{secret.email}</strong>. Se le pedirá cambiarla en el próximo inicio de sesión — compartila de forma
+                segura, no volverá a mostrarse.
+              </p>
+              <code className="secret">{secret.temporaryPassword}</code>
+            </>
+          )}
+          {secret.whatsapp && (
+            <p style={{ marginTop: secret.temporaryPassword ? 12 : 0 }}>
+              {secret.whatsapp.sent
+                ? <>✅ Le mandamos un WhatsApp de bienvenida a <strong>{formatWhatsAppPhone(secret.phone)}</strong> con su usuario y contraseña.</>
+                : <>⚠️ No se pudo enviar el WhatsApp de bienvenida ({secret.whatsapp.error}). Pasale los datos a mano.</>}
+            </p>
+          )}
         </Modal>
       )}
     </PageShell>
@@ -278,10 +289,11 @@ function CreateUserModal({
 }: {
   canGrantOwner: boolean;
   onClose: () => void;
-  onCreated: (secret: { email: string; temporaryPassword: string } | null) => void;
+  onCreated: (secret: { email: string; temporaryPassword?: string; phone?: string; whatsapp?: { sent: boolean; error?: string } | null } | null) => void;
 }) {
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
+  const [phone, setPhone] = useState('');
   const [role, setRole] = useState<UserRole>('AGENT');
   const [departments, setDepartments] = useState<Department[]>([]);
   const [departmentIds, setDepartmentIds] = useState<string[]>([]);
@@ -297,8 +309,15 @@ function CreateUserModal({
     setError(null);
     setSubmitting(true);
     try {
-      const data = await apiPost<{ temporaryPassword?: string }>('/api/org/users', { name, email, role, ...(role === 'AGENT' ? { departmentIds, autoChat } : {}) });
-      onCreated(data.temporaryPassword ? { email, temporaryPassword: data.temporaryPassword } : null);
+      const cleanPhone = phone.trim();
+      const data = await apiPost<{ temporaryPassword?: string; whatsappWelcome?: { sent: boolean; error?: string } | null }>('/api/org/users', {
+        name, email, role, ...(cleanPhone ? { phone: cleanPhone } : {}), ...(role === 'AGENT' ? { departmentIds, autoChat } : {})
+      });
+      onCreated(
+        data.temporaryPassword || data.whatsappWelcome
+          ? { email, temporaryPassword: data.temporaryPassword, phone: cleanPhone || undefined, whatsapp: data.whatsappWelcome }
+          : null
+      );
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'No se pudo crear el usuario');
     } finally {
@@ -324,6 +343,18 @@ function CreateUserModal({
             value={email}
             onChange={(e) => setEmail(e.target.value)}
           />
+        </div>
+        <div className="field">
+          <label htmlFor="user-phone">WhatsApp (opcional)</label>
+          <input
+            id="user-phone"
+            type="tel"
+            className="input"
+            placeholder="Ej: 595981234567"
+            value={phone}
+            onChange={(e) => setPhone(e.target.value)}
+          />
+          <small className="area-help">Si lo completás, le mandamos por WhatsApp la bienvenida con su usuario, contraseña y el link para entrar.</small>
         </div>
         <div className="field">
           <label htmlFor="user-role">Rol</label>
@@ -369,6 +400,7 @@ function EditUserModal({
   onSaved: () => void;
 }) {
   const [name, setName] = useState(user.name);
+  const [phone, setPhone] = useState(user.phone || '');
   const [role, setRole] = useState<UserRole>(user.role);
   const [active, setActive] = useState(user.active);
   const [departments, setDepartments] = useState<Department[]>([]);
@@ -391,7 +423,8 @@ function EditUserModal({
     setError(null);
     setSubmitting(true);
     try {
-      await apiPatch(`/api/org/users/${user.id}`, { name, role, active, ...(role === 'AGENT' ? { autoChat } : {}), ...(restrictable ? { departmentIds } : {}), ...(restrictable && defs.length ? { permissions: Object.fromEntries(defs.map((d) => [d.key, isOn(d.key)])) } : {}) });
+      const cleanPhone = phone.trim();
+      await apiPatch(`/api/org/users/${user.id}`, { name, role, active, phone: cleanPhone || null, ...(role === 'AGENT' ? { autoChat } : {}), ...(restrictable ? { departmentIds } : {}), ...(restrictable && defs.length ? { permissions: Object.fromEntries(defs.map((d) => [d.key, isOn(d.key)])) } : {}) });
       onSaved();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'No se pudo guardar el usuario');
@@ -407,6 +440,17 @@ function EditUserModal({
         <div className="field">
           <label htmlFor="edit-name">Nombre</label>
           <input id="edit-name" className="input" required value={name} onChange={(e) => setName(e.target.value)} />
+        </div>
+        <div className="field">
+          <label htmlFor="edit-phone">WhatsApp</label>
+          <input
+            id="edit-phone"
+            type="tel"
+            className="input"
+            placeholder="Ej: 595981234567"
+            value={phone}
+            onChange={(e) => setPhone(e.target.value)}
+          />
         </div>
         <div className="field">
           <label htmlFor="edit-role">Rol</label>
