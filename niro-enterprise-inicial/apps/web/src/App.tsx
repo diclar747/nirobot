@@ -18,6 +18,7 @@ import { CrmBoard } from './routes/CrmBoard';
 import { Campaigns } from './routes/Campaigns';
 import { Orders } from './routes/Orders';
 import { Reports } from './routes/Reports';
+import { History } from './routes/History';
 import { Management } from './routes/Management';
 import { Sms } from './routes/Sms';
 import { SmsAdmin } from './routes/SmsAdmin';
@@ -28,6 +29,7 @@ import { CallCampaigns } from './routes/CallCampaigns';
 import { StatusPosts } from './routes/StatusPosts';
 import { Billing } from './routes/Billing';
 import { Contacts } from './routes/Contacts';
+import { Groups } from './routes/Groups';
 import { SuperadminPlans } from './routes/SuperadminPlans';
 import { SuperadminBilling } from './routes/SuperadminBilling';
 
@@ -69,6 +71,10 @@ export function App() {
                 <Route path="/contactos" element={<Contacts />} />
               </Route>
 
+              <Route element={<ProtectedRoute roles={['OWNER', 'ADMIN', 'SUPERVISOR', 'AGENT']} permission="groups" />}>
+                <Route path="/grupos" element={<Groups />} />
+              </Route>
+
               <Route element={<ProtectedRoute roles={['OWNER', 'ADMIN', 'SUPERVISOR', 'AGENT']} permission="crm" />}>
                 <Route path="/board" element={<CrmBoard />} />
               </Route>
@@ -99,6 +105,10 @@ export function App() {
 
               <Route element={<ProtectedRoute roles={['OWNER', 'ADMIN', 'SUPERVISOR', 'AGENT']} permission="reports" />}>
                 <Route path="/reports" element={<Reports />} />
+              </Route>
+
+              <Route element={<ProtectedRoute roles={['OWNER', 'ADMIN', 'SUPERVISOR', 'AGENT']} permission="history" />}>
+                <Route path="/historial" element={<History />} />
               </Route>
 
               <Route element={<ProtectedRoute roles={['OWNER', 'ADMIN', 'SUPERVISOR', 'AGENT']} permission="campaigns" />}>

@@ -324,6 +324,21 @@ export function Layout() {
               </NavLink>
             )}
 
+            {!isSuperadmin && can(user, 'groups') && (
+              <NavLink to="/grupos" className={({ isActive }) => `sidebar-nav-item ${isActive ? 'active' : ''}`}>
+                <div className="sidebar-nav-item-content">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <circle cx="12" cy="8" r="3" />
+                    <circle cx="5" cy="10" r="2" />
+                    <circle cx="19" cy="10" r="2" />
+                    <path d="M7 20v-1.5a4 4 0 0 1 4-4h2a4 4 0 0 1 4 4V20" />
+                    <path d="M2 19v-1a3 3 0 0 1 3-3M22 19v-1a3 3 0 0 0-3-3" />
+                  </svg>
+                  <span>Grupos</span>
+                </div>
+              </NavLink>
+            )}
+
             {!isSuperadmin && isAdmin &&(
               <NavLink to="/billing" className={({ isActive }) => `sidebar-nav-item ${isActive ? 'active' : ''}`}>
                 <div className="sidebar-nav-item-content">
@@ -425,6 +440,18 @@ export function Layout() {
                     <line x1="6" y1="20" x2="6" y2="14" />
                   </svg>
                   <span>Reportes</span>
+                </div>
+              </NavLink>
+            )}
+
+            {!isSuperadmin && can(user, 'history') &&(
+              <NavLink to="/historial" className={({ isActive }) => `sidebar-nav-item ${isActive ? 'active' : ''}`}>
+                <div className="sidebar-nav-item-content">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <circle cx="12" cy="12" r="9" />
+                    <polyline points="12 7 12 12 15.5 14" />
+                  </svg>
+                  <span>Historial</span>
                 </div>
               </NavLink>
             )}
