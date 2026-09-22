@@ -1,3 +1,4 @@
+import { lazy, Suspense } from 'react';
 import { PwaExperience } from './components/PwaExperience';
 import { BrowserRouter, Route, Routes } from 'react-router-dom';
 import { AuthProvider } from './context/AuthContext';
@@ -9,29 +10,49 @@ import { Layout } from './components/Layout';
 import { Login } from './routes/Login';
 import { ChangePassword } from './routes/ChangePassword';
 import { Home } from './routes/Home';
-import { SuperadminOrganizations } from './routes/SuperadminOrganizations';
-import { OrgUsers } from './routes/OrgUsers';
-import { OrgDepartments } from './routes/OrgDepartments';
-import { OrgSettings } from './routes/OrgSettings';
-import { Inbox } from './routes/Inbox';
-import { CrmBoard } from './routes/CrmBoard';
-import { Campaigns } from './routes/Campaigns';
-import { Orders } from './routes/Orders';
-import { Reports } from './routes/Reports';
-import { History } from './routes/History';
-import { Management } from './routes/Management';
-import { Sms } from './routes/Sms';
-import { SmsAdmin } from './routes/SmsAdmin';
-import { ApiPortal } from './routes/ApiPortal';
-import { AiAgents } from './routes/AiAgents';
-import { BotFlow } from './routes/BotFlow';
-import { CallCampaigns } from './routes/CallCampaigns';
-import { StatusPosts } from './routes/StatusPosts';
-import { Billing } from './routes/Billing';
-import { Contacts } from './routes/Contacts';
-import { Groups } from './routes/Groups';
-import { SuperadminPlans } from './routes/SuperadminPlans';
-import { SuperadminBilling } from './routes/SuperadminBilling';
+
+// El resto de las páginas se cargan solo cuando se visitan (en vez de todas de una en el bundle
+// principal): así el primer login no descarga, por ejemplo, el editor de flujos de bot si el
+// usuario solo va a usar el Inbox. Login/ChangePassword/Home/Layout quedan eager porque son la
+// primera pantalla que ve todo el mundo, con o sin sesión.
+const SuperadminOrganizations = lazy(() => import('./routes/SuperadminOrganizations').then((m) => ({ default: m.SuperadminOrganizations })));
+const OrgUsers = lazy(() => import('./routes/OrgUsers').then((m) => ({ default: m.OrgUsers })));
+const OrgDepartments = lazy(() => import('./routes/OrgDepartments').then((m) => ({ default: m.OrgDepartments })));
+const OrgSettings = lazy(() => import('./routes/OrgSettings').then((m) => ({ default: m.OrgSettings })));
+const Inbox = lazy(() => import('./routes/Inbox').then((m) => ({ default: m.Inbox })));
+const CrmBoard = lazy(() => import('./routes/CrmBoard').then((m) => ({ default: m.CrmBoard })));
+const Campaigns = lazy(() => import('./routes/Campaigns').then((m) => ({ default: m.Campaigns })));
+const Orders = lazy(() => import('./routes/Orders').then((m) => ({ default: m.Orders })));
+const Reports = lazy(() => import('./routes/Reports').then((m) => ({ default: m.Reports })));
+const History = lazy(() => import('./routes/History').then((m) => ({ default: m.History })));
+const Management = lazy(() => import('./routes/Management').then((m) => ({ default: m.Management })));
+const Sms = lazy(() => import('./routes/Sms').then((m) => ({ default: m.Sms })));
+const SmsAdmin = lazy(() => import('./routes/SmsAdmin').then((m) => ({ default: m.SmsAdmin })));
+const ApiPortal = lazy(() => import('./routes/ApiPortal').then((m) => ({ default: m.ApiPortal })));
+const AiAgents = lazy(() => import('./routes/AiAgents').then((m) => ({ default: m.AiAgents })));
+const BotFlow = lazy(() => import('./routes/BotFlow').then((m) => ({ default: m.BotFlow })));
+const CallCampaigns = lazy(() => import('./routes/CallCampaigns').then((m) => ({ default: m.CallCampaigns })));
+const StatusPosts = lazy(() => import('./routes/StatusPosts').then((m) => ({ default: m.StatusPosts })));
+const Billing = lazy(() => import('./routes/Billing').then((m) => ({ default: m.Billing })));
+const Contacts = lazy(() => import('./routes/Contacts').then((m) => ({ default: m.Contacts })));
+const Groups = lazy(() => import('./routes/Groups').then((m) => ({ default: m.Groups })));
+const SuperadminPlans = lazy(() => import('./routes/SuperadminPlans').then((m) => ({ default: m.SuperadminPlans })));
+const SuperadminBilling = lazy(() => import('./routes/SuperadminBilling').then((m) => ({ default: m.SuperadminBilling })));
+
+function RouteFallback() {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '60vh' }}>
+      <span
+        style={{
+          width: 28, height: 28, borderRadius: '50%',
+          border: '3px solid var(--border-color)', borderTopColor: 'var(--primary)',
+          animation: 'app-route-spin 0.8s linear infinite'
+        }}
+      />
+      <style>{'@keyframes app-route-spin { to { transform: rotate(360deg); } }'}</style>
+    </div>
+  );
+}
 
 export function App() {
   return (
@@ -41,6 +62,7 @@ export function App() {
           <PwaExperience />
           <AuthProvider>
           <OutcomeProvider>
+          <Suspense fallback={<RouteFallback />}>
           <Routes>
             <Route path="/" element={<Login />} />
             <Route path="/landing" element={<Login />} />
@@ -142,6 +164,7 @@ export function App() {
             </Route>
           </Route>
         </Routes>
+          </Suspense>
           </OutcomeProvider>
           </AuthProvider>
         </BrowserRouter>

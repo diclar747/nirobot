@@ -3,7 +3,7 @@ const { requirePermission } = require('../lib/permissions');
 const { prisma } = require('../lib/prisma');
 const { audit } = require('../lib/audit');
 const { emitToOrg, emitToUser } = require('../lib/realtime');
-const { requireAuth, requireCsrf } = require('../middleware/auth');
+const { requireAuth, requireCsrf, requireOrgContext } = require('../middleware/auth');
 const {
   STATUSES,
   PRIORITIES,
@@ -16,7 +16,6 @@ const {
   shareContactSchema
 } = require('../validation/conversations.validation');
 const { HttpError } = require('../lib/errors');
-const { renderWelcome, matchMenuOption } = require('../lib/bot');
 const { runBotFlow, conversationUpdateData } = require('../lib/botFlow');
 const aiBot = require('../lib/aiBot');
 const niroAi = require('../lib/niroAi');
@@ -33,11 +32,6 @@ const chatAccess = require('../lib/chatAccess');
 const outcomes = require('../lib/outcomes');
 
 const router = express.Router();
-
-function requireOrgContext(req, _res, next) {
-  if (!req.auth.organizationId) return next(new HttpError(403, 'Esta acción requiere pertenecer a una organización'));
-  next();
-}
 
 router.use(requireAuth, requireOrgContext);
 
@@ -205,13 +199,6 @@ router.post('/', requireCsrf, async (req, res, next) => {
           finalConversation = await prisma.conversation.update({ where: { id: conversation.id }, data: flowData, include: CONVERSATION_INCLUDE });
         }
         for (const reply of flowResult.replies) await sendBotMessage(conversation.id, req.auth.organizationId, reply);
-      } else if (settings?.aiEnabled) {
-        await sendBotMessage(conversation.id, req.auth.organizationId, renderWelcome(settings));
-        finalConversation = await prisma.conversation.update({
-          where: { id: conversation.id },
-          data: { updatedAt: new Date() },
-          include: CONVERSATION_INCLUDE
-        });
       }
     }
 
@@ -523,6 +510,9 @@ router.post('/:id/transfer-response', requirePermission('transferChats'), requir
       });
       broadcastMessage(req.auth.organizationId, conversation.id, noteMessage);
 
+      // Si venía derivado por el bot, el cliente recibe el saludo del agente que aceptó.
+      await require('../lib/botHandoff').sendAgentWelcome({ organizationId: req.auth.organizationId, conversationId: conversation.id, agent: { id: req.auth.userId, name: agentName } }).catch((err) => console.error('[bot] saludo falló', err));
+
       const payload = sanitizeConversation(updated);
       emitToOrg(req.auth.organizationId, 'conversation:updated', { conversation: payload });
       return res.json({ conversation: payload, accepted: true });
@@ -641,6 +631,7 @@ router.post('/:id/messages', requireCsrf, async (req, res, next) => {
           }
           if (botMessage) emitToOrg(req.auth.organizationId, 'message:updated', { conversationId: conversation.id, message: sanitizeMessage(botMessage) });
         }
+        if (flowResult.conversation && flowResult.conversation.handoff) await require('../lib/botHandoff').announceHandoff({ organizationId: req.auth.organizationId, conversation: updated });
         if (flowResult.useAi && aiBot.shouldReply(updated, settings)) {
           const aiSettings = flowResult.aiPrompt ? { ...settings, systemPrompt: `${settings.systemPrompt || ''} ${flowResult.aiPrompt}`.trim() } : settings;
           const reply = await aiBot.generateReply(conversation.id, aiSettings, settings.organization?.name || null);
@@ -651,38 +642,6 @@ router.post('/:id/messages', requireCsrf, async (req, res, next) => {
           }
         }
         emitToOrg(req.auth.organizationId, 'conversation:updated', { conversation: sanitizeConversation(updated) });
-      } else {
-        const option = settings?.aiEnabled ? matchMenuOption(settings, data.content) : null;
-        if (option) {
-        updated = await prisma.conversation.update({
-          where: { id: conversation.id },
-          data: { departmentId: option.departmentId },
-          include: CONVERSATION_INCLUDE
-        });
-        await sendBotMessage(
-          conversation.id,
-          req.auth.organizationId,
-          `Te derivamos a ${option.label}. En un momento te atienden.`
-        );
-        emitToOrg(req.auth.organizationId, 'conversation:updated', { conversation: sanitizeConversation(updated) });
-        } else if (aiBot.shouldReply(updated, settings)) {
-        const reply = await aiBot.generateReply(conversation.id, settings, settings.organization?.name || null);
-        if (reply && reply.content) {
-          const botMessage = await sendBotMessage(conversation.id, req.auth.organizationId, reply.content, 'ai');
-          if (updated.channel === 'whatsapp' && updated.contact?.phone) {
-            whatsapp
-              .sendText(req.auth.organizationId, updated.contact.phone, reply.content)
-              .then((waMessageId) => {
-                if (!waMessageId) return null;
-                return prisma.message.update({ where: { id: botMessage.id }, data: { waMessageId }, include: MESSAGE_INCLUDE });
-              })
-              .then((withId) => {
-                if (withId) emitToOrg(req.auth.organizationId, 'message:updated', { conversationId: conversation.id, message: sanitizeMessage(withId) });
-              })
-              .catch((err) => console.error('[whatsapp] ai reply send failed', err));
-          }
-        }
-        }
       }
     }
 

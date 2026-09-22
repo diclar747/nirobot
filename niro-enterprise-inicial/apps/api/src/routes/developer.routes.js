@@ -3,16 +3,11 @@ const { requirePermission } = require('../lib/permissions');
 const { prisma } = require('../lib/prisma');
 const { audit } = require('../lib/audit');
 const { HttpError } = require('../lib/errors');
-const { requireAuth, requireRole, requireCsrf } = require('../middleware/auth');
+const { requireAuth, requireRole, requireCsrf, requireOrgContext } = require('../middleware/auth');
 const { apiKeyNameSchema } = require('../validation/api.validation');
 const { createSecret, sanitizeApiKey } = require('../lib/apiKeys');
 
 const router = express.Router();
-
-function requireOrgContext(req, _res, next) {
-  if (!req.auth.organizationId) return next(new HttpError(403, 'Esta acción requiere pertenecer a una organización'));
-  next();
-}
 
 router.use(requireAuth, requireOrgContext);
 router.use('/api-keys', requirePermission('developers'));

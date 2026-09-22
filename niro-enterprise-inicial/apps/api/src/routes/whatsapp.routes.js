@@ -1,15 +1,10 @@
 const express = require('express');
 const { requirePermission } = require('../lib/permissions');
-const { requireAuth, requireRole, requireCsrf } = require('../middleware/auth');
+const { requireAuth, requireRole, requireCsrf, requireOrgContext } = require('../middleware/auth');
 const { HttpError } = require('../lib/errors');
 const whatsapp = require('../lib/whatsapp');
 
 const router = express.Router();
-
-function requireOrgContext(req, _res, next) {
-  if (!req.auth.organizationId) return next(new HttpError(403, 'Esta accion requiere pertenecer a una organizacion'));
-  next();
-}
 
 router.use(requireAuth, requireOrgContext);
 
@@ -23,6 +18,9 @@ router.get('/sessions', (req, res) => {
 
 router.post('/sync-contacts', requireCsrf, requirePermission('contacts'), async (req, res, next) => {
   try {
+    if (!(await require('../lib/whatsappSync').isEnabled(req.auth.organizationId, 'contacts'))) {
+      throw new HttpError(403, 'Activá “Descargar contactos” en Configuración → Sincronización con WhatsApp para importar la libreta.');
+    }
     const result = await whatsapp.syncContacts(req.auth.organizationId);
     res.json(result);
   } catch (err) {
@@ -30,7 +28,10 @@ router.post('/sync-contacts', requireCsrf, requirePermission('contacts'), async 
   }
 });
 
-router.post('/sync-avatars', requireCsrf, requirePermission('contacts'), (req, res) => {
+router.post('/sync-avatars', requireCsrf, requirePermission('contacts'), async (req, res, next) => {
+  if (!(await require('../lib/whatsappSync').isEnabled(req.auth.organizationId, 'avatars'))) {
+    return next(new HttpError(403, 'Activá “Descargar avatares” en Configuración → Sincronización con WhatsApp.'));
+  }
   // Runs in the background (it is throttled on purpose); answer immediately.
   whatsapp.backfillAvatars(req.auth.organizationId).catch(() => {});
   res.status(202).json({ started: true });

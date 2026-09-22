@@ -3,15 +3,16 @@ const express = require('express');
 const { z } = require('zod');
 const { prisma } = require('../lib/prisma');
 const { requirePermission } = require('../lib/permissions');
-const { requireAuth, requireRole, requireCsrf } = require('../middleware/auth');
+const { requireAuth, requireRole, requireCsrf, requireOrgContext } = require('../middleware/auth');
 const { HttpError } = require('../lib/errors');
 const { audit } = require('../lib/audit');
 const sms = require('../lib/sms');
+const { csvCell } = require('../lib/csv');
 const smsText = require('../lib/smsText');
 const provider = require('../lib/smsProvider');
 
 const router = express.Router();
-router.use(requireAuth, (req, _res, next) => (req.auth.organizationId ? next() : next(new HttpError(403, 'Esta acción requiere pertenecer a una organización'))));
+router.use(requireAuth, requireOrgContext);
 router.use(requirePermission('sms'), requireRole('OWNER', 'ADMIN', 'SUPERVISOR'));
 
 const BUYERS = requireRole('OWNER', 'ADMIN');
@@ -24,8 +25,6 @@ function range(req, days = 30) {
   const from = parseDate(req.query.from) || new Date(to.getTime() - days * 24 * 3600 * 1000);
   return { from, to };
 }
-function csvCell(value) { return `"${String(value ?? '').replace(/"/g, '""')}"`; }
-
 const recipientSchema = z.object({ name: z.string().max(120).nullable().optional(), phone: z.string().min(1).max(40) });
 const campaignSchema = z.object({
   name: z.string().trim().min(2).max(120),

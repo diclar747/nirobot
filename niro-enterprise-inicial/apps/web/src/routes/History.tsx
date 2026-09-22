@@ -5,6 +5,7 @@ import { PageHeader, PageShell, Panel, StatCard, StatGrid, EmptyState, LoadingRo
 import { Ui } from '../components/Ui';
 import { Modal } from '../components/Modal';
 import { PlyrVideo, WaveAudio } from '../components/MediaPlayers';
+import { DocumentIcon } from '../components/DocumentIcon';
 import type { Department } from '../types';
 import '../styles/history.css';
 
@@ -173,7 +174,7 @@ function AttachmentPreview({ conversationId, attachment }: { conversationId: str
   if (attachment.mimeType.startsWith('audio/')) return <WaveAudio src={url} />;
   return (
     <a className="hist-doc-card" href={url} target="_blank" rel="noreferrer">
-      <Ui name="paperclip" size={18} />
+      <DocumentIcon mimeType={attachment.mimeType} fileName={attachment.fileName} size={34} />
       <div>
         <div className="hist-doc-name">{attachment.fileName}</div>
         <div className="hist-muted">{formatFileSize(attachment.size)}</div>

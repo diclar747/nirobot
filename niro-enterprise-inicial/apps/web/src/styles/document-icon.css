@@ -1,0 +1,21 @@
+.doc-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  border-radius: 9px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  color: #fff;
+  line-height: 1;
+  /* Esquina doblada, como un ícono de documento. */
+  clip-path: polygon(0 0, 72% 0, 100% 28%, 100% 100%, 0 100%);
+}
+
+.doc-badge-pdf { background: linear-gradient(160deg, #ef4444, #b91c1c); }
+.doc-badge-word { background: linear-gradient(160deg, #2563eb, #1e40af); }
+.doc-badge-excel { background: linear-gradient(160deg, #10b981, #047857); }
+.doc-badge-slides { background: linear-gradient(160deg, #f59e0b, #b45309); }
+.doc-badge-archive { background: linear-gradient(160deg, #8b5cf6, #6d28d9); }
+.doc-badge-audio { background: linear-gradient(160deg, #06b6d4, #0e7490); }
+.doc-badge-generic { background: linear-gradient(160deg, #64748b, #475569); }

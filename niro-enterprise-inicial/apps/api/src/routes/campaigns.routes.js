@@ -2,7 +2,7 @@ const express = require('express');
 const { requirePermission } = require('../lib/permissions');
 const { prisma } = require('../lib/prisma');
 const { audit } = require('../lib/audit');
-const { requireAuth, requireRole, requireCsrf } = require('../middleware/auth');
+const { requireAuth, requireRole, requireCsrf, requireOrgContext } = require('../middleware/auth');
 const { HttpError } = require('../lib/errors');
 const { createCampaignSchema } = require('../validation/campaigns.validation');
 const { upload } = require('../middleware/upload');
@@ -14,11 +14,6 @@ const whatsapp = require('../lib/whatsapp');
 const { findUnknownVariables, PUBLIC_VARIABLES } = require('../lib/campaignVariables');
 
 const router = express.Router();
-
-function requireOrgContext(req, _res, next) {
-  if (!req.auth.organizationId) return next(new HttpError(403, 'Esta acción requiere pertenecer a una organización'));
-  next();
-}
 
 router.use(requireAuth, requireOrgContext);
 router.use(requirePermission('campaigns'));

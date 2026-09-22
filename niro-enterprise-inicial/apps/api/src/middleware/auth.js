@@ -42,4 +42,12 @@ function requireCsrf(req, _res, next) {
   next();
 }
 
-module.exports = { requireAuth, requireRole, requireCsrf };
+// Repetida antes en cada routes.js (13 copias, una con el mensaje sin tildes) — una organización
+// es obligatoria para casi todo lo que cuelga de /api/org, así que queda acá junto al resto de
+// los guards de auth.
+function requireOrgContext(req, _res, next) {
+  if (!req.auth.organizationId) return next(new HttpError(403, 'Esta acción requiere pertenecer a una organización'));
+  next();
+}
+
+module.exports = { requireAuth, requireRole, requireCsrf, requireOrgContext };

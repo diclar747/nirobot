@@ -2,12 +2,13 @@ const express = require('express');
 const { requirePermission } = require('../lib/permissions');
 const multer = require('multer');
 const { prisma } = require('../lib/prisma');
-const { requireAuth, requireRole, requireCsrf } = require('../middleware/auth');
+const { requireAuth, requireRole, requireCsrf, requireOrgContext } = require('../middleware/auth');
 const { HttpError } = require('../lib/errors');
 const { audit } = require('../lib/audit');
 const { saveFile, resolvePath, deleteFile } = require('../lib/storage');
 const { extensionFor, safeDownloadName } = require('../lib/attachments');
 const { contactAvatarUrlFor } = require('../lib/avatars');
+const { csvCell } = require('../lib/csv');
 const { createCallCampaignSchema } = require('../validation/call.validation');
 const whatsapp = require('../lib/whatsapp');
 const calls = require('../lib/callCampaigns');
@@ -25,11 +26,6 @@ const audioUpload = multer({
 });
 
 const CAMPAIGN_INCLUDE = { account: true, audio: true, createdBy: { select: { id: true, name: true } }, survey: { include: { options: true } } };
-
-function requireOrgContext(req, _res, next) {
-  if (!req.auth.organizationId) return next(new HttpError(403, 'Esta acción requiere pertenecer a una organización'));
-  next();
-}
 
 router.use(requireAuth, requireOrgContext);
 router.use(requirePermission('calls'));
@@ -555,8 +551,6 @@ router.get('/campaigns/:id/attempts', async (req, res, next) => {
     res.json({ attempts });
   } catch (err) { next(err); }
 });
-
-function csvCell(value) { return `"${String(value ?? '').replace(/"/g, '""')}"`; }
 
 router.get('/history', async (req, res, next) => {
   try {

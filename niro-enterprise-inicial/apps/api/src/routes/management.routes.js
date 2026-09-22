@@ -4,14 +4,15 @@ const express = require('express');
 const { z } = require('zod');
 const { requirePermission } = require('../lib/permissions');
 const { prisma } = require('../lib/prisma');
-const { requireAuth, requireRole, requireCsrf } = require('../middleware/auth');
+const { requireAuth, requireRole, requireCsrf, requireOrgContext } = require('../middleware/auth');
 const { HttpError } = require('../lib/errors');
 const { audit } = require('../lib/audit');
 const outcomes = require('../lib/outcomes');
+const { csvCell } = require('../lib/csv');
 
 const router = express.Router();
 
-router.use(requireAuth, (req, _res, next) => (req.auth.organizationId ? next() : next(new HttpError(403, 'Esta acción requiere pertenecer a una organización'))));
+router.use(requireAuth, requireOrgContext);
 // Leer las categorías lo necesita cualquier agente para cerrar un chat; el permiso "management" protege el análisis.
 const needsManagement = requirePermission('management');
 
@@ -139,8 +140,6 @@ function outcomeWhere(req) {
 }
 
 const OUTCOME_INCLUDE = { contact: { select: { id: true, name: true, phone: true } }, category: { select: { color: true } } };
-
-function csvCell(value) { return `"${String(value ?? '').replace(/"/g, '""')}"`; }
 
 router.get('/outcomes', needsManagement, async (req, res, next) => {
   try {

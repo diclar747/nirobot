@@ -1,13 +1,12 @@
 const express = require('express');
 const { prisma } = require('../lib/prisma');
-const { requireAuth, requireRole, requireCsrf } = require('../middleware/auth');
+const { requireAuth, requireRole, requireCsrf, requireOrgContext } = require('../middleware/auth');
 const { HttpError } = require('../lib/errors');
 const billing = require('../lib/billing');
 
 // ---- Cliente (organización): /api/org/billing ----
 const router = express.Router();
-router.use(requireAuth);
-router.use((req, _res, next) => (req.auth.organizationId ? next() : next(new HttpError(403, 'Esta acción requiere pertenecer a una organización'))));
+router.use(requireAuth, requireOrgContext);
 
 function sanitizePayment(p) {
   return { planName: p.planName || null, id: p.id, amount: p.amount, currency: p.currency, status: p.status, paymentUrl: p.paymentUrl, paymentMethod: p.paymentMethod, paidAt: p.paidAt, createdAt: p.createdAt };

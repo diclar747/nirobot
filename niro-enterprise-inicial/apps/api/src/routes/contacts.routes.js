@@ -3,11 +3,12 @@ const { requirePermission } = require('../lib/permissions');
 const { prisma } = require('../lib/prisma');
 const { audit } = require('../lib/audit');
 const { z } = require('zod');
-const { requireAuth, requireRole, requireCsrf } = require('../middleware/auth');
+const { requireAuth, requireRole, requireCsrf, requireOrgContext } = require('../middleware/auth');
 const { contactSchema } = require('../validation/conversations.validation');
 const { HttpError } = require('../lib/errors');
 const { resolvePath } = require('../lib/storage');
 const { contactAvatarUrlFor } = require('../lib/avatars');
+const { csvCell } = require('../lib/csv');
 
 const router = express.Router();
 
@@ -26,11 +27,6 @@ const updateContactSchema = z.object({
   callOptedOutAt: optionalDate,
   callOptOutSource: z.string().max(200).nullable().optional()
 }).strict();
-
-function requireOrgContext(req, _res, next) {
-  if (!req.auth.organizationId) return next(new HttpError(403, 'Esta acción requiere pertenecer a una organización'));
-  next();
-}
 
 router.use(requireAuth, requireOrgContext);
 
@@ -143,14 +139,9 @@ router.get('/export.csv', requirePermission('contactsExport'), async (req, res, 
       orderBy: [{ name: { sort: 'asc', nulls: 'last' } }, { createdAt: 'desc' }],
       include: { conversations: { select: { tags: true }, orderBy: { updatedAt: 'desc' }, take: 1 } }
     });
-    const esc = (value) => {
-      const text = String(value ?? '');
-      const safe = /^[=+\-@]/.test(text) ? `'${text}` : text; // evita inyección de fórmulas en Excel
-      return /[",\n;]/.test(safe) ? `"${safe.replace(/"/g, '""')}"` : safe;
-    };
     const lines = ['Nombre,Teléfono,Email,Etiquetas,Etapa CRM,Creado'];
     for (const c of rows) {
-      lines.push([c.name, c.phone ? `+${c.phone.replace(/^\+/, '')}` : '', c.email, c.tags.join(' | '), stageOf(c.conversations[0]?.tags) || '', c.createdAt.toISOString()].map(esc).join(','));
+      lines.push([c.name, c.phone ? `+${c.phone.replace(/^\+/, '')}` : '', c.email, c.tags.join(' | '), stageOf(c.conversations[0]?.tags) || '', c.createdAt.toISOString()].map(csvCell).join(','));
     }
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
     res.setHeader('Content-Disposition', `attachment; filename="contactos-${new Date().toISOString().slice(0, 10)}.csv"`);

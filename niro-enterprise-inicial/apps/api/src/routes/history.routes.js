@@ -4,19 +4,15 @@
 const express = require('express');
 const { prisma } = require('../lib/prisma');
 const { requirePermission } = require('../lib/permissions');
-const { requireAuth } = require('../middleware/auth');
+const { requireAuth, requireOrgContext } = require('../middleware/auth');
 const { HttpError } = require('../lib/errors');
 const { sanitizeAttachment } = require('../lib/attachments');
 const { contactAvatarUrlFor } = require('../lib/avatars');
+const { csvCell } = require('../lib/csv');
 const chatAccess = require('../lib/chatAccess');
 const whatsapp = require('../lib/whatsapp');
 
 const router = express.Router();
-
-function requireOrgContext(req, _res, next) {
-  if (!req.auth.organizationId) return next(new HttpError(403, 'Esta acción requiere pertenecer a una organización'));
-  next();
-}
 
 router.use(requireAuth, requireOrgContext, requirePermission('history'));
 
@@ -141,12 +137,6 @@ router.get('/messages', async (req, res, next) => {
     next(err);
   }
 });
-
-function csvCell(value) {
-  const text = String(value ?? '');
-  const safe = /^[=+\-@]/.test(text) && !/^\+\d+$/.test(text) ? `'${text}` : text;
-  return /[",\n;]/.test(safe) ? `"${safe.replace(/"/g, '""')}"` : safe;
-}
 
 const ORIGIN_LABEL = { campaign: 'Campaña', api: 'API', contact: 'Contacto', bot: 'Chatbot', ai: 'Bot con IA', phone: 'Teléfono', agent: 'Agente', system: 'Sistema' };
 const STATUS_LABEL = { pending: 'Pendiente', sent: 'Enviado', delivered: 'Entregado', read: 'Visto', failed: 'Fallido' };

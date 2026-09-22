@@ -1,12 +1,12 @@
 const express = require('express');
 const { prisma } = require('../lib/prisma');
 const { audit } = require('../lib/audit');
-const { requireAuth, requireCsrf } = require('../middleware/auth');
+const { requireAuth, requireCsrf, requireOrgContext } = require('../middleware/auth');
 const { requirePermission } = require('../lib/permissions');
 const { HttpError } = require('../lib/errors');
 
 const router = express.Router();
-router.use(requireAuth, (req, _res, next) => (req.auth.organizationId ? next() : next(new HttpError(403, 'Esta acción requiere pertenecer a una organización'))));
+router.use(requireAuth, requireOrgContext);
 
 const isAdmin = (req) => ['OWNER', 'ADMIN'].includes(req.auth.role);
 

@@ -1,14 +1,15 @@
 const express = require('express');
 const { prisma } = require('../lib/prisma');
 const { requirePermission } = require('../lib/permissions');
-const { requireAuth, requireCsrf } = require('../middleware/auth');
+const { requireAuth, requireCsrf, requireOrgContext } = require('../middleware/auth');
 const { HttpError } = require('../lib/errors');
 const { syncGroups } = require('../lib/whatsappGroups');
 const { resolvePath } = require('../lib/storage');
+const { csvCell } = require('../lib/csv');
 
 const router = express.Router();
 
-router.use(requireAuth, (req, _res, next) => (req.auth.organizationId ? next() : next(new HttpError(403, 'Esta acción requiere pertenecer a una organización'))));
+router.use(requireAuth, requireOrgContext);
 router.use(requirePermission('groups'));
 
 // `avatarUrl` guarda la storageKey ("orgId/archivo") de la foto ya descargada — nunca el link
@@ -91,12 +92,6 @@ router.post('/sync', requireCsrf, async (req, res, next) => {
   } catch (err) { next(err.status ? new HttpError(err.status, err.message) : err); }
 });
 
-function csvEscape(value) {
-  const text = String(value ?? '');
-  const safe = /^[=+\-@]/.test(text) && !/^\+\d+$/.test(text) ? `'${text}` : text; // evita inyección de fórmulas en Excel
-  return /[",\n;]/.test(safe) ? `"${safe.replace(/"/g, '""')}"` : safe;
-}
-
 // scope=groups → un renglón por grupo · scope=members → un renglón por integrante (todos, o de ?groupId=).
 router.get('/export.csv', async (req, res, next) => {
   try {
@@ -109,7 +104,7 @@ router.get('/export.csv', async (req, res, next) => {
     if (scope === 'groups') {
       const groups = await prisma.whatsappGroup.findMany({ where: { organizationId }, orderBy: { name: 'asc' } });
       lines.push('Grupo,ID del grupo,Integrantes,Creador,Creado,Solo admins escriben,Descripción');
-      for (const g of groups) lines.push([g.name, g.jid, g.size, phoneText(g.ownerPhone), g.groupCreatedAt ? g.groupCreatedAt.toISOString() : '', g.announce ? 'Sí' : 'No', g.description].map(csvEscape).join(','));
+      for (const g of groups) lines.push([g.name, g.jid, g.size, phoneText(g.ownerPhone), g.groupCreatedAt ? g.groupCreatedAt.toISOString() : '', g.announce ? 'Sí' : 'No', g.description].map(csvCell).join(','));
     } else {
       const groupId = req.query.groupId ? String(req.query.groupId) : null;
       const groups = await prisma.whatsappGroup.findMany({
@@ -121,7 +116,7 @@ router.get('/export.csv', async (req, res, next) => {
       if (groupId) name = `grupo-${groups[0].name.replace(/[^\p{L}\p{N}]+/gu, '-').slice(0, 40)}`;
       lines.push('Grupo,Nombre,Teléfono,Rol,Estado del número,Identificador (LID)');
       for (const g of groups) {
-        for (const m of g.members) lines.push([g.name, m.name, phoneText(m.phone), m.role === 'superadmin' ? 'Creador' : m.role === 'admin' ? 'Administrador' : 'Integrante', m.phone ? 'Identificado' : 'Pendiente de identificar', m.lid].map(csvEscape).join(','));
+        for (const m of g.members) lines.push([g.name, m.name, phoneText(m.phone), m.role === 'superadmin' ? 'Creador' : m.role === 'admin' ? 'Administrador' : 'Integrante', m.phone ? 'Identificado' : 'Pendiente de identificar', m.lid].map(csvCell).join(','));
       }
     }
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');

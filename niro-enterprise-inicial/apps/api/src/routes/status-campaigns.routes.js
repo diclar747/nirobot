@@ -3,7 +3,7 @@ const { requirePermission } = require('../lib/permissions');
 const { z } = require('zod');
 const { prisma } = require('../lib/prisma');
 const { audit } = require('../lib/audit');
-const { requireAuth, requireRole, requireCsrf } = require('../middleware/auth');
+const { requireAuth, requireRole, requireCsrf, requireOrgContext } = require('../middleware/auth');
 const { HttpError } = require('../lib/errors');
 const { statusUpload, prepareStatusMedia } = require('../lib/statusMedia');
 const { saveFile, deleteFile } = require('../lib/storage');
@@ -15,10 +15,7 @@ const router = express.Router();
 const MAX_TOTAL_UPLOAD_BYTES = 300 * 1024 * 1024;
 const MIN_LEAD_MS = 30 * 1000;
 
-router.use(requireAuth, (req, _res, next) => {
-  if (!req.auth.organizationId) return next(new HttpError(403, 'Esta acción requiere pertenecer a una organización'));
-  next();
-}, requirePermission('statuses'));
+router.use(requireAuth, requireOrgContext, requirePermission('statuses'));
 
 // Multipart fields arrive as strings: accept JSON arrays, comma lists or real arrays.
 const list = z.preprocess((value) => {
@@ -102,7 +99,7 @@ router.post('/', requireCsrf, statusUpload.array('files', campaigns.MAX_ITEMS), 
 
     const audience = await posts.resolveAudience(organizationId, data);
     if (audience.count === 0) throw new HttpError(400, 'La audiencia seleccionada no tiene contactos con un número válido');
-    if (audience.count > posts.MAX_AUDIENCE) throw new HttpError(400, `La audiencia (${audience.count}) supera el máximo de ${posts.MAX_AUDIENCE} contactos`);
+    if (audience.count > posts.MAX_AUDIENCE) throw new HttpError(400, `La audiencia (${audience.count}) supera el máximo de ${posts.MAX_AUDIENCE} contactos configurado en el servidor`);
 
     const rows = [];
     for (const [index, item] of data.items.entries()) {

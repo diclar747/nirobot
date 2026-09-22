@@ -1062,7 +1062,11 @@
   text-decoration: none;
   font-size: 12.5px;
   font-weight: 600;
+  max-width: 260px;
 }
+.crm-msg-document > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.crm-msg-document-download { flex-shrink: 0; opacity: 0.75; }
+.crm-msg-document:hover .crm-msg-document-download { opacity: 1; }
 
 .crm-reply-bar {
   display: flex;

@@ -3,7 +3,7 @@ const { prisma } = require('../lib/prisma');
 const { hashPassword, generateTemporaryPassword } = require('../lib/passwords');
 const { audit } = require('../lib/audit');
 const whatsapp = require('../lib/whatsapp');
-const { requireAuth, requireRole, requireCsrf } = require('../middleware/auth');
+const { requireAuth, requireRole, requireCsrf, requireOrgContext } = require('../middleware/auth');
 const {
   updateOrgProfileSchema,
   updateOrgSettingsSchema,
@@ -17,11 +17,6 @@ const { HttpError } = require('../lib/errors');
 const { contactAvatarUrlFor } = require('../lib/avatars');
 
 const router = express.Router();
-
-function requireOrgContext(req, _res, next) {
-  if (!req.auth.organizationId) return next(new HttpError(403, 'Esta acción requiere pertenecer a una organización'));
-  next();
-}
 
 router.use(requireAuth, requireOrgContext);
 

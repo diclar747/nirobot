@@ -6,6 +6,7 @@ import { contactLabel, formatPhone, formatTime, initials, isUsablePhone, phoneDi
 import { CRM_STAGES, deriveStage, statusForStage, tagsForStage, type CrmStage } from '../lib/crmStage';
 import { Modal } from '../components/Modal';
 import { PlyrVideo, WaveAudio } from '../components/MediaPlayers';
+import { DocumentIcon } from '../components/DocumentIcon';
 import { Ui, type UiIconName } from '../components/Ui';
 import { EmojiPicker } from '../components/EmojiPicker';
 import { QuickReplyManager, QuickReplyPopover, useQuickReplies } from '../components/QuickReplies';
@@ -1186,7 +1187,7 @@ function ActiveChatWindow({
   // alguien la acepta o la rechaza (queda como nota en el historial) y solo lo ve a quien se le transfirió.
   const lastTransferIndex = messages.reduce((found, m, i) => (m.direction === 'NOTE' && m.content.includes('[TRANSFERENCIA]') ? i : found), -1);
   const transferResolved = lastTransferIndex >= 0 && messages.slice(lastTransferIndex + 1).some((m) => m.direction === 'NOTE' && (m.content.includes('aceptó la transferencia') || m.content.includes('rechazó la transferencia')));
-  const lastTransferNote = lastTransferIndex >= 0 && !transferResolved && !handledTransferId.current.has(messages[lastTransferIndex].id) && conversation.assignedTo?.id === me?.id ? messages[lastTransferIndex] : undefined;
+  const lastTransferNote = lastTransferIndex >= 0 && !transferResolved && !handledTransferId.current.has(messages[lastTransferIndex].id) && (conversation.assignedTo?.id === me?.id || !conversation.assignedTo) ? messages[lastTransferIndex] : undefined;
 
   return (
     <>
@@ -2144,8 +2145,9 @@ function AttachmentContent({
   }
   return (
     <a href={url} target="_blank" rel="noreferrer" className="crm-msg-document">
-      <Ui name="note" size={20} />
+      <DocumentIcon mimeType={mime} fileName={message.attachment.fileName} />
       <span>{message.attachment.fileName}</span>
+      <Ui name="download" size={14} className="crm-msg-document-download" />
     </a>
   );
 }
