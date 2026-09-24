@@ -1,0 +1,1 @@
+ALTER TABLE "Message" ADD COLUMN "staffOnly" BOOLEAN NOT NULL DEFAULT false;

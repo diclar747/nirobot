@@ -1,4 +1,5 @@
 import { useEffect, useId, useRef, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 
 export function Modal({ title, onClose, children, className }: { title: string; onClose: () => void; children: ReactNode; className?: string }) {
   const titleId = useId();
@@ -30,7 +31,9 @@ export function Modal({ title, onClose, children, className }: { title: string; 
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose, escCloses]);
 
-  return (
+  // Se monta en <body>: así la capa cubre toda la pantalla (no queda recortada por el contenedor de la página
+  // ni por debajo del menú lateral). La capa es transparente: solo sirve para cerrar al hacer clic afuera.
+  return createPortal(
     <div className="modal-backdrop" onClick={onClose}>
       <div ref={dialog} role="dialog" aria-modal="true" aria-labelledby={titleId} tabIndex={-1} className={`modal ${className || ''}`} onClick={(e) => e.stopPropagation()}>
         <div className="row between" style={{ marginBottom: 16 }}>
@@ -41,6 +44,7 @@ export function Modal({ title, onClose, children, className }: { title: string; 
         </div>
         {children}
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }

@@ -7,6 +7,7 @@ const { createOrganizationSchema, updateOrganizationSchema } = require('../valid
 const { HttpError } = require('../lib/errors');
 const whatsapp = require('../lib/whatsapp');
 const billing = require('../lib/billing');
+const { issueSession, sanitizeUser, withImpersonation } = require('./auth.routes');
 
 const router = express.Router();
 
@@ -204,6 +205,38 @@ router.get('/billing/organizations/:id/users', async (req, res, next) => {
     const payments = await prisma.billingPayment.findMany({ where: { organizationId: req.params.id }, orderBy: { createdAt: 'desc' }, take: 20 });
     res.json({ users, payments: payments.map((p) => ({ id: p.id, amount: p.amount, status: p.status, paymentMethod: p.paymentMethod, paidAt: p.paidAt, createdAt: p.createdAt })) });
   } catch (err) { next(err); }
+});
+
+// Soporte: entrar como un usuario del cliente para ver el sistema con sus ojos. La sesión prestada dura 2 horas,
+// queda auditada y desde adentro se vuelve al panel con "Volver al panel" o "Cerrar sesión".
+router.post('/organizations/:id/impersonate', requireCsrf, async (req, res, next) => {
+  try {
+    const organization = await prisma.organization.findUnique({ where: { id: req.params.id } });
+    if (!organization) throw new HttpError(404, 'Organización no encontrada');
+    if (!organization.active) throw new HttpError(409, 'La organización está desactivada');
+
+    const where = { organizationId: organization.id, active: true, role: { not: 'SUPERADMIN' } };
+    const target = req.body?.userId
+      ? await prisma.user.findFirst({ where: { ...where, id: String(req.body.userId) }, include: { organization: true } })
+      : await prisma.user.findFirst({ where, include: { organization: true }, orderBy: [{ role: 'asc' }, { createdAt: 'asc' }] });
+    if (!target) throw new HttpError(404, 'El cliente no tiene un usuario activo para ingresar');
+    // 'ADMIN' < 'AGENT' < 'OWNER' alfabéticamente: se prefiere siempre al propietario cuando no se pide uno puntual.
+    const owner = req.body?.userId ? null : await prisma.user.findFirst({ where: { ...where, role: 'OWNER' }, include: { organization: true }, orderBy: { createdAt: 'asc' } });
+    const user = owner || target;
+
+    await issueSession(res, user, req, { impersonatorId: req.auth.userId });
+    await audit(prisma, {
+      organizationId: organization.id,
+      actorUserId: req.auth.userId,
+      action: 'superadmin.impersonate.start',
+      entityType: 'User',
+      entityId: user.id,
+      metadata: { organization: organization.name, email: user.email, role: user.role }
+    });
+    res.json({ user: await withImpersonation(sanitizeUser(user), req.auth.userId) });
+  } catch (err) {
+    next(err);
+  }
 });
 
 router.post('/billing/organizations/:id/grant', requireCsrf, async (req, res, next) => {

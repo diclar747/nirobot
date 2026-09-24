@@ -152,6 +152,12 @@ function emitToOrg(organizationId, event, payload) {
   next.finally(() => { if (orgQueues.get(organizationId) === next) orgQueues.delete(organizationId); });
 }
 
+// Solo para la administración (propietario/admin/supervisor) de la organización.
+function emitToOrgStaff(organizationId, event, payload) {
+  if (!io || !organizationId) return;
+  io.to(`org:${organizationId}:staff`).emit(event, payload);
+}
+
 function emitToConversation(conversationId, event, payload) {
   if (!io || !conversationId) return;
   io.to(`conversation:${conversationId}`).emit(event, payload);
@@ -205,6 +211,7 @@ function setAgentPresenceStatus(organizationId, userId, status) {
 module.exports = {
   attachSocketServer,
   emitToOrg,
+  emitToOrgStaff,
   emitToConversation,
   emitToUser,
   getOrgPresenceList,

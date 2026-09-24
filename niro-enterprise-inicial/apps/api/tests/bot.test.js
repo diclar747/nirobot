@@ -1,5 +1,6 @@
 const { app, prisma, resetDb } = require('./helpers/testApp');
 const { createOrganization, createUser, loginAgent } = require('./helpers/auth');
+const { menuFlow } = require('./helpers/flows');
 
 afterAll(async () => {
   await resetDb();
@@ -18,12 +19,13 @@ async function setupOrgWithMenu() {
   await prisma.organizationSettings.update({
     where: { organizationId: org.id },
     data: {
-      aiEnabled: true,
-      welcomeMessage: 'Hola, bienvenido a Acme',
-      menuOptions: [
-        { key: '1', label: 'Ventas', departmentId: sales.id },
-        { key: '2', label: 'Soporte', departmentId: support.id }
-      ]
+      botFlow: menuFlow({
+        welcome: 'Hola, bienvenido a Acme',
+        options: [
+          { key: '1', label: 'Ventas', departmentId: sales.id, message: 'Te derivamos a Ventas. En un momento te atienden.' },
+          { key: '2', label: 'Soporte', departmentId: support.id, message: 'Te derivamos a Soporte. En un momento te atienden.' }
+        ]
+      })
     }
   });
   return { org, owner, sales, support };
@@ -42,12 +44,11 @@ describe('Bot de bienvenida y menú', () => {
     expect(res.status).toBe(201);
 
     const detail = await agent.get(`/api/org/conversations/${res.body.conversation.id}`);
-    expect(detail.body.messages).toHaveLength(1);
-    expect(detail.body.messages[0].direction).toBe('OUTBOUND');
-    expect(detail.body.messages[0].sender).toBeNull();
-    expect(detail.body.messages[0].content).toContain('Hola, bienvenido a Acme');
-    expect(detail.body.messages[0].content).toContain('Para Ventas, escribí 1');
-    expect(detail.body.messages[0].content).toContain('Para Soporte, escribí 2');
+    expect(detail.body.messages.every((m) => m.direction === 'OUTBOUND' && m.sender === null)).toBe(true);
+    const text = detail.body.messages.map((m) => m.content).join('\n');
+    expect(text).toContain('Hola, bienvenido a Acme');
+    expect(text).toContain('1. Ventas');
+    expect(text).toContain('2. Soporte');
   });
 
   test('no manda bienvenida si la conversación ya se crea con departamento', async () => {
@@ -106,7 +107,7 @@ describe('Bot de bienvenida y menú', () => {
     expect(updated.body.conversation.department).toBeNull();
   });
 
-  test('el bot no actúa si aiEnabled está apagado', async () => {
+  test('el bot no actúa si no hay un flujo publicado', async () => {
     const org = await createOrganization(prisma, { slug: 'acme2' });
     const owner = await createUser(prisma, { organizationId: org.id, email: 'owner@acme2.test', role: 'OWNER' });
     const { agent, csrfToken } = await loginAgent(app, owner.email);
@@ -118,5 +119,33 @@ describe('Bot de bienvenida y menú', () => {
 
     const detail = await agent.get(`/api/org/conversations/${res.body.conversation.id}`);
     expect(detail.body.messages).toHaveLength(0);
+  });
+
+  test('derivar por menú avisa al agente y, al aceptar, el cliente recibe su saludo', async () => {
+    const { org, owner, sales } = await setupOrgWithMenu();
+    const claudio = await createUser(prisma, { organizationId: org.id, email: 'claudio@acme.test', role: 'AGENT' });
+    await prisma.user.update({ where: { id: claudio.id }, data: { name: 'Claudio Pérez' } });
+    await prisma.organizationSettings.update({
+      where: { organizationId: org.id },
+      data: { botFlow: menuFlow({ options: [{ key: '1', label: 'Ventas', departmentId: sales.id, userId: claudio.id, message: 'Te paso con Ventas.' }] }) }
+    });
+    const admin = await loginAgent(app, owner.email);
+    const conv = await admin.agent.post('/api/org/conversations').set('X-CSRF-Token', admin.csrfToken).send({ newContact: { name: 'Cliente' } });
+    const id = conv.body.conversation.id;
+    await admin.agent.post(`/api/org/conversations/${id}/messages`).set('X-CSRF-Token', admin.csrfToken).send({ content: '1', type: 'inbound' });
+
+    const derived = await admin.agent.get(`/api/org/conversations/${id}`);
+    expect(derived.body.conversation.assignedTo.id).toBe(claudio.id);
+    const texts = derived.body.messages.map((m) => m.content);
+    expect(texts).toContain('Te paso con Ventas.');
+    expect(texts.some((t) => t.startsWith('🔄 [TRANSFERENCIA]') && t.includes('Claudio'))).toBe(true);
+
+    const agent = await loginAgent(app, claudio.email);
+    const accepted = await agent.agent.post(`/api/org/conversations/${id}/transfer-response`).set('X-CSRF-Token', agent.csrfToken).send({ action: 'accept' });
+    expect(accepted.status).toBe(200);
+    const after = await admin.agent.get(`/api/org/conversations/${id}`);
+    const welcome = after.body.messages.find((m) => m.direction === 'OUTBOUND' && m.sender && m.sender.id === claudio.id);
+    expect(welcome.content).toContain('Soy Claudio');
+    expect(welcome.content).toContain('Ventas');
   });
 });

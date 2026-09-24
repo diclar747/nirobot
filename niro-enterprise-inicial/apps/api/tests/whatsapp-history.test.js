@@ -6,6 +6,8 @@ afterAll(async () => { await resetDb(); await prisma.$disconnect(); });
 test('imports history and phone outbound messages exactly once without auto replies', async () => {
   const org = await createOrganization(prisma, { slug: 'history' });
   const messages = [false, true].map((fromMe, i) => ({ key: { remoteJid: '595991000111@s.whatsapp.net', fromMe, id: 'history-'+i }, pushName: 'Cliente', messageTimestamp: 1700000000 + i, message: { conversation: 'texto de prueba '+i } }));
+  // El historial del teléfono solo se importa si la empresa lo autorizó (Configuración → Sincronización).
+  await prisma.organizationSettings.update({ where: { organizationId: org.id }, data: { syncMessageHistoryEnabled: true } });
   const sock = { profilePictureUrl: jest.fn().mockResolvedValue(null) };
   await whatsapp.ingestMessages(org.id, sock, messages, true);
   await whatsapp.ingestMessages(org.id, sock, messages, true);

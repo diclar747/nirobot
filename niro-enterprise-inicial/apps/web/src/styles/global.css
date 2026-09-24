@@ -743,12 +743,12 @@ tr:last-child td {
 .modal-backdrop {
   position: fixed;
   inset: 0;
-  background: rgba(16, 21, 43, 0.45);
+  background: transparent;
   display: flex;
   align-items: center;
   justify-content: center;
   padding: 20px;
-  z-index: 20;
+  z-index: 1000;
 }
 
 .modal {
@@ -758,8 +758,13 @@ tr:last-child td {
   border: 1px solid var(--line);
   border-radius: 18px;
   padding: 24px;
-  box-shadow: 0 20px 60px rgba(16, 24, 40, 0.18);
+  /* Sin fondo oscuro detrás: la ventana se separa de la página con borde y sombra. */
+  box-shadow: 0 0 0 1px var(--border-color, rgba(16, 24, 40, 0.08)), 0 24px 70px rgba(2, 6, 23, 0.28), 0 8px 24px rgba(2, 6, 23, 0.14);
+  animation: modal-pop 0.16s ease-out both;
 }
+
+@keyframes modal-pop { from { opacity: 0; transform: translateY(8px) scale(0.985); } }
+@media (prefers-reduced-motion: reduce) { .modal { animation: none; } }
 
 .inbox-shell {
   display: grid;

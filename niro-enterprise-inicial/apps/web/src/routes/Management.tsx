@@ -10,7 +10,6 @@ import { IconChart } from '../components/icons';
 import { CategoryBars, ColumnChart, StackedAgentBars, dayLabel } from '../components/ManagementCharts';
 import { KIND_COLOR, KIND_HELP, KIND_LABEL, formatGs, type ManagementSummary, type OutcomeCategory, type OutcomeKind, type OutcomeRow } from '../lib/management';
 import type { OrgUser } from '../types';
-import '../styles/list-filters.css';
 import '../styles/management.css';
 
 type Tab = 'overview' | 'movements' | 'categories';
@@ -115,7 +114,7 @@ export function Management() {
 
   return (
     <PageShell>
-      <PageHeader
+      <PageHeader tone="indigo" hero={{ eyebrow: 'Gestión comercial', title: 'El trabajo de tu equipo, en números.', text: 'Ventas, cotizaciones y cierres por agente, con filtros por fecha, categoría y tipo.', features: [{ icon: 'users', label: 'Por agente' }, { icon: 'calendar', label: 'Por período' }, { icon: 'download', label: 'Exportación CSV' }], art: ['chart', 'crown', 'package'] }}
         icon={<IconChart />}
         title="Gestión"
         subtitle={manager ? 'Todo lo que hizo cada agente: ventas, cotizaciones, cierres y montos. Filtrá por fecha, agente, categoría o tipo.' : 'Tu gestión: ventas, cotizaciones y cierres que registraste.'}

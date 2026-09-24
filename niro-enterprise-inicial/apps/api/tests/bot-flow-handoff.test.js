@@ -115,8 +115,29 @@ describe('Bot: bloque "Menú de opciones"', () => {
   });
 
   test('un número que no es opción no deriva', () => {
-    expect(go('2', {}, menuFlow({ fallbackLabel: 'x' })).replies[0]).toMatch(/Elegí una opción/);
+    expect(go('2', { lastBotReply: 'Hola María, elegí una opción:\n1. Ventas\n3. Compras\n5. Soporte técnico' }, menuFlow({ fallbackLabel: 'x' })).replies[0]).toMatch(/Elegí una opción/);
     expect(go('13').conversation.departmentId).toBeUndefined();
+  });
+
+  // Quien escribe por segunda vez pero nunca vio el menú (p. ej. el flujo se publicó recién) recibe la presentación,
+  // no un "No entendí tu respuesta" que no viene a cuento.
+  // Caso visto en producción: el cliente saluda una y otra vez y recibía siempre "No entendí" (el propio
+  // "No entendí" incluye la lista, así que el bot creía que acababa de mostrar el menú).
+  test('a un saludo siempre se le responde con el saludo del menú', () => {
+    const noEdge = { ...menuFlow(), edges: [edge('start', 'menu')] };
+    const menu = go('hola', { lastBotReply: '' }, noEdge).replies[0];
+    const invalid = go('xyz', { lastBotReply: menu }, noEdge).replies[0];
+    expect(invalid).toContain('No entendí');
+    for (const saludo of ['Hola', 'hola!', 'buenas', 'Buenas tardes', 'buen día']) {
+      expect(go(saludo, { lastBotReply: invalid }, noEdge).replies[0]).toContain('elegí una opción:');
+      expect(go(saludo, { lastBotReply: invalid }, noEdge).replies[0]).not.toContain('No entendí');
+    }
+  });
+
+  test('si el menú no fue lo último que mandó el bot, lo presenta de nuevo (no dice "no entendí")', () => {
+    const noEdge = { ...menuFlow(), edges: [edge('start', 'menu')] };
+    const r = go('hola', { lastBotReply: 'Gracias por escribirnos.' }, noEdge);
+    expect(r.replies[0]).toBe('Hola María, elegí una opción:\n1. Ventas\n3. Compras\n5. Soporte técnico');
   });
 
   test('primer mensaje: muestra el menú con las opciones numeradas', () => {
@@ -134,7 +155,7 @@ describe('Bot: bloque "Menú de opciones"', () => {
   test('sin coincidencia en un chat en curso: sigue por "No coincide" (IA); sin esa salida, repite el menú', () => {
     expect(go('¿tienen envíos?').useAi).toBe(true);
     const noEdge = { ...menuFlow(), edges: [edge('start', 'menu')] };
-    const r = go('¿tienen envíos?', {}, noEdge);
+    const r = go('¿tienen envíos?', { lastBotReply: 'Hola María, elegí una opción:\n1. Ventas\n3. Compras\n5. Soporte técnico' }, noEdge);
     expect(r.useAi).toBe(false);
     expect(r.replies[0]).toBe('No entendí tu respuesta. Elegí una opción:\n1. Ventas\n3. Compras\n5. Soporte técnico');
   });

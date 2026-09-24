@@ -1026,3 +1026,23 @@
 .campaign-card-check { position:absolute; left:12px; top:16px; z-index:2; }
 .campaign-card.has-select .campaign-card-heading { padding-left:26px; }
 .campaign-card-footer > div { flex-wrap:wrap; }
+
+/* Pasos clickeables, pestaña "Pegar números" y resumen de audiencia */
+button.campaign-wizard-step { border-top: 0; border-right: 0; border-left: 0; background: transparent; font: inherit; text-align: left; cursor: pointer; }
+button.campaign-wizard-step:hover:not(:disabled):not(.active) { color: var(--text-main); }
+button.campaign-wizard-step:disabled { cursor: default; }
+.campaign-audience-tabs { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.campaign-audience-tabs button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.campaign-paste-panel { display: flex; flex-direction: column; gap: 10px; }
+.campaign-paste-panel .sms-list-text { min-height: 180px; resize: vertical; }
+.campaign-paste-panel code { padding: 1px 5px; border-radius: 5px; background: var(--bg-surface-2); font-size: 11px; }
+.campaign-paste-summary { display: flex; align-items: flex-start; gap: 8px; padding: 10px 12px; border: 1px solid rgba(16, 185, 129, .35); border-radius: 10px; background: rgba(16, 185, 129, .08); color: var(--text-main); font-size: 12.5px; line-height: 1.45; }
+.campaign-paste-summary > svg { flex-shrink: 0; margin-top: 1px; color: var(--success); }
+.campaign-audience-breakdown { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 14px; padding-top: 12px; border-top: 1px dashed var(--border-color); color: var(--text-muted); font-size: 12px; }
+.campaign-audience-breakdown span { display: inline-flex; align-items: center; gap: 5px; padding: 5px 10px; border: 1px solid var(--border-color); border-radius: 999px; background: var(--bg-surface-2); }
+.campaign-audience-breakdown span:first-child { border-color: var(--primary-text); background: var(--primary-soft); color: var(--primary-text); }
+.campaign-speed-copy .campaign-speed-eta { color: var(--primary-text); font-weight: 700; }
+.campaign-speed-copy .campaign-speed-eta:empty { display: none; }
+@media (max-width: 640px) {
+  .campaign-audience-tabs { grid-template-columns: 1fr; }
+}

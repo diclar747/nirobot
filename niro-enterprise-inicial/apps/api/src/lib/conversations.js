@@ -47,6 +47,7 @@ function sanitizeMessage(message) {
     quotedSender: message.quotedSender,
     transcription: message.transcription || null,
     reactions: Array.isArray(message.reactions) ? message.reactions : [],
+    staffOnly: Boolean(message.staffOnly),
     createdAt: message.createdAt,
     sender: message.sender ? { id: message.sender.id, name: message.sender.name } : null,
     attachment: sanitizeAttachment(message.attachment)
@@ -59,6 +60,15 @@ function sanitizeMessage(message) {
 // message send (internal or widget) passes through.
 function broadcastMessage(organizationId, conversationId, message) {
   const payload = sanitizeMessage(message);
+  // Integraciones externas: un mensaje entrante es el evento más pedido de la API.
+  if (message.direction === 'INBOUND') {
+    require('./apiWebhooks').emitWebhook(organizationId, 'message.received', { conversationId, message: payload }).catch(() => {});
+  }
+  // Las notas internas de administración no llegan a los agentes ni al chat del cliente.
+  if (message.staffOnly) {
+    require('./realtime').emitToOrgStaff(organizationId, 'message:new', { conversationId, message: payload });
+    return payload;
+  }
   emitToOrg(organizationId, 'message:new', { conversationId, message: payload });
   if (message.direction !== 'NOTE') {
     emitToConversation(conversationId, 'message:new', { conversationId, message: payload });

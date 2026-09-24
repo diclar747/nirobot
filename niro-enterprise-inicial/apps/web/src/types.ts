@@ -11,6 +11,8 @@ export interface CurrentUser {
   mustChangePassword: boolean;
   permissions?: Record<string, boolean>;
   organization: { id: string; name: string; slug: string } | null;
+  /** Sesión de soporte: superadmin que entró como este usuario desde el panel. */
+  impersonatedBy?: { id: string; name: string; email: string } | null;
 }
 
 export interface OrgUser {
@@ -174,6 +176,8 @@ export interface Message {
   sender: { id: string; name: string } | null;
   attachment: MessageAttachment | null;
   transcription: string | null;
+  /** Nota interna que solo ve la administración (no los agentes). */
+  staffOnly?: boolean;
 }
 
 export type OrderStatus = 'RECEIVED' | 'CONFIRMED' | 'PREPARING' | 'DISPATCHED' | 'DELIVERED' | 'CANCELLED';

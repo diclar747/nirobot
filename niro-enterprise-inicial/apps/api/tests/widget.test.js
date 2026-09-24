@@ -99,7 +99,7 @@ describe('Widget público', () => {
     const dept = await prisma.department.create({ data: { organizationId: org.id, name: 'Ventas' } });
     await prisma.organizationSettings.update({
       where: { organizationId: org.id },
-      data: { aiEnabled: true, welcomeMessage: 'Bienvenido', menuOptions: [{ key: '1', label: 'Ventas', departmentId: dept.id }] }
+      data: { botFlow: require('./helpers/flows').menuFlow({ welcome: 'Bienvenido', options: [{ key: '1', label: 'Ventas', departmentId: dept.id, message: 'Te paso con Ventas.' }] }) }
     });
 
     const start = await request(app).post('/api/public/widget/acme/start').send({ name: 'Visitante' });

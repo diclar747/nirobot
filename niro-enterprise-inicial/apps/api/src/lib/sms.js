@@ -308,7 +308,10 @@ async function resumeCampaigns() {
 async function tick() {
   const due = await prisma.smsCampaign.findMany({ where: { status: 'SCHEDULED', scheduledAt: { lte: new Date() } }, select: { id: true, organizationId: true } });
   for (const campaign of due) {
-    try { await startCampaign(campaign.organizationId, campaign.id); }
+    try {
+      if (await require('./billing').isBlocked(campaign.organizationId).catch(() => false)) throw new Error('el plan está vencido; activalo en «Mi plan» y volvé a iniciarla');
+      await startCampaign(campaign.organizationId, campaign.id);
+    }
     catch (err) {
       await prisma.smsCampaign.update({ where: { id: campaign.id }, data: { status: 'PAUSED', scheduledAt: null, pauseReason: `No pudo salir a la hora programada: ${err.message}` } }).catch(() => {});
       await emitCampaign(campaign.organizationId, campaign.id);

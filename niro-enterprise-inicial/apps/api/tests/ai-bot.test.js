@@ -20,6 +20,7 @@ jest.mock('../src/lib/niroAi', () => mockNiroAi);
 const request = require('supertest');
 const { app, prisma, resetDb } = require('./helpers/testApp');
 const { createOrganization, createUser, loginAgent } = require('./helpers/auth');
+const { aiFlow, menuFlow } = require('./helpers/flows');
 
 afterAll(async () => {
   await resetDb();
@@ -37,14 +38,14 @@ async function setupOrgWithAi({ aiEnabled = true, systemPrompt = '', menuOptions
   const owner = await createUser(prisma, { organizationId: org.id, email: `owner-${Date.now()}@acme-ai.test`, role: 'OWNER' });
   await prisma.organizationSettings.update({
     where: { organizationId: org.id },
-    data: { aiEnabled, systemPrompt, menuOptions }
+    data: { aiEnabled, systemPrompt, menuOptions, botFlow: aiFlow() }
   });
   const { agent, csrfToken } = await loginAgent(app, owner.email);
   return { org, owner, agent, csrfToken };
 }
 
 describe('Bot de IA (chat libre) en conversaciones internas', () => {
-  test('responde con IA cuando no hay menú, IA habilitada y nadie tomó el chat', async () => {
+  test('responde con IA cuando el flujo llega al bloque IA y nadie tomó el chat', async () => {
     const { agent, csrfToken } = await setupOrgWithAi();
     mockNiroAi.chatCompletion.mockResolvedValue({ content: 'Claro, te ayudo con eso.', cost: 0.001 });
 
@@ -128,7 +129,7 @@ describe('Bot de IA (chat libre) en conversaciones internas', () => {
     const sales = await prisma.department.create({ data: { organizationId: org.id, name: 'Ventas' } });
     await prisma.organizationSettings.update({
       where: { organizationId: org.id },
-      data: { aiEnabled: true, menuOptions: [{ key: '1', label: 'Ventas', departmentId: sales.id }] }
+      data: { botFlow: menuFlow({ options: [{ key: '1', label: 'Ventas', departmentId: sales.id, message: 'Te paso con Ventas.' }], aiFallback: true }) }
     });
     const { agent, csrfToken } = await loginAgent(app, owner.email);
 
@@ -172,7 +173,7 @@ describe('Bot de IA (chat libre) en conversaciones internas', () => {
 describe('Bot de IA en el widget público', () => {
   test('responde con IA en el chat del sitio web cuando no hay menú que matchee', async () => {
     await createOrganization(prisma, { slug: 'acme-widget' }).then((org) =>
-      prisma.organizationSettings.update({ where: { organizationId: org.id }, data: { aiEnabled: true } })
+      prisma.organizationSettings.update({ where: { organizationId: org.id }, data: { botFlow: aiFlow() } })
     );
     mockNiroAi.chatCompletion.mockResolvedValue({ content: 'Hola, decime en qué te ayudo.', cost: 0.001 });
 

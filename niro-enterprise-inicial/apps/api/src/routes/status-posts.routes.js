@@ -5,14 +5,12 @@ const { prisma } = require('../lib/prisma');
 const { audit } = require('../lib/audit');
 const { requireAuth, requireRole, requireCsrf, requireOrgContext } = require('../middleware/auth');
 const { HttpError } = require('../lib/errors');
-const { statusUpload, prepareStatusMedia } = require('../lib/statusMedia');
-const { saveFile, resolvePath, deleteFile } = require('../lib/storage');
-const { extensionFor, normalizeMimeType } = require('../lib/attachments');
+const { statusUpload } = require('../lib/statusMedia');
+const { resolvePath } = require('../lib/storage');
 const whatsapp = require('../lib/whatsapp');
 const posts = require('../lib/statusPosts');
 
 const router = express.Router();
-const MIN_LEAD_MS = 30 * 1000;
 
 router.use(requireAuth, requireOrgContext, requirePermission('statuses'));
 
@@ -104,58 +102,18 @@ router.get('/:id/media', async (req, res, next) => {
 });
 
 router.post('/', requireCsrf, statusUpload.single('file'), async (req, res, next) => {
-  let storageKey = null;
   try {
     const data = createSchema.parse(req.body);
-    const organizationId = req.auth.organizationId;
-
-    if (data.contentType === 'text' && !String(data.textContent || '').trim()) throw new HttpError(400, 'Escribí el texto del estado');
-    if (data.contentType !== 'text' && !req.file) throw new HttpError(400, data.contentType === 'video' ? 'Falta el video del estado' : 'Falta la imagen del estado');
-
-    let scheduledAt = null;
-    if (data.mode === 'SCHEDULED') {
-      scheduledAt = data.scheduledAt ? new Date(data.scheduledAt) : null;
-      if (!scheduledAt || Number.isNaN(scheduledAt.getTime())) throw new HttpError(400, 'Indicá la fecha y hora de publicación');
-      if (scheduledAt.getTime() < Date.now() + MIN_LEAD_MS) throw new HttpError(400, 'La fecha de programación debe estar en el futuro');
-    }
-
-    const audience = await posts.resolveAudience(organizationId, data);
-    if (audience.count === 0) throw new HttpError(400, 'La audiencia seleccionada no tiene contactos con un número válido');
-    if (audience.count > posts.MAX_AUDIENCE) throw new HttpError(400, `La audiencia (${audience.count}) supera el máximo de ${posts.MAX_AUDIENCE} contactos configurado en el servidor`);
-
-    if (data.mode === 'NOW' && whatsapp.getStatus(organizationId).status !== 'connected') {
-      throw new HttpError(409, 'WhatsApp no está conectado. Reconectá la línea para publicar.');
-    }
-
-    let mimeType = null;
-    if (data.contentType !== 'text') {
-      const media = await prepareStatusMedia(req.file, data.contentType);
-      mimeType = media.mimeType;
-      storageKey = await saveFile(organizationId, media.buffer, extensionFor(mimeType));
-    }
-
-    const post = await prisma.whatsappStatusPost.create({
-      data: {
-        organizationId, createdByUserId: req.auth.userId, contentType: data.contentType,
-        textContent: data.contentType === 'text' ? data.textContent.trim() : null,
-        caption: data.contentType !== 'text' && data.caption ? data.caption.trim() : null,
-        mediaStorageKey: storageKey, mimeType,
-        backgroundColor: data.contentType === 'text' ? (data.backgroundColor || '#075E54') : null,
-        fontStyle: data.contentType === 'text' ? (data.fontStyle ?? 0) : null,
-        audienceType: data.audienceType, audienceTags: data.audienceTags, audienceContactIds: data.audienceContactIds,
-        audienceCount: audience.count, publicationMode: data.mode === 'DRAFT' ? 'NOW' : data.mode, scheduledAt,
-        status: data.mode === 'NOW' ? 'processing' : data.mode === 'SCHEDULED' ? 'scheduled' : 'draft',
-        nextAttemptAt: data.mode === 'SCHEDULED' ? scheduledAt : null
-      }
+    // Misma creación que usa la API pública (lib/statusPosts.createPost).
+    const { post, audience } = await posts.createPost({
+      organizationId: req.auth.organizationId,
+      createdByUserId: req.auth.userId,
+      data,
+      file: req.file
     });
-    storageKey = null;
-    await audit(prisma, { organizationId, actorUserId: req.auth.userId, action: 'status_post.created', entityType: 'WhatsappStatusPost', entityId: post.id, metadata: { mode: data.mode, contentType: data.contentType, audience: audience.count } });
-
-    // Immediate posts are sent in the background; the result arrives through the socket event.
-    if (data.mode === 'NOW') posts.publishClaimed(post.id).catch((err) => console.error('[status-posts] publish failed', err));
+    await audit(prisma, { organizationId: req.auth.organizationId, actorUserId: req.auth.userId, action: 'status_post.created', entityType: 'WhatsappStatusPost', entityId: post.id, metadata: { mode: data.mode, contentType: data.contentType, audience: audience.count } });
     res.status(201).json({ post: posts.sanitizePost(post) });
   } catch (err) {
-    if (storageKey) await deleteFile(storageKey);
     next(err);
   }
 });

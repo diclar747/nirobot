@@ -21,7 +21,7 @@ async function requireAuth(req, _res, next) {
   } catch (error) { return next(error); }
   if (!user?.active || (user.organizationId && !user.organization?.active)) return next(new HttpError(401, 'La cuenta ya no está habilitada'));
   if (user.organizationId !== (payload.organizationId ?? null)) return next(new HttpError(401, 'La sesión cambió de organización'));
-  req.auth = { userId: user.id, organizationId: user.organizationId, role: user.role, permissions: effectivePermissions(user) };
+  req.auth = { userId: user.id, organizationId: user.organizationId, role: user.role, permissions: effectivePermissions(user), impersonatorId: payload.imp || null };
   next();
 }
 

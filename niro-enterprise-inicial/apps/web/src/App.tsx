@@ -37,6 +37,7 @@ const Billing = lazy(() => import('./routes/Billing').then((m) => ({ default: m.
 const Contacts = lazy(() => import('./routes/Contacts').then((m) => ({ default: m.Contacts })));
 const Groups = lazy(() => import('./routes/Groups').then((m) => ({ default: m.Groups })));
 const SuperadminPlans = lazy(() => import('./routes/SuperadminPlans').then((m) => ({ default: m.SuperadminPlans })));
+const FacebookPanel = lazy(() => import('./routes/FacebookPanel').then((m) => ({ default: m.FacebookPanel })));
 const SuperadminBilling = lazy(() => import('./routes/SuperadminBilling').then((m) => ({ default: m.SuperadminBilling })));
 
 function RouteFallback() {
@@ -83,6 +84,11 @@ export function App() {
 
               <Route element={<ProtectedRoute roles={['OWNER', 'ADMIN', 'SUPERVISOR', 'AGENT']} />}>
                 <Route path="/inbox" element={<Inbox />} />
+              </Route>
+
+              <Route element={<ProtectedRoute roles={['OWNER', 'ADMIN']} />}>
+                <Route path="/facebook-instagram" element={<FacebookPanel />} />
+                <Route path="/facebook-instagram/:section" element={<FacebookPanel />} />
               </Route>
 
               <Route element={<ProtectedRoute roles={['OWNER', 'ADMIN']} />}>

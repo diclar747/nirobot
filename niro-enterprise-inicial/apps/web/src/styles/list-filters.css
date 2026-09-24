@@ -5,10 +5,14 @@
 .list-chip.active { border-color:var(--primary-glow, var(--primary)); background:var(--primary-soft); color:var(--primary-text); }
 .list-chip b { min-width:18px; padding:1px 6px; border-radius:999px; background:var(--bg-surface-2); color:var(--text-dim); font-size:10.5px; text-align:center; }
 .list-chip.active b { background:var(--primary); color:#fff; }
-.list-filter-row { display:flex; flex-wrap:wrap; align-items:flex-end; gap:10px; }
-.list-filter-search { display:flex; flex:1 1 220px; align-items:center; gap:8px; min-width:180px; padding-left:10px; border:1px solid var(--border-color); border-radius:10px; background:var(--bg-surface-2); color:var(--text-dim); }
+/* Grilla que se acomoda sola: cada filtro con su rótulo arriba y todos del mismo alto. */
+.list-filter-row { display:grid; grid-template-columns:repeat(auto-fit,minmax(158px,1fr)); align-items:end; gap:10px; }
+.list-filter-row > * { min-width:0; }
+.list-filter-row .input { width:100%; }
+.list-filter-search { grid-column:span 2; display:flex; align-items:center; gap:8px; min-width:180px; padding-left:10px; border:1px solid var(--border-color); border-radius:10px; background:var(--bg-surface-2); color:var(--text-dim); }
 .list-filter-search .input { border:0; background:transparent; box-shadow:none; }
-.list-filter-field { display:flex; flex-direction:column; gap:3px; min-width:130px; }
+.list-filter-field { display:flex; flex-direction:column; gap:4px; }
+.list-filter-field .input { height:38px; }
 .list-filter-field span { color:var(--text-dim); font-size:10px; font-weight:800; text-transform:uppercase; letter-spacing:.04em; }
 .list-filter-clear { align-self:flex-end; }
 .list-bulkbar { position:sticky; top:8px; z-index:5; display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin:0 0 12px; padding:9px 12px; border:1px solid var(--primary-glow, var(--primary)); border-radius:12px; background:var(--bg-surface); box-shadow:var(--shadow-app); color:var(--text-main); font-size:12.5px; }
@@ -17,4 +21,11 @@
 .list-select input { width:17px; height:17px; cursor:pointer; accent-color:var(--primary); }
 .list-select input:disabled { cursor:not-allowed; opacity:.4; }
 .list-empty-filtered { padding:26px 12px; color:var(--text-dim); text-align:center; font-size:12.5px; }
-@media (max-width:640px) { .list-filter-field { flex:1 1 130px; } .list-bulkbar span { flex:1 1 100%; } }
+@media (max-width:900px) { .list-filter-row { grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); } }
+@media (max-width:640px) {
+  .list-filters { padding:10px; }
+  .list-filter-row { grid-template-columns:1fr 1fr; }
+  .list-filter-search { grid-column:1 / -1; }
+  .list-filter-clear { grid-column:1 / -1; }
+  .list-bulkbar span { flex:1 1 100%; }
+}

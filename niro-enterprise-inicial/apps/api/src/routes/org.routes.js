@@ -793,4 +793,29 @@ router.get('/dashboard-stats', async (req, res, next) => {
   }
 });
 
+// Si esta organización/usuario tiene el panel de Facebook/Instagram (decide si se muestra el menú).
+router.get('/facebook/status', (req, res) => {
+  res.json({ enabled: require('../lib/facebookPanel').canUse(req.auth) });
+});
+
+// Puente de sesión: la página /facebook-instagram de Niro carga el panel en un iframe a través de
+// esta ruta, así entra ya logueado con la sesión de Niro (ver lib/facebookPanel.js).
+router.get('/facebook/open', async (req, res, next) => {
+  try {
+    const panel = require('../lib/facebookPanel');
+    if (!panel.isConfigured()) {
+      throw new HttpError(503, 'El panel de Facebook todavía no está configurado.');
+    }
+    if (!panel.canUse(req.auth)) throw new HttpError(403, 'Tu cuenta no tiene acceso al panel de Facebook.');
+    const setCookie = await panel.loginCookie(req.auth.organizationId);
+    const secure = req.protocol === 'https' && !/;\s*Secure/i.test(setCookie) ? '; Secure' : '';
+    res.setHeader('set-cookie', `${setCookie}${secure}`);
+    // section = ruta interna del panel (crm, messenger, grupos...); solo letras para no abrir redirecciones.
+    const section = /^[a-z]+$/.test(String(req.query.section || '')) ? req.query.section : '';
+    res.redirect(`/facebook/#/${section}`);
+  } catch (err) {
+    next(err);
+  }
+});
+
 module.exports = router;

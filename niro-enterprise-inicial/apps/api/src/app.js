@@ -64,6 +64,33 @@ app.use('/api/superadmin', superadminRoutes);
 const billingRoutes = require('./routes/billing.routes');
 const { subscriptionGate } = require('./middleware/subscription');
 app.use('/api/billing/webhook', billingRoutes.webhook);
+// nginx (auth_request) consulta esto en cada pedido a /facebook/: el panel solo se usa con sesión de
+// Niro viva, organización habilitada y prueba/plan al día. Solo 204/401/403 (auth_request no acepta otros).
+app.get('/api/facebook/authz', require('./middleware/auth').requireAuth, async (req, res) => {
+  try {
+    if (!require('./lib/facebookPanel').canUse(req.auth)) return res.status(403).end();
+    if (await require('./lib/billing').isBlocked(req.auth.organizationId)) return res.status(403).end();
+    // nginx lo pasa al supervisor del paquete: con esto elige el panel (y el Facebook) de esta organización.
+    res.set('X-Niro-Org', req.auth.organizationId).status(204).end();
+  } catch {
+    res.status(403).end();
+  }
+});
+// Supervisor de paneles (interno, con la contraseña técnica): qué organizaciones tienen la prueba/plan
+// vencido, para apagar sus paneles y que no publiquen solos.
+app.post('/api/facebook/internal/plan-status', async (req, res) => {
+  const { prisma } = require('./lib/prisma');
+  const panel = require('./lib/facebookPanel');
+  if (!panel.isInternal(req)) return res.status(403).json({ error: 'No autorizado' });
+  const ids = Array.isArray(req.body?.orgIds) ? req.body.orgIds.filter((id) => typeof id === 'string').slice(0, 500) : [];
+  const billing = require('./lib/billing');
+  const blocked = [];
+  for (const id of ids) {
+    const org = await prisma.organization.findUnique({ where: { id }, select: { createdAt: true, trialEndsAt: true, paidUntil: true, billingExempt: true, active: true } });
+    if (!org || !org.active || billing.accessFor(org).blocked) blocked.push(id);
+  }
+  res.json({ blocked });
+});
 app.use('/api/org', subscriptionGate);
 app.use('/api/org/billing', billingRoutes.router);
 app.use('/api/org', orgRoutes);

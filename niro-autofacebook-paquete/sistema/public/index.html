@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Niro — Centro de Facebook</title>
+    <meta name="description" content="Panel local de Niro para publicar, programar y responder en Facebook y Messenger." />
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%236857e7'/%3E%3Ctext x='32' y='44' font-family='Arial' font-weight='800' font-size='34' fill='white' text-anchor='middle'%3EN%3C/text%3E%3C/svg%3E" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="__NIRO_BASE__/styles.css?v=0.9.6" />
+    <script>
+      // Tema y menú antes de pintar: evita el parpadeo al cargar.
+      try {
+        const legacy = localStorage.getItem("niro-theme");
+        const saved = localStorage.getItem("niro-appearance") || (legacy === "dark" ? "dark-violet" : legacy === "light" ? "light" : "");
+        if (saved) {
+          const [theme, accent] = saved.split("-");
+          document.documentElement.dataset.theme = theme;
+          if (accent) document.documentElement.dataset.accent = accent;
+        }
+        // Dentro de Niro (iframe): el menú lo pone Niro, acá se esconde el propio.
+        if (window.self !== window.top) document.documentElement.dataset.embed = "1";
+        // Abierto suelto (marcador viejo, link directo): se usa siempre dentro de Niro, con su menú.
+        else if ("__NIRO_BASE__") {
+          const section = location.hash.replace(/^#\/?/, "").split(/[?/]/)[0];
+          location.replace("/facebook-instagram/" + (section || "inicio"));
+        }
+        if (localStorage.getItem("niro-sidebar") === "collapsed") document.documentElement.dataset.sidebar = "collapsed";
+      } catch {}
+    </script>
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="top-left">
+        <button id="side-toggle" class="round-btn side-toggle" aria-controls="side-menu" aria-expanded="true" aria-label="Minimizar menú" title="Minimizar menú"><span data-icon="sidebar"></span></button>
+        <a class="logo" href="#/" aria-label="Niro inicio">N</a>
+        <div class="search">
+          <span data-icon="search" data-size="sm"></span>
+          <input id="global-search" type="search" placeholder="Buscar en Niro" autocomplete="off" aria-label="Buscar grupos, páginas, chats y avisos" />
+          <div id="search-results" class="search-results hidden"></div>
+        </div>
+      </div>
+      <nav class="top-nav" aria-label="Secciones principales">
+        <a href="#/" data-route="home" title="Inicio"><span data-icon="home"></span></a>
+        <a href="#/publicar" data-route="publicar" title="Publicar"><span data-icon="edit"></span></a>
+        <a href="#/programacion" data-route="programacion" title="Programación"><span data-icon="calendar"></span></a>
+        <a href="#/respuestas" data-route="respuestas" title="Respuestas con IA" data-optional><span data-icon="sparkles"></span></a>
+        <a href="#/messenger" data-route="messenger" title="Messenger"><span data-icon="message"></span><span id="topnav-chat-dot" class="dot hidden">0</span></a>
+        <a href="#/crm" data-route="crm" title="CRM"><span data-icon="kanban"></span></a>
+        <a href="#/grupos" data-route="grupos" title="Grupos" data-optional><span data-icon="users"></span></a>
+        <a href="#/publicaciones" data-route="publicaciones" title="Publicaciones" data-optional><span data-icon="layers"></span></a>
+      </nav>
+      <div class="top-right">
+        <button id="top-theme" class="round-btn theme-btn" title="Color del sistema" aria-label="Color del sistema" aria-haspopup="menu"><span class="theme-swatch"></span></button>
+        <button id="top-create" class="round-btn" title="Crear publicación" aria-label="Crear publicación" data-optional><span data-icon="plus"></span></button>
+        <button id="top-messenger" class="round-btn" title="Messenger" aria-label="Messenger" data-optional><span data-icon="message"></span></button>
+        <button id="top-bell" class="round-btn" title="Notificaciones" aria-label="Notificaciones"><span data-icon="bell"></span><span id="bell-dot" class="dot hidden">0</span></button>
+        <button id="top-avatar" class="avatar-btn" title="Cuenta" aria-label="Cuenta"><span id="top-avatar-face" class="avatar status-ring">N</span></button>
+      </div>
+    </header>
+    <div id="busy-bar" class="busy-bar hidden" aria-hidden="true"></div>
+
+    <div id="layout" class="layout">
+      <aside id="side-menu" class="side" aria-label="Menú">
+        <a class="side-profile" href="#/">
+          <span id="side-avatar" class="avatar status-ring">N</span>
+          <span><strong id="side-name">Tu perfil</strong><small id="side-status">Facebook sin conectar</small></span>
+        </a>
+        <nav class="side-nav">
+          <a href="#/" data-route="home"><span class="nav-icon solid-violet"><span data-icon="home" data-size="sm"></span></span>Inicio</a>
+          <a href="#/notificaciones" data-route="notificaciones"><span class="nav-icon solid-red"><span data-icon="bell" data-size="sm"></span></span>Notificaciones<span id="side-notif-count" class="count hidden">0</span></a>
+          <a href="#/messenger" data-route="messenger"><span class="nav-icon solid-blue"><span data-icon="message" data-size="sm"></span></span>Messenger<span id="side-chat-count" class="count soft">0</span></a>
+          <a href="#/crm" data-route="crm"><span class="nav-icon solid-teal"><span data-icon="kanban" data-size="sm"></span></span>CRM<span id="side-crm-count" class="count hidden">0</span></a>
+          <a href="#/respuestas" data-route="respuestas"><span class="nav-icon solid-violet"><span data-icon="sparkles" data-size="sm"></span></span>Respuestas IA<span id="side-ai-count" class="count hidden">0</span></a>
+          <a href="#/publicar" data-route="publicar"><span class="nav-icon solid-green"><span data-icon="edit" data-size="sm"></span></span>Crear publicación</a>
+          <a href="#/programacion" data-route="programacion"><span class="nav-icon solid-orange"><span data-icon="calendar" data-size="sm"></span></span>Programación<span id="side-sched-count" class="count soft">0</span></a>
+          <a href="#/publicaciones" data-route="publicaciones"><span class="nav-icon solid-teal"><span data-icon="layers" data-size="sm"></span></span>Publicaciones</a>
+          <a href="#/grupos" data-route="grupos"><span class="nav-icon solid-blue"><span data-icon="users" data-size="sm"></span></span>Grupos<span id="side-group-count" class="count soft">0</span></a>
+          <a href="#/explorar" data-route="explorar"><span class="nav-icon solid-teal"><span data-icon="search" data-size="sm"></span></span>Explorar grupos<span id="side-explorer-count" class="count hidden">0</span></a>
+          <a href="#/paginas" data-route="paginas"><span class="nav-icon solid-pink"><span data-icon="flag" data-size="sm"></span></span>Páginas<span id="side-page-count" class="count soft">0</span></a>
+          <a href="#/borradores" data-route="borradores"><span class="nav-icon solid-gray"><span data-icon="file" data-size="sm"></span></span>Borradores<span id="side-draft-count" class="count soft">0</span></a>
+          <a href="#/datos" data-route="datos"><span class="nav-icon solid-violet"><span data-icon="database" data-size="sm"></span></span>Datos y sincronización</a>
+        </nav>
+        <div class="side-sep"></div>
+        <div class="side-title">Estado</div>
+        <div class="storage-card">
+          <strong><span id="storage-pulse" class="pulse off"></span><span id="storage-name">Base de datos</span></strong>
+          <div id="storage-detail">Comprobando…</div>
+        </div>
+        <div class="side-foot">Niro local · v0.9 · Publicar y responder piden confirmación; la automatización se activa aparte.</div>
+      </aside>
+      <div id="side-overlay" class="side-overlay" hidden></div>
+
+      <main id="view" class="content" tabindex="-1"></main>
+
+      <aside id="right-rail" class="right" aria-label="Actividad"></aside>
+    </div>
+
+    <div id="dropdown" class="dropdown hidden" role="dialog" aria-modal="false"></div>
+    <div id="emoji-picker" class="emoji-picker floating hidden" role="dialog" aria-label="Selector de emojis"></div>
+    <input id="file-input" type="file" multiple accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv,.zip" hidden />
+
+    <div id="modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+      <div class="modal-card">
+        <div class="modal-head"><h3 id="modal-title">¿Continuar?</h3><button id="modal-x" class="round-btn" aria-label="Cerrar"><span data-icon="x" data-size="sm"></span></button></div>
+        <div class="modal-body">
+          <span id="modal-eyebrow" class="eyebrow">Confirmación final</span>
+          <p id="modal-warning" style="margin-top:6px"></p>
+          <div id="modal-targets" class="modal-targets"></div>
+          <pre id="modal-preview"></pre>
+        </div>
+        <div class="modal-foot"><button id="modal-cancel" class="btn gray">Cancelar</button><button id="modal-confirm" class="btn primary">Confirmar</button></div>
+      </div>
+    </div>
+
+    <div id="sync-float" class="sync-float hidden" role="status"></div>
+    <div id="toasts" class="toasts" aria-live="polite"></div>
+    <script>window.NIRO_BASE = "__NIRO_BASE__";</script>
+    <script type="module" src="__NIRO_BASE__/app.js?v=0.9.6"></script>
+  </body>
+</html>

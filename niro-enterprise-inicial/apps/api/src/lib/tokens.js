@@ -19,9 +19,10 @@ const REFRESH_COOKIE = 'niro_rt';
 const CSRF_COOKIE = 'niro_csrf';
 const REFRESH_COOKIE_PATH = '/api/auth';
 
-function signAccessToken(user) {
+// impersonatorId: cuando un superadmin entró "como" este usuario desde el panel, viaja en el token para poder volver.
+function signAccessToken(user, impersonatorId = null) {
   return jwt.sign(
-    { sub: user.id, organizationId: user.organizationId, role: user.role, type: 'access' },
+    { sub: user.id, organizationId: user.organizationId, role: user.role, type: 'access', ...(impersonatorId ? { imp: impersonatorId } : {}) },
     JWT_SECRET,
     { expiresIn: ACCESS_TOKEN_TTL }
   );

@@ -1224,8 +1224,7 @@
 .landing-modal-backdrop {
   position: fixed;
   inset: 0;
-  background: rgba(5, 8, 16, 0.85);
-  backdrop-filter: blur(10px);
+  background: transparent;
   display: flex;
   align-items: center;
   justify-content: center;

@@ -167,8 +167,18 @@ function sanitizeUser(user) {
   };
 }
 
-async function issueSession(res, user, req) {
-  const accessToken = signAccessToken(user);
+// impersonatorId: sesión prestada desde el panel de superadmin. Dura poco (IMPERSONATION_MAX_AGE_MS) y queda auditada.
+const IMPERSONATION_MAX_AGE_MS = 2 * 60 * 60 * 1000; // 2 horas
+
+// Agrega al usuario quién lo está mirando desde el panel, para mostrar el aviso y el botón de volver.
+async function withImpersonation(user, impersonatorId) {
+  if (!impersonatorId) return user;
+  const supervisor = await prisma.user.findUnique({ where: { id: impersonatorId }, select: { id: true, name: true, email: true } }).catch(() => null);
+  return { ...user, impersonatedBy: supervisor ? { id: supervisor.id, name: supervisor.name, email: supervisor.email } : null };
+}
+
+async function issueSession(res, user, req, { impersonatorId = null } = {}) {
+  const accessToken = signAccessToken(user, impersonatorId);
   const { token: refreshToken, jti } = signRefreshToken(user);
   const csrfToken = generateCsrfToken();
 
@@ -177,9 +187,10 @@ async function issueSession(res, user, req) {
       id: jti,
       userId: user.id,
       tokenHash: hashToken(refreshToken),
-      expiresAt: new Date(Date.now() + REFRESH_TOKEN_MAX_AGE_MS),
+      expiresAt: new Date(Date.now() + (impersonatorId ? IMPERSONATION_MAX_AGE_MS : REFRESH_TOKEN_MAX_AGE_MS)),
       userAgent: req.get('user-agent') || null,
-      ip: req.ip || null
+      ip: req.ip || null,
+      impersonatorId
     }
   });
 
@@ -553,7 +564,17 @@ router.post('/refresh', async (req, res, next) => {
       throw new HttpError(401, 'Cuenta no disponible');
     }
 
-    const accessToken = signAccessToken(user);
+    // Una sesión prestada sigue siéndolo al renovarse, y solo mientras el superadmin siga habilitado.
+    let impersonatorId = stored.impersonatorId || null;
+    if (impersonatorId) {
+      const supervisor = await prisma.user.findUnique({ where: { id: impersonatorId }, select: { active: true, role: true } });
+      if (!supervisor?.active || supervisor.role !== 'SUPERADMIN') {
+        await prisma.refreshToken.update({ where: { id: stored.id }, data: { revokedAt: new Date() } });
+        clearAuthCookies(res);
+        throw new HttpError(401, 'La sesión de soporte terminó');
+      }
+    }
+    const accessToken = signAccessToken(user, impersonatorId);
     const { token: newRefreshToken, jti } = signRefreshToken(user);
     const csrfToken = generateCsrfToken();
     const newHash = hashToken(newRefreshToken);
@@ -567,13 +588,14 @@ router.post('/refresh', async (req, res, next) => {
           tokenHash: newHash,
           expiresAt: new Date(Date.now() + REFRESH_TOKEN_MAX_AGE_MS),
           userAgent: req.get('user-agent') || null,
-          ip: req.ip || null
+          ip: req.ip || null,
+          impersonatorId
         }
       })
     ]);
 
     setAuthCookies(res, { accessToken, refreshToken: newRefreshToken, csrfToken });
-    res.json({ user: sanitizeUser(user) });
+    res.json({ user: await withImpersonation(sanitizeUser(user), impersonatorId) });
   } catch (err) {
     next(err);
   }
@@ -583,6 +605,10 @@ router.post('/refresh', async (req, res, next) => {
 // las cookies. Si no, un cierre hecho con el acceso vencido dejaba viva la sesión de 30 días y volvía a entrar sola.
 router.post('/logout', async (req, res, next) => {
   try {
+    // Cerrar sesión dentro de una sesión de soporte devuelve al superadmin a su panel (no lo deja afuera del sistema).
+    const supervisor = await endImpersonation(req, res).catch(() => null);
+    if (supervisor) return res.json({ user: supervisor });
+
     const token = req.cookies?.[REFRESH_COOKIE];
     let actor = null;
     if (token) {
@@ -613,7 +639,31 @@ router.get('/me', requireAuth, async (req, res, next) => {
       clearAuthCookies(res);
       throw new HttpError(401, 'Sesión inválida');
     }
-    res.json({ user: sanitizeUser(user) });
+    res.json({ user: await withImpersonation(sanitizeUser(user), req.auth.impersonatorId) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Volver a ser el superadmin que prestó la sesión. También lo usa "Cerrar sesión" del lado del cliente.
+async function endImpersonation(req, res) {
+  const token = req.cookies?.[REFRESH_COOKIE];
+  const stored = token ? await prisma.refreshToken.findUnique({ where: { tokenHash: hashToken(token) }, select: { id: true, userId: true, impersonatorId: true, revokedAt: true } }).catch(() => null) : null;
+  const impersonatorId = stored && !stored.revokedAt ? stored.impersonatorId : null;
+  if (!impersonatorId) return null;
+  const supervisor = await prisma.user.findUnique({ where: { id: impersonatorId }, include: { organization: true } });
+  if (!supervisor?.active || supervisor.role !== 'SUPERADMIN') return null;
+  await prisma.refreshToken.update({ where: { id: stored.id }, data: { revokedAt: new Date() } });
+  await issueSession(res, supervisor, req);
+  await audit(prisma, { organizationId: null, actorUserId: supervisor.id, action: 'superadmin.impersonate.stop', entityType: 'User', entityId: stored.userId });
+  return sanitizeUser(supervisor);
+}
+
+router.post('/stop-impersonation', requireAuth, requireCsrf, async (req, res, next) => {
+  try {
+    const supervisor = await endImpersonation(req, res);
+    if (!supervisor) throw new HttpError(400, 'Esta sesión no es una sesión de soporte');
+    res.json({ user: supervisor });
   } catch (err) {
     next(err);
   }
@@ -651,3 +701,7 @@ router.post('/change-password', requireAuth, requireCsrf, async (req, res, next)
 });
 
 module.exports = router;
+// El panel de superadmin reutiliza estas dos para las sesiones de soporte ("entrar como cliente").
+module.exports.issueSession = issueSession;
+module.exports.sanitizeUser = sanitizeUser;
+module.exports.withImpersonation = withImpersonation;

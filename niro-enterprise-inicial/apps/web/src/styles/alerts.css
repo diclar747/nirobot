@@ -87,9 +87,7 @@
   display: grid;
   place-items: center;
   padding: 20px;
-  background: rgba(15, 23, 42, 0.56);
-  backdrop-filter: blur(8px);
-  animation: modern-alert-fade 0.18s ease-out both;
+  background: transparent;
 }
 
 .modern-confirm-dialog {

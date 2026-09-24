@@ -4,6 +4,9 @@ import { Modal } from '../components/Modal';
 import { EmptyState, LoadingRows, PageHeader, PageShell, Panel, PersonCell, Pill, StatCard, StatGrid, type Tone } from '../components/PageKit';
 import { formatGs } from '../components/BillingGate';
 import { Ui } from '../components/Ui';
+import { useNavigate } from 'react-router-dom';
+import { useAuth } from '../context/AuthContext';
+import type { CurrentUser } from '../types';
 
 interface Customer {
   id: string; name: string; active: boolean; createdAt: string; phone: string | null;
@@ -23,11 +26,14 @@ const AUDIENCE_LABEL: Record<string, string> = { all: 'Todos los clientes', tria
 const fmtDate = (v: string | null) => (v ? new Date(v).toLocaleString('es-PY', { dateStyle: 'medium', timeStyle: 'short' }) : '—');
 
 export function SuperadminBilling() {
+  const navigate = useNavigate();
+  const { setUser } = useAuth();
   const [data, setData] = useState<Overview | null>(null);
   const [notices, setNotices] = useState<Notice[]>([]);
   const [filter, setFilter] = useState<'all' | 'active' | 'trial' | 'expired' | 'pending'>('all');
   const [query, setQuery] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [entering, setEntering] = useState<string | null>(null);
   const [detail, setDetail] = useState<{ customer: Customer; data: Detail } | null>(null);
   const [plans, setPlans] = useState<{ id: string; name: string; maxAgents: number }[]>([]);
   const [grantPlan, setGrantPlan] = useState('');
@@ -59,10 +65,24 @@ export function SuperadminBilling() {
     setDetail({ customer, data: d });
   }
 
+  // Soporte: abre el sistema como el cliente (sesión prestada de 2 h, auditada). Se vuelve con "Volver al panel".
+  async function enterAs(client: Customer) {
+    setEntering(client.id);
+    setError(null);
+    try {
+      const data = await apiPost<{ user: CurrentUser }>(`/api/superadmin/organizations/${client.id}/impersonate`, {});
+      setUser(data.user);
+      navigate('/dashboard');
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'No se pudo entrar como este cliente');
+      setEntering(null);
+    }
+  }
+
   const s = data?.summary;
   return (
     <PageShell>
-      <PageHeader title="Clientes y cobros" subtitle={`Plan mensual ${s ? formatGs(s.priceGs) : ''} · 24 h de prueba por teléfono conectado`}
+      <PageHeader tone="amber" icon={<Ui name="crown" size={22} />} hero={{ eyebrow: 'Facturación', title: 'Clientes, planes y cobros en un solo lugar.', compact: true }} title="Clientes y cobros" subtitle={`Plan mensual ${s ? formatGs(s.priceGs) : ''} · 24 h de prueba por teléfono conectado`}
         actions={<button className="btn" onClick={() => setShowNotice('broadcast')}><Ui name="megaphone" size={16} /> Enviar aviso</button>} />
       {error && <div className="campaign-alert error" style={{ marginBottom: 12 }}>{error}</div>}
       <StatGrid>
@@ -96,7 +116,10 @@ export function SuperadminBilling() {
                   <td>{c.state === 'active' ? fmtDate(c.paidUntil) : c.state === 'trial' ? fmtDate(c.trialEndsAt) : '—'}</td>
                   <td>{c.lastPayment ? `${formatGs(c.lastPayment.amount)} · ${fmtDate(c.lastPayment.paidAt)}` : '—'}</td>
                   <td className="num">{c.users}</td>
-                  <td className="actions"><button className="btn secondary small" onClick={() => openDetail(c)}>Gestionar</button></td>
+                  <td className="actions"><div className="sa-row-actions">
+                    <button className="btn secondary small" onClick={() => openDetail(c)}>Gestionar</button>
+                    <button className="btn small" disabled={entering === c.id || !c.active} title={c.active ? `Ver el sistema como ${c.name}` : 'La organización está desactivada'} onClick={() => enterAs(c)}>{entering === c.id ? 'Entrando…' : <><Ui name="external" size={14} /> Entrar</>}</button>
+                  </div></td>
                 </tr>);
             })}</tbody></table></div>
         )}

@@ -3,6 +3,7 @@ import { apiDelete, apiGet, apiPost, ApiError } from '../lib/api';
 import { useAuth } from '../context/AuthContext';
 import { useAlerts } from '../context/AlertContext';
 import { PageHeader, PageShell, Panel, StatCard, StatGrid, Pill } from '../components/PageKit';
+import { ApiDocs } from '../components/ApiDocs';
 import { IconSettings } from '../components/icons';
 import '../styles/api-portal.css';
 
@@ -147,10 +148,12 @@ export function ApiPortal() {
   const apiBase = `${window.location.origin}/api/v1`;
   const textCurl = `curl -X POST ${apiBase}/messages \\\n+  -H "Authorization: Bearer nr_live_TU_CLAVE" \\\n+  -H "Content-Type: application/json" \\\n+  -d '{"to":"595981234567","type":"text","text":"Hola 👋"}'`;
   const mediaCurl = `curl -X POST ${apiBase}/messages \\\n+  -H "Authorization: Bearer nr_live_TU_CLAVE" \\\n+  -F "to=595981234567" -F "type=image" \\\n+  -F "caption=Imagen desde NIRO" -F "file=@foto.jpg"`;
+  const statusTextCurl = `curl -X POST ${apiBase}/status \\\n+  -H "Authorization: Bearer nr_live_TU_CLAVE" \\\n+  -H "Content-Type: application/json" \\\n+  -d '{"contentType":"text","textContent":"¡Hoy 20% de descuento! 🎉","backgroundColor":"#075E54","audienceType":"ALL"}'`;
+  const statusMediaCurl = `curl -X POST ${apiBase}/status \\\n+  -H "Authorization: Bearer nr_live_TU_CLAVE" \\\n+  -F "contentType=image" -F "caption=Nueva colección" \\\n+  -F "audienceType=TAG" -F "audienceTags=vip" \\\n+  -F "file=@promo.jpg"    # o contentType=video con un .mp4`;
 
   return (
     <PageShell>
-      <PageHeader
+      <PageHeader tone="slate" hero={{ eyebrow: 'Integraciones', title: 'Conectá Niro con tus sistemas.', text: 'Generá credenciales, consultá la documentación y probá envíos de WhatsApp desde acá.', features: [{ icon: 'lock', label: 'Claves seguras' }, { icon: 'send', label: 'Envíos por API' }, { icon: 'note', label: 'Documentación OpenAPI' }], art: ['plug', 'globe', 'send'] }}
         icon={<IconSettings />}
         title="API & Desarrolladores"
         subtitle="Conectá tus sistemas, generá credenciales y probá envíos de WhatsApp desde un solo lugar."
@@ -199,10 +202,14 @@ export function ApiPortal() {
         </div>
       </Panel>
 
-      <Panel title="Documentación rápida" actions={<a className="api-doc-link" href="/api/v1/openapi.json" target="_blank" rel="noreferrer">Descargar OpenAPI 3.0 ↗</a>}>
-        <div className="api-doc-grid"><DocBlock title="Texto, emojis y respuestas" code={textCurl} /><DocBlock title="Imagen, video, audio, archivo o sticker" code={mediaCurl} /></div>
-        <div className="api-endpoint-table"><div><b>Método</b><b>Endpoint</b><b>Uso</b></div><div><span className="api-method post">POST</span><code>/api/v1/messages</code><span>Enviar texto o multimedia</span></div><div><span className="api-method get">GET</span><code>/api/v1/sessions</code><span>Consultar las líneas de tu empresa</span></div><div><span className="api-method get">GET</span><code>/api/v1/openapi.json</code><span>Contrato OpenAPI completo</span></div></div>
-        <p className="api-doc-note">Autenticación: enviá <code>Authorization: Bearer nr_live_…</code> o <code>X-API-Key</code>. El teléfono debe estar en formato internacional. Los archivos se envían como <code>multipart/form-data</code> y admiten hasta 15 MB.</p>
+      <Panel title="Documentación completa" actions={<a className="api-doc-link" href="/api/v1/openapi.json" target="_blank" rel="noreferrer">Descargar OpenAPI 3.0 ↗</a>}>
+        <ApiDocs base={apiBase} />
+      </Panel>
+
+      <Panel title="Ejemplos rápidos" actions={<span className="api-doc-link">Copiá y pegá en tu terminal</span>}>
+        <div className="api-doc-grid"><DocBlock title="Texto, emojis y respuestas" code={textCurl} /><DocBlock title="Imagen, video, audio, archivo o sticker" code={mediaCurl} /><DocBlock title="Publicar un estado de texto" code={statusTextCurl} /><DocBlock title="Estado con imagen o video" code={statusMediaCurl} /></div>
+        <div className="api-endpoint-table"><div><b>Método</b><b>Endpoint</b><b>Uso</b></div><div><span className="api-method post">POST</span><code>/api/v1/messages</code><span>Enviar texto o multimedia</span></div><div><span className="api-method post">POST</span><code>/api/v1/status</code><span>Publicar un estado (texto, imagen o video)</span></div><div><span className="api-method get">GET</span><code>/api/v1/status</code><span>Últimas publicaciones y su resultado</span></div><div><span className="api-method get">GET</span><code>/api/v1/status/:id</code><span>Ver cómo salió una publicación</span></div><div><span className="api-method get">GET</span><code>/api/v1/sessions</code><span>Consultar las líneas de tu empresa</span></div><div><span className="api-method get">GET</span><code>/api/v1/openapi.json</code><span>Contrato OpenAPI completo</span></div></div>
+        <p className="api-doc-note">Autenticación: enviá <code>Authorization: Bearer nr_live_…</code> o <code>X-API-Key</code>. El teléfono debe estar en formato internacional. Los archivos se envían como <code>multipart/form-data</code> y admiten hasta 15 MB. En los estados podés elegir la audiencia (<code>ALL</code>, <code>TAG</code> o <code>CUSTOM</code>) y programarlos con <code>mode=SCHEDULED</code> más <code>scheduledAt</code>; duran 24 horas, igual que en WhatsApp.</p>
       </Panel>
     </PageShell>
   );

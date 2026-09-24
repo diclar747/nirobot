@@ -176,14 +176,17 @@ async function readAttachmentBuffer(attachment) {
 
 async function recordCampaignMessage(organizationId, campaign, contactId, waMessageId, renderedMessage) {
   if (!waMessageId) return;
+  // Un solo chat por contacto: la campaña reabre el existente en vez de sumar otro a la lista.
   let conversation = await prisma.conversation.findFirst({
-    where: { organizationId, contactId, channel: 'whatsapp', status: { not: 'CLOSED' } },
+    where: { organizationId, contactId, channel: 'whatsapp' },
     orderBy: { updatedAt: 'desc' }
   });
   if (!conversation) {
     conversation = await prisma.conversation.create({
       data: { organizationId, contactId, channel: 'whatsapp', subject: `Campaña: ${campaign.name}` }
     });
+  } else if (conversation.status === 'CLOSED') {
+    conversation = await prisma.conversation.update({ where: { id: conversation.id }, data: { status: 'OPEN' } });
   }
   await prisma.message.create({
     data: {
@@ -242,7 +245,9 @@ async function processNext(organizationId, campaignId) {
     const isGroup = Boolean(next.groupJid);
     const target = isGroup ? next.groupJid : next.contact && next.contact.phone;
     if (!target) throw new Error('El contacto no tiene número de teléfono');
-    const renderedMessage = personalizeCampaignMessage(campaign.message, isGroup ? { name: next.groupName || 'grupo', phone: '', email: '' } : next.contact);
+    // El nombre pegado en la lista de la campaña manda sobre el guardado en el contacto.
+    const recipientData = isGroup ? { name: next.groupName || 'grupo', phone: '', email: '' } : { ...next.contact, name: next.displayName || next.contact.name };
+    const renderedMessage = personalizeCampaignMessage(campaign.message, recipientData);
     let waMessageId;
     if (campaign.attachment) {
       const buffer = await readAttachmentBuffer(campaign.attachment);
@@ -318,6 +323,10 @@ async function applyMessageStatus(waMessageId, label) {
     const conversation = await prisma.conversation.findUnique({ where: { id: row.conversationId }, select: { organizationId: true } });
     if (conversation) {
       const { sanitizeMessage } = require('./conversations');
+      // Aviso a las integraciones: "enviado -> entregado -> visto" de cada mensaje.
+      require('./apiWebhooks').emitWebhook(conversation.organizationId, 'message.status', {
+        conversationId: row.conversationId, messageId: row.id, waMessageId, status: label
+      }).catch(() => {});
       require('./realtime').emitToOrg(conversation.organizationId, 'message:updated', { conversationId: row.conversationId, message: sanitizeMessage(updated) });
     }
   }

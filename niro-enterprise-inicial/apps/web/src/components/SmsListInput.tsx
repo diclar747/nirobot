@@ -1,11 +1,13 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { apiPost, ApiError } from '../lib/api';
 import { formatPhone, type ParsedList } from '../lib/sms';
 import { Ui } from './Ui';
+import '../styles/sms.css';
 
 // Pegar números (uno por línea) o subir un TXT/CSV con "nombre,número". El servidor lee la lista y dice qué sirve.
-export function SmsListInput({ value, onChange, onParsed, placeholder }: {
+export function SmsListInput({ value, onChange, onParsed, placeholder, endpoint = '/api/org/sms/parse-list', help }: {
   value: string; onChange: (text: string) => void; onParsed: (parsed: ParsedList | null) => void; placeholder?: string;
+  endpoint?: string; help?: ReactNode;
 }) {
   const [parsed, setParsed] = useState<ParsedList | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -17,7 +19,7 @@ export function SmsListInput({ value, onChange, onParsed, placeholder }: {
     const mine = ++seq.current;
     const timer = window.setTimeout(async () => {
       try {
-        const res = await apiPost<ParsedList>('/api/org/sms/parse-list', { text: value });
+        const res = await apiPost<ParsedList>(endpoint, { text: value });
         if (mine !== seq.current) return;
         setParsed(res); setError(null); onParsed(res);
       } catch (err) {
@@ -68,7 +70,7 @@ export function SmsListInput({ value, onChange, onParsed, placeholder }: {
           )}
         </div>
       )}
-      <small className="sms-list-help">Celulares de Paraguay. Se acepta <b>0985 768 793</b>, <b>985768793</b> o <b>+595 985 768 793</b>: siempre se envía como <b>595985768793</b>.</small>
+      {help ?? <small className="sms-list-help">Celulares de Paraguay. Se acepta <b>0985 768 793</b>, <b>985768793</b> o <b>+595 985 768 793</b>: siempre se envía como <b>595985768793</b>.</small>}
     </div>
   );
 }

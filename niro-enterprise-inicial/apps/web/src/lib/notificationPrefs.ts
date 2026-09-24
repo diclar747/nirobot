@@ -8,7 +8,7 @@ export interface NotificationPrefs {
   volume: number;           // 0.1 a 1
 }
 
-export const DEFAULT_PREFS: NotificationPrefs = { soundMessages: true, soundTransfers: true, popups: true, desktop: false, volume: 0.7 };
+export const DEFAULT_PREFS: NotificationPrefs = { soundMessages: false, soundTransfers: false, popups: true, desktop: false, volume: 0.7 };
 
 const key = (userId: string) => `niro_notif_prefs_${userId}`;
 

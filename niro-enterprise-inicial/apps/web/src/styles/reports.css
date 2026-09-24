@@ -5,7 +5,6 @@
 
 .reports-page > div:first-child { margin-bottom: 0 !important; }
 .reports-page .page-header { padding: 4px 2px 2px; }
-.reports-page .page-header-icon { background: linear-gradient(135deg, #06b6d4, #2563eb); }
 .reports-page .page-title { letter-spacing: -.035em; }
 .reports-page .page-header-actions .input { min-width: 148px; }
 
@@ -77,3 +76,14 @@
   .reports-kpis { grid-template-columns: 1fr !important; }
   .reports-kpi-card { min-height: auto; }
 }
+
+/* Tablero de reportes: tarjetas y paneles con los gráficos nuevos */
+.reports-page .reports-kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 14px; margin-bottom: 20px; }
+.reports-page .reports-panel { margin-bottom: 18px; padding: 20px 22px; border: 1px solid var(--border-color); border-radius: 16px; background: var(--bg-surface); }
+.reports-page .reports-panel-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 16px; }
+.reports-page .reports-panel-head h3 { display: flex; align-items: center; gap: 8px; margin: 0; color: var(--text-main); font-size: 14.5px; font-weight: 800; }
+.reports-page .reports-panel-head p { margin: 4px 0 0; color: var(--text-dim); font-size: 11.5px; }
+.reports-page .reports-pair { display: grid; grid-template-columns: repeat(auto-fit, minmax(330px, 1fr)); gap: 18px; }
+.reports-page .reports-pair > .reports-panel { margin-bottom: 0; }
+.reports-page .reports-pair + .reports-panel, .reports-page .reports-pair + .reports-pair { margin-top: 18px; }
+@media (max-width: 640px) { .reports-page .reports-panel { padding: 16px 14px; } }

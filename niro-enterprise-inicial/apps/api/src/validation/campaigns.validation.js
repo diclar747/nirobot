@@ -7,6 +7,11 @@ const createCampaignSchema = z.object({
   message: z.string().min(1).max(4000),
   tagFilter: z.array(z.string().trim().min(1).max(30)).max(20).default([]),
   contactIds: z.array(z.string().min(1).max(80)).max(10000).default([]),
+  // Lista pegada (número + nombre opcional): el servidor vuelve a normalizar cada número y crea los contactos que falten.
+  manualRecipients: z.array(z.object({
+    phone: z.string().trim().min(6).max(40),
+    name: z.string().trim().max(120).nullable().optional()
+  })).max(10000).default([]),
   groupJids: z.array(z.string().regex(/^[\w.-]+@g\.us$/)).max(500).default([]),
   sendLine: z.string().trim().max(80).nullable().optional(),
   campaignType: z.enum(['DIRECT', 'SCHEDULED']).optional(),
@@ -15,8 +20,8 @@ const createCampaignSchema = z.object({
   ratePerMinute: z.number().int().min(1).max(120).optional(),
   scheduledAt: z.string().datetime().optional()
 }).superRefine((data, ctx) => {
-  if (data.tagFilter.length === 0 && data.contactIds.length === 0 && data.groupJids.length === 0) {
-    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['audience'], message: 'Seleccioná al menos una etiqueta, un contacto o un grupo' });
+  if (data.tagFilter.length === 0 && data.contactIds.length === 0 && data.groupJids.length === 0 && data.manualRecipients.length === 0) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['audience'], message: 'Seleccioná al menos una etiqueta, un contacto, un grupo o pegá una lista de números' });
   }
   if ((data.campaignType === 'SCHEDULED' || data.scheduledAt) && !data.scheduledAt) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['scheduledAt'], message: 'Una campaña programada necesita fecha y hora' });

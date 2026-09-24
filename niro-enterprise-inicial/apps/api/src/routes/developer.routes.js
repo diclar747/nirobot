@@ -41,7 +41,14 @@ router.post('/api-keys', requireRole('OWNER', 'ADMIN'), requireCsrf, async (req,
         name: data.name,
         keyPrefix: generated.keyPrefix,
         keyHash: generated.keyHash,
-        scopes: ['messages:send', 'sessions:read']
+        scopes: [
+          'messages:send', 'messages:read', 'sessions:read',
+          'status:send', 'status:read',
+          'conversations:read', 'conversations:write',
+          'contacts:read', 'contacts:write',
+          'sms:send', 'sms:read',
+          'webhooks:manage'
+        ]
       },
       include: KEY_INCLUDE
     });

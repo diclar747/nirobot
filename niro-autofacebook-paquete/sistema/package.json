@@ -1,0 +1,21 @@
+{
+  "name": "niro-facebook-local",
+  "version": "0.9.0",
+  "private": true,
+  "description": "Panel local de Niro para publicar, programar y responder en Facebook y Messenger, con explorador de grupos, CRM visual y PostgreSQL.",
+  "type": "module",
+  "scripts": {
+    "start": "node server.mjs",
+    "dev": "node --watch server.mjs",
+    "db:import": "node db-import.mjs",
+    "check": "node --check server.mjs && node --check db.mjs && node --check db-import.mjs && node --check ai-replies.mjs && node --check instagram.mjs && node --check groups-explorer.mjs && node --check public/app.js && node --check public/explorer-ui.js && node --check crm.mjs && node --check public/crm-ui.js && node --check public/appearance.js && node --check public/dialogs.js",
+    "test": "node --test \"tests/*.test.mjs\"",
+    "panel:iniciar": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/iniciar-panel.ps1",
+    "panel:detener": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/detener-panel.ps1"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "pg": "^8.23.0",
+    "playwright": "^1.50.0"
+  }
+}

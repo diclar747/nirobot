@@ -12,7 +12,7 @@ const { csvCell } = require('../lib/csv');
 const { createCallCampaignSchema } = require('../validation/call.validation');
 const whatsapp = require('../lib/whatsapp');
 const calls = require('../lib/callCampaigns');
-const { isAcceptableAudio, normalizeCallAudio } = require('../lib/callAudioConvert');
+const { isAcceptableAudio, normalizeCallAudio, MAX_AUDIO_SECONDS } = require('../lib/callAudioConvert');
 const tts = require('../lib/tts');
 
 const router = express.Router();
@@ -181,7 +181,13 @@ router.post('/audios/ai/generate', requireCsrf, async (req, res, next) => {
     if (!text) throw new HttpError(400, 'Escribí el texto que querés convertir en audio');
     const name = String(req.body?.name || 'Audio generado con IA').trim().slice(0, 120) || 'Audio generado con IA';
     const language = String(req.body?.language || 'es-PY').trim().slice(0, 40) || 'es-PY';
+    if (text.length > 900) throw new HttpError(400, `El texto es muy largo: a la velocidad de lectura normal supera el minuto de audio. Acortalo a unos ${MAX_AUDIO_SECONDS} segundos hablados (~900 caracteres).`);
     const result = await tts.synthesize({ text, voice: req.body?.voice, language, speed: req.body?.speed });
+    try {
+      await require('../lib/callAudioConvert').assertAudioDuration(result.buffer);
+    } catch (durationError) {
+      throw new HttpError(400, durationError.message || 'El audio generado supera el minuto permitido.');
+    }
     const storageKey = await saveFile(req.auth.organizationId, result.buffer, '.mp3');
     const audio = await prisma.callAudio.create({
       data: {
@@ -380,6 +386,17 @@ async function campaignPayload(organizationId, data) {
   const scheduledAt = data.scheduledAt ? new Date(data.scheduledAt) : null;
   if (scheduledAt && scheduledAt.getTime() <= Date.now()) throw new HttpError(400, 'La fecha de programación debe estar en el futuro');
   const surveyExpiresAt = data.surveyExpiresAt ? new Date(data.surveyExpiresAt) : null;
+  // Las opciones que derivan a un área o agente: se valida que existan y sean de esta organización.
+  if (data.surveyEnabled) {
+    const deptIds = [...new Set(data.surveyOptions.map((o) => o.departmentId).filter(Boolean))];
+    const userIds = [...new Set(data.surveyOptions.map((o) => o.userId).filter(Boolean))];
+    const [depts, agents] = await Promise.all([
+      deptIds.length ? prisma.department.findMany({ where: { id: { in: deptIds }, organizationId } }) : [],
+      userIds.length ? prisma.user.findMany({ where: { id: { in: userIds }, organizationId, active: true } }) : []
+    ]);
+    if (depts.length !== deptIds.length) throw new HttpError(400, 'Alguna de las opciones deriva a un área que ya no existe');
+    if (agents.length !== userIds.length) throw new HttpError(400, 'Alguna de las opciones deriva a un agente que ya no está disponible');
+  }
   const fields = {
     name: data.name, description: data.description || null, campaignType: data.campaignType,
     accountId: account.id, audioId: audio.id, status: scheduledAt ? 'SCHEDULED' : 'DRAFT', scheduledAt,
@@ -390,7 +407,7 @@ async function campaignPayload(organizationId, data) {
   };
   const recipients = { create: accepted.map(({ contact, phone }) => ({ contactId: contact.id, phoneNumber: phone })) };
   const survey = data.surveyEnabled
-    ? { create: { question: data.surveyQuestion, responseMethod: data.surveyResponseMethod, expiresAt: surveyExpiresAt, options: { create: data.surveyOptions.map((option) => ({ optionKey: option.key, optionLabel: option.label, replyMessage: option.replyMessage || null, action: option.action || 'NONE', crmStage: option.crmStage || null })) } } }
+    ? { create: { question: data.surveyQuestion, responseMethod: data.surveyResponseMethod, expiresAt: surveyExpiresAt, options: { create: data.surveyOptions.map((option) => ({ optionKey: option.key, optionLabel: option.label, replyMessage: option.replyMessage || null, action: option.action || 'NONE', crmStage: option.crmStage || null, departmentId: option.departmentId || null, userId: option.userId || null })) } } }
     : null;
   return { fields, recipients, survey, scheduledAt, accepted, rejected };
 }
@@ -441,7 +458,7 @@ router.get('/campaigns/:id/config', async (req, res, next) => {
       campaign: calls.sanitizeCampaign(campaign, await calls.getCounts(campaign.id)),
       survey: campaign.survey ? {
         question: campaign.survey.question,
-        options: campaign.survey.options.map((o) => ({ key: o.optionKey, label: o.optionLabel, action: o.action === 'AUTO' ? 'NONE' : o.action, replyMessage: o.replyMessage || '', crmStage: o.crmStage || '' }))
+        options: campaign.survey.options.map((o) => ({ key: o.optionKey, label: o.optionLabel, action: o.action === 'AUTO' ? 'NONE' : o.action, replyMessage: o.replyMessage || '', crmStage: o.crmStage || '', departmentId: o.departmentId || '', userId: o.userId || '' }))
           .sort((a, b) => a.key.localeCompare(b.key, 'es', { numeric: true }))
       } : null,
       recipients

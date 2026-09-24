@@ -13,10 +13,15 @@ function timeAgo(at: number) {
   return new Date(at).toLocaleDateString('es-PY', { day: '2-digit', month: 'short' });
 }
 
+// Logo de Facebook (mismo trazo que el menú lateral) para los avisos que vienen del panel.
+function FacebookGlyph({ size }: { size: number }) {
+  return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="4" /><path d="M15 8h-1.5A2.5 2.5 0 0 0 11 10.5V12H9v3h2v6h3v-6h2.2l.3-3H14v-1.2c0-.44.36-.8.8-.8H15V8Z" fill="currentColor" stroke="none" /></svg>;
+}
+
 function Item({ n, onOpen }: { n: AppNotification; onOpen: (n: AppNotification) => void }) {
   return (
     <button type="button" className={`nc-item ${n.read ? '' : 'unread'} ${n.type}`} onClick={() => onOpen(n)}>
-      <span className="nc-icon"><Ui name={n.type === 'transfer' ? 'transfer' : 'chat'} size={18} /></span>
+      <span className="nc-icon">{n.type === 'facebook' ? <FacebookGlyph size={18} /> : <Ui name={n.type === 'transfer' ? 'transfer' : 'chat'} size={18} />}</span>
       <span className="nc-body"><b>{n.title}</b><small>{n.body}</small></span>
       <span className="nc-time">{timeAgo(n.at)}</span>
     </button>
@@ -57,7 +62,7 @@ export function NotificationCenter({ onOpenSettings }: { onOpenSettings: () => v
           </div>
           <div className="nc-list">
             {items.length === 0 ? (
-              <div className="nc-empty"><Ui name="bell" size={30} /><p>Todo al día</p><small>Acá vas a ver los mensajes nuevos y los chats que te transfieran.</small></div>
+              <div className="nc-empty"><Ui name="bell" size={30} /><p>Todo al día</p><small>Acá vas a ver los mensajes nuevos, los chats que te transfieran y los avisos de Facebook / Instagram.</small></div>
             ) : items.map((n) => <Item key={n.id} n={n} onOpen={(x) => { setShow(false); open(x); }} />)}
           </div>
           <div className="nc-foot"><button type="button" onClick={() => { setShow(false); onOpenSettings(); }}><Ui name="settings" size={14} /> Sonidos y avisos</button></div>
@@ -75,9 +80,9 @@ export function NotificationToasts() {
     <div className="nt-stack" aria-live="polite">
       {toasts.map(({ id, notification: n }) => (
         <div key={id} className={`nt-toast ${n.type}`} role="alert">
-          <span className="nt-icon"><Ui name={n.type === 'transfer' ? 'transfer' : 'chat'} size={20} /></span>
+          <span className="nt-icon">{n.type === 'facebook' ? <FacebookGlyph size={20} /> : <Ui name={n.type === 'transfer' ? 'transfer' : 'chat'} size={20} />}</span>
           <div className="nt-body"><b>{n.title}</b><small>{n.body}</small>
-            <div className="nt-actions"><button type="button" className="nt-primary" onClick={() => open(n)}>{n.type === 'transfer' ? 'Ver chat' : 'Abrir'}</button><button type="button" onClick={() => dismissToast(id)}>Cerrar</button></div>
+            <div className="nt-actions"><button type="button" className="nt-primary" onClick={() => open(n)}>{n.type === 'transfer' ? 'Ver chat' : n.type === 'facebook' ? 'Ver en Facebook' : 'Abrir'}</button><button type="button" onClick={() => dismissToast(id)}>Cerrar</button></div>
           </div>
           <button type="button" className="nt-x" onClick={() => dismissToast(id)} aria-label="Cerrar aviso"><Ui name="x" size={16} /></button>
         </div>

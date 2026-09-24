@@ -42,6 +42,16 @@ async function waitFor(id, status) {
 }
 
 describe('publicar estados desde Nirobot', () => {
+  test('no hay tope de audiencia: una lista grande (5000+) se publica igual', async () => {
+    const { org, session } = await setup();
+    const many = Array.from({ length: 5001 }, (_, i) => ({ organizationId: org.id, name: `C${i}`, phone: `59598${String(1000000 + i).slice(-7)}` }));
+    await prisma.contact.createMany({ data: many });
+    const res = await post(session, { contentType: 'text', textContent: 'Promo grande', audienceType: 'ALL' });
+    expect(res.status).toBe(201);
+    expect(res.body.post.audienceCount).toBeGreaterThan(5000);
+    await waitFor(res.body.post.id, 'published');
+  });
+
   test('texto inmediato: audiencia normalizada, color y vencimiento a 24 h', async () => {
     const { session } = await setup();
     const res = await post(session, { contentType: 'text', textContent: 'Hola clientes', backgroundColor: '#112233', audienceType: 'ALL' });

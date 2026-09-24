@@ -1,3 +1,4 @@
+const { HttpError } = require('./errors');
 const crypto = require('crypto');
 const { prisma } = require('./prisma');
 
@@ -52,6 +53,14 @@ async function authenticateApiKey(req, _res, next) {
 
     if (!key || key.revokedAt || !key.organization.active) {
       res401(next, 'API key inválida, revocada o con una organización inactiva');
+      return;
+    }
+
+    // Igual que el panel: vencida la prueba de 24 h sin plan pago, la API pública tampoco trabaja.
+    if (await require('./billing').isBlocked(key.organizationId)) {
+      const err = new HttpError(402, 'Tu período de prueba terminó o el plan venció. Activá el plan en «Mi plan» para seguir usando la API.');
+      err.code = 'SUBSCRIPTION_REQUIRED';
+      next(err);
       return;
     }
 

@@ -6,6 +6,7 @@ const CRM_STAGE_TAGS = {
   cerradas: 'Cerradas'
 };
 
+// Flujo inicial vacío (sin textos de ejemplo): el usuario arma el suyo.
 function defaultBotFlow() {
   return {
     version: 1,
@@ -13,21 +14,9 @@ function defaultBotFlow() {
     enabled: false,
     published: false,
     nodes: [
-      { id: 'start', type: 'start', title: 'Inicio', description: 'Entrada de cada conversación', position: { x: 70, y: 80 }, data: {} },
-      { id: 'welcome', type: 'message', title: 'Mensaje de bienvenida', description: 'Saluda solo al iniciar una conversación', position: { x: 330, y: 80 }, data: { text: '¡Hola! Soy Niro 🤖 ¿En qué podemos ayudarte?', onlyOnNew: true } },
-      { id: 'keywords', type: 'keyword', title: 'Palabras clave', description: 'Detecta intención y deriva', position: { x: 610, y: 80 }, data: { keywords: ['ventas', 'precio', 'cotización'], response: 'Perfecto, te ayudamos con tu consulta comercial.', matchLabel: 'Coincide' } },
-      { id: 'crm', type: 'crm', title: 'Marcar interesado', description: 'Actualiza el tablero CRM', position: { x: 890, y: 40 }, data: { stage: 'interesados', tags: ['Bot'] } },
-      { id: 'ai', type: 'ai', title: 'Asistente IA', description: 'Responde cuando no hay una palabra clave', position: { x: 890, y: 220 }, data: { prompt: 'Respondé con claridad y ofrecé un agente cuando sea necesario.' } },
-      { id: 'end', type: 'end', title: 'Fin', description: 'Finaliza este recorrido', position: { x: 1130, y: 130 }, data: {} }
+      { id: 'start', type: 'start', title: 'Inicio', description: 'Entrada de cada conversación', position: { x: 30, y: 30 }, data: {} }
     ],
-    edges: [
-      { id: 'edge-start-welcome', from: 'start', to: 'welcome', label: '' },
-      { id: 'edge-welcome-keywords', from: 'welcome', to: 'keywords', label: '' },
-      { id: 'edge-keywords-crm', from: 'keywords', to: 'crm', label: 'Coincide' },
-      { id: 'edge-keywords-ai', from: 'keywords', to: 'ai', label: 'No coincide' },
-      { id: 'edge-crm-end', from: 'crm', to: 'end', label: '' },
-      { id: 'edge-ai-end', from: 'ai', to: 'end', label: '' }
-    ]
+    edges: []
   };
 }
 
@@ -98,10 +87,18 @@ function menuText(data, contact, intro) {
   return [renderText(intro, contact).trim(), ...lines].filter(Boolean).join('\n');
 }
 
+// Saludos típicos: quien saluda está empezando la conversación, no contestando mal el menú.
+const GREETING = /^(hola+|ola+|buenas?|buen dia|buenos dias|buenas tardes|buenas noches|hi|hey|hello|holis|saludos|que tal|como estas|buen día)[\s!¡.,]*$/;
+function isGreeting(text) {
+  return GREETING.test(fold(text));
+}
+
 // Etiqueta que deja el bloque "Agente humano": desde ahí el bot deja de contestar y el chat es de las personas.
 const HANDOFF_TAG = 'Derivado';
 
-function runBotFlow(flowInput, { content = '', contact = null, conversation = null, isNewConversation = false } = {}) {
+// lastBotReply: lo último que el bot le escribió a esta persona (si fue hace poco). Sirve para saber si el cliente
+// está respondiendo al menú o si recién empieza: solo se le dice "No entendí" a quien acaba de ver las opciones.
+function runBotFlow(flowInput, { content = '', contact = null, conversation = null, isNewConversation = false, lastBotReply = '' } = {}) {
   const flow = normalizeFlow(flowInput);
   if (!flow.enabled || !flow.published) return null;
   // Un agente humano siempre tiene prioridad: si ya tomó el chat o el bot ya lo derivó, el flujo no vuelve a hablar.
@@ -142,7 +139,10 @@ function runBotFlow(flowInput, { content = '', contact = null, conversation = nu
       if (chosen) {
         if (chosen.departmentId) result.conversation.departmentId = String(chosen.departmentId);
         if (chosen.userId) result.conversation.assignedToId = String(chosen.userId);
-        const reply = renderText(chosen.message, contact).trim();
+        // Sin mensaje propio, el bot avisa igual que lo deriva: una opción solo necesita número, nombre y destino.
+        const label = String(chosen.label || '').trim();
+        const fallbackReply = label ? `Te paso con ${label}. En un momento te atienden.` : 'Te paso con una persona del equipo. En un momento te atienden.';
+        const reply = renderText(chosen.message, contact).trim() || fallbackReply;
         if (reply) result.replies.push(reply);
         result.conversation.handoff = true;
         result.handled = true;
@@ -151,8 +151,13 @@ function runBotFlow(flowInput, { content = '', contact = null, conversation = nu
       }
       const fallback = flow.edges.find((edge) => edge.from === node.id && String(edge.label || '').toLowerCase() === String(data.fallbackLabel || 'No coincide').toLowerCase());
       if (!isNewConversation && fallback) { currentId = fallback.to; continue; } // sigue por "No coincide" (p. ej. a la IA)
-      // Primer mensaje: se muestra el menú. Después, si no eligió nada válido, se le vuelve a mostrar.
-      const intro = isNewConversation ? (data.text || '¿Con qué área querés hablar?') : (data.invalidText || 'No entendí tu respuesta. Elegí una opción:');
+      // ¿El menú fue lo último que le mandó el bot? Solo en ese caso el cliente está "contestando mal" el menú.
+      const optionLines = menuOptions(data).map((option) => `${String(option.key || '').trim() ? `${String(option.key).trim()}. ` : ''}${String(option.label || '').trim()}`.trim()).filter(Boolean);
+      // "No entendí" solo si el cliente intentó contestar el menú recién mostrado. A un saludo se le responde saludando.
+      const justOfferedMenu = Boolean(lastBotReply) && optionLines.length > 0 && optionLines.every((line) => String(lastBotReply).includes(line));
+      const intro = !isNewConversation && justOfferedMenu && !isGreeting(content)
+        ? (data.invalidText || 'No entendí tu respuesta. Elegí una opción:')
+        : (data.text || '¿Con qué área querés hablar?');
       const prompt = menuText(data, contact, intro);
       if (prompt) { result.replies.push(prompt); result.handled = true; }
       break;

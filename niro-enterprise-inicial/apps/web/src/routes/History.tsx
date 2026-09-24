@@ -294,7 +294,7 @@ export function History() {
 
   return (
     <PageShell>
-      <PageHeader
+      <PageHeader tone="indigo" hero={{ eyebrow: 'Registro completo', title: 'Cada mensaje, con su historia.', text: 'Revisá todo lo enviado y recibido —chats, campañas y estados— con filtros y exportación.', features: [{ icon: 'chat', label: 'Mensajes y respuestas' }, { icon: 'megaphone', label: 'Campañas y estados' }, { icon: 'download', label: 'Exportación CSV' }], art: ['chat', 'clock', 'mail'] }}
         icon={<Ui name="clock" size={22} />}
         title="Historial"
         subtitle={data?.account.phone ? `Registro completo de mensajes de la cuenta ${formatPhone(data.account.phone)}` : 'Registro completo de mensajes, campañas y estados de WhatsApp.'}

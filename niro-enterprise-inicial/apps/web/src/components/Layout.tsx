@@ -2,7 +2,7 @@ import { PresenceMenu } from './PresenceMenu';
 import { useEffect, useRef, useState } from 'react';
 import { NavLink, Outlet, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { useTheme, type AppTheme } from '../context/ThemeContext';
+import { APP_THEMES, useTheme, type AppTheme } from '../context/ThemeContext';
 import { Logo } from './Logo';
 import { NiroMascot } from './NiroMascot';
 import { WhatsAppConnectModal } from './WhatsAppConnectModal';
@@ -11,6 +11,7 @@ import { BillingGate } from './BillingGate';
 import { NotificationsProvider } from '../context/NotificationsContext';
 import { NotificationCenter, NotificationSettingsModal, NotificationToasts } from './NotificationCenter';
 import { can, isAdminRole } from '../lib/permissions';
+import { FACEBOOK_BASE_ROUTE, FACEBOOK_SECTIONS } from '../lib/facebookPanel';
 import { apiGet } from '../lib/api';
 import { getSocket } from '../lib/socket';
 import '../styles/app-theme.css';
@@ -49,14 +50,53 @@ function userIdentity(u: { name: string; email: string }) {
   return { name, contact: generated ? formatPhone(generated[1]) : u.email };
 }
 
+// Grupo colapsable del menú (ej. "WhatsApp", "Facebook / Instagram"): se abre solo la primera vez
+// que hay una ruta activa adentro; después de eso el usuario decide y se recuerda en el navegador.
+function SidebarGroup({ id, label, icon, active, children }: { id: string; label: string; icon: React.ReactNode; active: boolean; children: React.ReactNode }) {
+  const [open, setOpen] = useState(() => {
+    try {
+      const saved = localStorage.getItem(`niro-sidebar-group-${id}`);
+      if (saved != null) return saved === '1';
+    } catch { /* sin almacenamiento */ }
+    return active;
+  });
+  useEffect(() => { if (active) setOpen(true); }, [active]);
+  const toggle = () => {
+    setOpen((prev) => {
+      const next = !prev;
+      try { localStorage.setItem(`niro-sidebar-group-${id}`, next ? '1' : '0'); } catch { /* sin almacenamiento */ }
+      return next;
+    });
+  };
+  return (
+    <div className="sidebar-group">
+      <button type="button" className="sidebar-nav-item sidebar-group-header" onClick={toggle} aria-expanded={open}>
+        <div className="sidebar-nav-item-content">{icon}<span>{label}</span></div>
+        <svg className="sidebar-group-chevron" style={{ transform: open ? 'rotate(90deg)' : 'none' }} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+          <polyline points="9 18 15 12 9 6" />
+        </svg>
+      </button>
+      {open && <div className="sidebar-group-items">{children}</div>}
+    </div>
+  );
+}
+
 export function Layout() {
-  const { user, logout } = useAuth();
+  const { user, logout, stopImpersonation } = useAuth();
   const identity = user ? userIdentity(user) : { name: '', contact: '' };
   const { theme, setTheme } = useTheme();
   const navigate = useNavigate();
   const location = useLocation();
   const [mobileMenu, setMobileMenu] = useState(false);
   useEffect(() => { setMobileMenu(false); }, [location.pathname]);
+  const whatsappGroupActive = ['/inbox', '/contactos', '/grupos', '/departments', '/ai-agents', '/bot', '/orders', '/board', '/gestion', '/reports', '/historial', '/sms', '/campaigns', '/estados', '/llamadas'].some((p) => location.pathname.startsWith(p));
+  const facebookGroupActive = location.pathname.startsWith(FACEBOOK_BASE_ROUTE);
+  // El módulo es de una sola cuenta de Facebook: la API dice si esta organización/usuario lo tiene.
+  const [facebookEnabled, setFacebookEnabled] = useState(false);
+  useEffect(() => {
+    if (!user || user.role === 'SUPERADMIN') return;
+    apiGet<{ enabled: boolean }>('/api/org/facebook/status').then((res) => setFacebookEnabled(res.enabled)).catch(() => setFacebookEnabled(false));
+  }, [user?.id]);
   useEffect(() => {
     if (!mobileMenu) return;
     const close = (event: KeyboardEvent) => { if (event.key === 'Escape') setMobileMenu(false); };
@@ -83,17 +123,17 @@ export function Layout() {
     });
   }
 
-  function cycleTheme() {
-    if (theme === 'blue') setTheme('light' as AppTheme);
-    else if (theme === 'light') setTheme('dark' as AppTheme);
-    else setTheme('blue' as AppTheme);
-  }
+  const [showThemes, setShowThemes] = useState(false);
+  const currentTheme = APP_THEMES.find((option) => option.id === theme) || APP_THEMES[0];
 
   useEffect(() => {
     if (!user || user.role === 'SUPERADMIN') return;
     whatsappLogoutRef.current = false;
 
     const forcePortalLogout = () => {
+      // En una sesión de soporte no se expulsa: el superadmin entra justamente para ver qué le pasa al cliente
+      // (por ejemplo, que su WhatsApp está desconectado).
+      if (user.impersonatedBy) return;
       if (whatsappLogoutRef.current) return;
       whatsappLogoutRef.current = true;
       void logout().finally(() => navigate('/login', {
@@ -178,9 +218,21 @@ export function Layout() {
 
   if (!user) return null;
 
+  // Dentro de una sesión de soporte, "Cerrar sesión" devuelve al superadmin a su panel en vez de sacarlo del sistema.
   async function handleLogout() {
-    await logout();
-    navigate('/login', { replace: true });
+    const restored = await logout();
+    navigate(restored ? '/clientes' : '/login', { replace: true });
+  }
+
+  const [leavingSupport, setLeavingSupport] = useState(false);
+  async function backToPanel() {
+    setLeavingSupport(true);
+    try {
+      await stopImpersonation();
+      navigate('/clientes', { replace: true });
+    } finally {
+      setLeavingSupport(false);
+    }
   }
 
   async function toggleFullscreen() {
@@ -207,6 +259,16 @@ export function Layout() {
   return (
     <NotificationsProvider>
     <div ref={appShellRef} className={`modern-app-shell ${sidebarCollapsed ? 'sidebar-collapsed' : ''} ${mobileMenu ? 'mobile-menu-open' : ''}`} >
+      {user.impersonatedBy && (
+        <div className="support-session-bar" role="status">
+          <span className="support-session-dot" />
+          <span className="support-session-text">
+            Sesión de soporte: estás viendo el sistema como <b>{user.name}</b>{user.organization ? <> de <b>{user.organization.name}</b></> : null}. Lo que hagas queda registrado a nombre de esta cuenta.
+          </span>
+          <button type="button" className="btn small" onClick={backToPanel} disabled={leavingSupport}>{leavingSupport ? 'Volviendo…' : '← Volver al panel'}</button>
+        </div>
+      )}
+
       {/* SIDEBAR */}
       {mobileMenu && <button type="button" className="mobile-menu-backdrop" aria-label="Cerrar menú" onClick={() => setMobileMenu(false)} />}
       <aside id="app-navigation" className={`modern-sidebar ${sidebarCollapsed ? 'collapsed' : ''}`}>
@@ -297,49 +359,225 @@ export function Layout() {
             )}
 
             {!isSuperadmin && (
-              <NavLink to="/inbox" className={({ isActive }) => `sidebar-nav-item ${isActive ? 'active' : ''}`}>
-                <div className="sidebar-nav-item-content">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                    <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-                  </svg>
-                  <span>Conversaciones</span>
-                </div>
-                {unreadConversationsCount > 0 && (
-                  <span className="sidebar-badge-count">{unreadConversationsCount}</span>
+              <SidebarGroup
+                id="whatsapp"
+                label="WhatsApp"
+                active={whatsappGroupActive}
+                icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" /></svg>}
+              >
+                <NavLink to="/inbox" className={({ isActive }) => `sidebar-nav-item ${isActive ? 'active' : ''}`}>
+                  <div className="sidebar-nav-item-content">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+                    </svg>
+                    <span>Conversaciones</span>
+                  </div>
+                  {unreadConversationsCount > 0 && (
+                    <span className="sidebar-badge-count">{unreadConversationsCount}</span>
+                  )}
+                </NavLink>
+
+                {can(user, 'contacts') && (
+                  <NavLink to="/contactos" className={({ isActive }) => `sidebar-nav-item ${isActive ? 'active' : ''}`}>
+                    <div className="sidebar-nav-item-content">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+                        <circle cx="9" cy="7" r="4" />
+                        <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
+                        <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+                      </svg>
+                      <span>Contactos</span>
+                    </div>
+                  </NavLink>
                 )}
-              </NavLink>
+
+                {can(user, 'groups') && (
+                  <NavLink to="/grupos" className={({ isActive }) => `sidebar-nav-item ${isActive ? 'active' : ''}`}>
+                    <div className="sidebar-nav-item-content">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <circle cx="12" cy="8" r="3" />
+                        <circle cx="5" cy="10" r="2" />
+                        <circle cx="19" cy="10" r="2" />
+                        <path d="M7 20v-1.5a4 4 0 0 1 4-4h2a4 4 0 0 1 4 4V20" />
+                        <path d="M2 19v-1a3 3 0 0 1 3-3M22 19v-1a3 3 0 0 0-3-3" />
+                      </svg>
+                      <span>Grupos</span>
+                    </div>
+                  </NavLink>
+                )}
+
+                <NavLink to="/departments" className={({ isActive }) => `sidebar-nav-item ${isActive ? 'active' : ''}`}>
+                  <div className="sidebar-nav-item-content">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <rect x="3" y="3" width="7" height="7" rx="1.5" />
+                      <rect x="14" y="3" width="7" height="7" rx="1.5" />
+                      <rect x="3" y="14" width="7" height="7" rx="1.5" />
+                      <rect x="14" y="14" width="7" height="7" rx="1.5" />
+                    </svg>
+                    <span>Áreas</span>
+                  </div>
+                </NavLink>
+
+                {can(user, 'aiAgents') && (
+                  <NavLink to="/ai-agents" className={({ isActive }) => `sidebar-nav-item ${isActive ? 'active' : ''}`}>
+                    <div className="sidebar-nav-item-content">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <rect x="3" y="9" width="18" height="11" rx="2" />
+                        <circle cx="8.5" cy="14.5" r="1.2" fill="currentColor" stroke="none" />
+                        <circle cx="15.5" cy="14.5" r="1.2" fill="currentColor" stroke="none" />
+                        <path d="M12 9V5" />
+                        <circle cx="12" cy="3.5" r="1.5" />
+                      </svg>
+                      <span>Agentes IA</span>
+                    </div>
+                  </NavLink>
+                )}
+
+                {can(user, 'bot') && (
+                  <NavLink to="/bot" className={({ isActive }) => `sidebar-nav-item ${isActive ? 'active' : ''}`}>
+                    <div className="sidebar-nav-item-content">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <circle cx="5" cy="12" r="2" />
+                        <circle cx="19" cy="6" r="2" />
+                        <circle cx="19" cy="18" r="2" />
+                        <path d="M7 12h5a4 4 0 0 0 4-4V8M12 12a4 4 0 0 1 4 4v0" />
+                      </svg>
+                      <span>Flujos de Bot</span>
+                    </div>
+                  </NavLink>
+                )}
+
+                {can(user, 'orders') && (
+                  <NavLink to="/orders" className={({ isActive }) => `sidebar-nav-item ${isActive ? 'active' : ''}`}>
+                    <div className="sidebar-nav-item-content">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <circle cx="9" cy="21" r="1" />
+                        <circle cx="20" cy="21" r="1" />
+                        <path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6" />
+                      </svg>
+                      <span>Pedidos</span>
+                    </div>
+                  </NavLink>
+                )}
+
+                {can(user, 'crm') && (
+                  <NavLink to="/board" className={({ isActive }) => `sidebar-nav-item ${isActive ? 'active' : ''}`}>
+                    <div className="sidebar-nav-item-content">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <rect x="3" y="3" width="7" height="18" rx="1" />
+                        <rect x="14" y="3" width="7" height="10" rx="1" />
+                        <rect x="14" y="17" width="7" height="4" rx="1" />
+                      </svg>
+                      <span>CRM</span>
+                    </div>
+                  </NavLink>
+                )}
+
+                {can(user, 'management') && (
+                  <NavLink to="/gestion" className={({ isActive }) => `sidebar-nav-item ${isActive ? 'active' : ''}`}>
+                    <div className="sidebar-nav-item-content">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M3 3v18h18" />
+                        <path d="m7 15 4-4 3 3 5-6" />
+                      </svg>
+                      <span>Gestión</span>
+                    </div>
+                  </NavLink>
+                )}
+
+                {can(user, 'reports') && (
+                  <NavLink to="/reports" className={({ isActive }) => `sidebar-nav-item ${isActive ? 'active' : ''}`}>
+                    <div className="sidebar-nav-item-content">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <line x1="18" y1="20" x2="18" y2="10" />
+                        <line x1="12" y1="20" x2="12" y2="4" />
+                        <line x1="6" y1="20" x2="6" y2="14" />
+                      </svg>
+                      <span>Reportes</span>
+                    </div>
+                  </NavLink>
+                )}
+
+                {can(user, 'history') && (
+                  <NavLink to="/historial" className={({ isActive }) => `sidebar-nav-item ${isActive ? 'active' : ''}`}>
+                    <div className="sidebar-nav-item-content">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <circle cx="12" cy="12" r="9" />
+                        <polyline points="12 7 12 12 15.5 14" />
+                      </svg>
+                      <span>Historial</span>
+                    </div>
+                  </NavLink>
+                )}
+
+                {can(user, 'sms') && ['OWNER', 'ADMIN', 'SUPERVISOR'].includes(user.role) && (
+                  <NavLink to="/sms" className={({ isActive }) => `sidebar-nav-item ${isActive ? 'active' : ''}`}>
+                    <div className="sidebar-nav-item-content">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <rect x="6" y="2" width="12" height="20" rx="2.5" />
+                        <line x1="11" y1="18" x2="13" y2="18" />
+                        <path d="M9.5 7.5h5M9.5 11h5" />
+                      </svg>
+                      <span>SMS</span>
+                    </div>
+                  </NavLink>
+                )}
+
+                {can(user, 'campaigns') && (
+                  <NavLink to="/campaigns" className={({ isActive }) => `sidebar-nav-item ${isActive ? 'active' : ''}`}>
+                    <div className="sidebar-nav-item-content">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M22 2 11 13" />
+                        <path d="M22 2 15 22 11 13 2 9 22 2Z" />
+                      </svg>
+                      <span>Campañas</span>
+                    </div>
+                  </NavLink>
+                )}
+
+                {can(user, 'statuses') && (
+                  <NavLink to="/estados" className={({ isActive }) => `sidebar-nav-item ${isActive ? 'active' : ''}`}>
+                    <div className="sidebar-nav-item-content">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <circle cx="12" cy="12" r="9" strokeDasharray="4 3" />
+                        <circle cx="12" cy="12" r="4" />
+                      </svg>
+                      <span>Estados WhatsApp</span>
+                    </div>
+                  </NavLink>
+                )}
+
+                {can(user, 'calls') && (
+                  <NavLink to="/llamadas" className={({ isActive }) => `sidebar-nav-item ${isActive ? 'active' : ''}`}>
+                    <div className="sidebar-nav-item-content">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6A19.79 19.79 0 0 1 2.12 4.18 2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.12.9.33 1.78.62 2.63a2 2 0 0 1-.45 2.11L8 9.73a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.85.29 1.73.5 2.63.62A2 2 0 0 1 22 16.92z" />
+                      </svg>
+                      <span>Llamadas WhatsApp</span>
+                    </div>
+                  </NavLink>
+                )}
+              </SidebarGroup>
             )}
 
-            {!isSuperadmin && can(user, 'contacts') &&(
-              <NavLink to="/contactos" className={({ isActive }) => `sidebar-nav-item ${isActive ? 'active' : ''}`}>
-                <div className="sidebar-nav-item-content">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                    <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
-                    <circle cx="9" cy="7" r="4" />
-                    <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
-                    <path d="M16 3.13a4 4 0 0 1 0 7.75" />
-                  </svg>
-                  <span>Contactos</span>
-                </div>
-              </NavLink>
+            {!isSuperadmin && facebookEnabled && (
+              <SidebarGroup
+                id="facebook"
+                label="Facebook / Instagram"
+                active={facebookGroupActive}
+                icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="18" height="18" rx="4" /><path d="M15 8h-1.5A2.5 2.5 0 0 0 11 10.5V12H9v3h2v6h3v-6h2.2l.3-3H14v-1.2c0-.44.36-.8.8-.8H15V8Z" fill="currentColor" stroke="none" /></svg>}
+              >
+                {FACEBOOK_SECTIONS.map((section) => (
+                  <NavLink key={section.route} to={`${FACEBOOK_BASE_ROUTE}/${section.route}`} className={({ isActive }) => `sidebar-nav-item ${isActive ? 'active' : ''}`}>
+                    <div className="sidebar-nav-item-content">
+                      <span>{section.label}</span>
+                    </div>
+                  </NavLink>
+                ))}
+              </SidebarGroup>
             )}
 
-            {!isSuperadmin && can(user, 'groups') && (
-              <NavLink to="/grupos" className={({ isActive }) => `sidebar-nav-item ${isActive ? 'active' : ''}`}>
-                <div className="sidebar-nav-item-content">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                    <circle cx="12" cy="8" r="3" />
-                    <circle cx="5" cy="10" r="2" />
-                    <circle cx="19" cy="10" r="2" />
-                    <path d="M7 20v-1.5a4 4 0 0 1 4-4h2a4 4 0 0 1 4 4V20" />
-                    <path d="M2 19v-1a3 3 0 0 1 3-3M22 19v-1a3 3 0 0 0-3-3" />
-                  </svg>
-                  <span>Grupos</span>
-                </div>
-              </NavLink>
-            )}
-
-            {!isSuperadmin && isAdmin &&(
+            {!isSuperadmin && isAdmin && (
               <NavLink to="/billing" className={({ isActive }) => `sidebar-nav-item ${isActive ? 'active' : ''}`}>
                 <div className="sidebar-nav-item-content">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -360,160 +598,6 @@ export function Layout() {
                     <line x1="12" y1="8" x2="12" y2="11" />
                   </svg>
                   <span>Usuarios</span>
-                </div>
-              </NavLink>
-            )}
-
-            {!isSuperadmin && (
-              <NavLink to="/departments" className={({ isActive }) => `sidebar-nav-item ${isActive ? 'active' : ''}`}>
-                <div className="sidebar-nav-item-content">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                    <rect x="3" y="3" width="7" height="7" rx="1.5" />
-                    <rect x="14" y="3" width="7" height="7" rx="1.5" />
-                    <rect x="3" y="14" width="7" height="7" rx="1.5" />
-                    <rect x="14" y="14" width="7" height="7" rx="1.5" />
-                  </svg>
-                  <span>Áreas</span>
-                </div>
-              </NavLink>
-            )}
-
-            {!isSuperadmin && can(user, 'aiAgents') &&(
-              <NavLink to="/ai-agents" className={({ isActive }) => `sidebar-nav-item ${isActive ? 'active' : ''}`}>
-                <div className="sidebar-nav-item-content">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                    <rect x="3" y="9" width="18" height="11" rx="2" />
-                    <circle cx="8.5" cy="14.5" r="1.2" fill="currentColor" stroke="none" />
-                    <circle cx="15.5" cy="14.5" r="1.2" fill="currentColor" stroke="none" />
-                    <path d="M12 9V5" />
-                    <circle cx="12" cy="3.5" r="1.5" />
-                  </svg>
-                  <span>Agentes IA</span>
-                </div>
-              </NavLink>
-            )}
-
-            {!isSuperadmin && can(user, 'bot') &&(
-              <NavLink to="/bot" className={({ isActive }) => `sidebar-nav-item ${isActive ? 'active' : ''}`}>
-                <div className="sidebar-nav-item-content">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                    <circle cx="5" cy="12" r="2" />
-                    <circle cx="19" cy="6" r="2" />
-                    <circle cx="19" cy="18" r="2" />
-                    <path d="M7 12h5a4 4 0 0 0 4-4V8M12 12a4 4 0 0 1 4 4v0" />
-                  </svg>
-                  <span>Flujos de Bot</span>
-                </div>
-              </NavLink>
-            )}
-
-            {!isSuperadmin && can(user, 'orders') &&(
-              <NavLink to="/orders" className={({ isActive }) => `sidebar-nav-item ${isActive ? 'active' : ''}`}>
-                <div className="sidebar-nav-item-content">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                    <circle cx="9" cy="21" r="1" />
-                    <circle cx="20" cy="21" r="1" />
-                    <path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6" />
-                  </svg>
-                  <span>Pedidos</span>
-                </div>
-              </NavLink>
-            )}
-
-            {!isSuperadmin && can(user, 'crm') &&(
-              <NavLink to="/board" className={({ isActive }) => `sidebar-nav-item ${isActive ? 'active' : ''}`}>
-                <div className="sidebar-nav-item-content">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                    <rect x="3" y="3" width="7" height="18" rx="1" />
-                    <rect x="14" y="3" width="7" height="10" rx="1" />
-                    <rect x="14" y="17" width="7" height="4" rx="1" />
-                  </svg>
-                  <span>CRM</span>
-                </div>
-              </NavLink>
-            )}
-
-            {!isSuperadmin && can(user, 'management') &&(
-              <NavLink to="/gestion" className={({ isActive }) => `sidebar-nav-item ${isActive ? 'active' : ''}`}>
-                <div className="sidebar-nav-item-content">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                    <path d="M3 3v18h18" />
-                    <path d="m7 15 4-4 3 3 5-6" />
-                  </svg>
-                  <span>Gestión</span>
-                </div>
-              </NavLink>
-            )}
-
-            {!isSuperadmin && can(user, 'reports') &&(
-              <NavLink to="/reports" className={({ isActive }) => `sidebar-nav-item ${isActive ? 'active' : ''}`}>
-                <div className="sidebar-nav-item-content">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                    <line x1="18" y1="20" x2="18" y2="10" />
-                    <line x1="12" y1="20" x2="12" y2="4" />
-                    <line x1="6" y1="20" x2="6" y2="14" />
-                  </svg>
-                  <span>Reportes</span>
-                </div>
-              </NavLink>
-            )}
-
-            {!isSuperadmin && can(user, 'history') &&(
-              <NavLink to="/historial" className={({ isActive }) => `sidebar-nav-item ${isActive ? 'active' : ''}`}>
-                <div className="sidebar-nav-item-content">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                    <circle cx="12" cy="12" r="9" />
-                    <polyline points="12 7 12 12 15.5 14" />
-                  </svg>
-                  <span>Historial</span>
-                </div>
-              </NavLink>
-            )}
-
-            {!isSuperadmin && can(user, 'sms') && ['OWNER', 'ADMIN', 'SUPERVISOR'].includes(user.role) && (
-              <NavLink to="/sms" className={({ isActive }) => `sidebar-nav-item ${isActive ? 'active' : ''}`}>
-                <div className="sidebar-nav-item-content">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                    <rect x="6" y="2" width="12" height="20" rx="2.5" />
-                    <line x1="11" y1="18" x2="13" y2="18" />
-                    <path d="M9.5 7.5h5M9.5 11h5" />
-                  </svg>
-                  <span>SMS</span>
-                </div>
-              </NavLink>
-            )}
-
-            {!isSuperadmin && can(user, 'campaigns') &&(
-              <NavLink to="/campaigns" className={({ isActive }) => `sidebar-nav-item ${isActive ? 'active' : ''}`}>
-                <div className="sidebar-nav-item-content">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                    <path d="M22 2 11 13" />
-                    <path d="M22 2 15 22 11 13 2 9 22 2Z" />
-                  </svg>
-                  <span>Campañas</span>
-                </div>
-              </NavLink>
-            )}
-
-            {!isSuperadmin && can(user, 'statuses') &&(
-              <NavLink to="/estados" className={({ isActive }) => `sidebar-nav-item ${isActive ? 'active' : ''}`}>
-                <div className="sidebar-nav-item-content">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                    <circle cx="12" cy="12" r="9" strokeDasharray="4 3" />
-                    <circle cx="12" cy="12" r="4" />
-                  </svg>
-                  <span>Estados WhatsApp</span>
-                </div>
-              </NavLink>
-            )}
-
-            {!isSuperadmin && can(user, 'calls') &&(
-              <NavLink to="/llamadas" className={({ isActive }) => `sidebar-nav-item ${isActive ? 'active' : ''}`}>
-                <div className="sidebar-nav-item-content">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                    <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6A19.79 19.79 0 0 1 2.12 4.18 2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.12.9.33 1.78.62 2.63a2 2 0 0 1-.45 2.11L8 9.73a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.85.29 1.73.5 2.63.62A2 2 0 0 1 22 16.92z" />
-                  </svg>
-                  <span>Llamadas WhatsApp</span>
                 </div>
               </NavLink>
             )}
@@ -636,31 +720,40 @@ export function Layout() {
             {!isSuperadmin && <NotificationCenter onOpenSettings={() => setShowNotifSettings(true)} />}
             <NotificationBell />
 
-            {/* Theme Toggle Button (Sun / Moon) */}
-            <button
-              type="button"
-              className="topbar-icon-btn"
-              onClick={cycleTheme}
-              title={`Tema actual: ${theme}. Haz clic para cambiar`}
-            >
-              {theme === 'light' ? (
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="18" height="18">
-                  <circle cx="12" cy="12" r="5" />
-                  <line x1="12" y1="1" x2="12" y2="3" />
-                  <line x1="12" y1="21" x2="12" y2="23" />
-                  <line x1="4.22" y1="4.22" x2="5.64" y2="5.64" />
-                  <line x1="18.36" y1="18.36" x2="19.78" y2="19.78" />
-                  <line x1="1" y1="12" x2="3" y2="12" />
-                  <line x1="21" y1="12" x2="23" y2="12" />
-                  <line x1="4.22" y1="19.78" x2="5.64" y2="18.36" />
-                  <line x1="18.36" y1="5.64" x2="19.78" y2="4.22" />
-                </svg>
-              ) : (
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="18" height="18">
-                  <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
-                </svg>
+            {/* Selector de plantilla de color */}
+            <div className="theme-menu-anchor">
+              <button
+                type="button"
+                className="topbar-icon-btn theme-menu-toggle"
+                onClick={() => setShowThemes((open) => !open)}
+                aria-expanded={showThemes}
+                title={`Color del sistema: ${currentTheme.label}`}
+              >
+                <span className="theme-swatch" style={{ background: currentTheme.swatch }} />
+              </button>
+              {showThemes && (
+                <>
+                  <button type="button" className="theme-menu-close" aria-label="Cerrar" onClick={() => setShowThemes(false)} />
+                  <div className="theme-menu" role="menu">
+                    <span className="theme-menu-title">Color del sistema</span>
+                    {APP_THEMES.map((option) => (
+                      <button
+                        key={option.id}
+                        type="button"
+                        role="menuitemradio"
+                        aria-checked={theme === option.id}
+                        className={`theme-menu-item ${theme === option.id ? 'active' : ''}`}
+                        onClick={() => { setTheme(option.id as AppTheme); setShowThemes(false); }}
+                      >
+                        <span className="theme-swatch" style={{ background: option.swatch }} />
+                        <span className="theme-menu-label"><b>{option.label}</b><small>{option.hint}</small></span>
+                        {theme === option.id && <Ui name="check" size={14} />}
+                      </button>
+                    ))}
+                  </div>
+                </>
               )}
-            </button>
+            </div>
 
             <PresenceMenu />
 

@@ -25,7 +25,10 @@ const createCallCampaignSchema = z.object({
     key: z.string().trim().min(1).max(10), label: z.string().trim().min(1).max(120),
     replyMessage: z.string().trim().max(1000).optional().nullable(),
     action: z.enum(['NONE', 'INTERESTED', 'FOLLOW_UP', 'OPT_OUT']).default('NONE'),
-    crmStage: z.enum(['abiertas', 'pendientes', 'clientes', 'interesados', 'cerradas']).optional().nullable()
+    crmStage: z.enum(['abiertas', 'pendientes', 'clientes', 'interesados', 'cerradas']).optional().nullable(),
+    // Igual que el menú del bot de WhatsApp: al elegir esta opción, el chat se deriva a un área o a un agente.
+    departmentId: z.string().trim().min(1).max(80).optional().nullable(),
+    userId: z.string().trim().min(1).max(80).optional().nullable()
   })).max(10).default([])
 }).superRefine((data, ctx) => {
   if (data.contactIds.length === 0 && data.tagFilter.length === 0) {

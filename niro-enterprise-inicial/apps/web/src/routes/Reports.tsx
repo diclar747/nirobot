@@ -1,15 +1,25 @@
 import { useEffect, useState } from 'react';
 import { apiGet, ApiError } from '../lib/api';
-import { formatTime } from '../lib/format';
 import { useAuth } from '../context/AuthContext';
 import { PageHeader } from '../components/PageKit';
 import { IconChart } from '../components/icons';
+import { DonutChart, Heatmap, RankedBars, SERIES, StatTile, TimeSeriesChart } from '../components/Charts';
+import { AuditLogPanel } from '../components/AuditLogPanel';
 import type { ConversationStatus, OrderStatus } from '../types';
 import { Ui } from '../components/Ui';
 import '../styles/reports.css';
 
+// "2026-09-23" -> "23 sep"
+const shortDay = (day: string) => new Date(`${day}T12:00:00`).toLocaleDateString('es', { day: 'numeric', month: 'short' });
+
+interface SeriesDay { day: string; conversations: number; inbound: number; outbound: number; orders: number; revenue: number }
+
 interface Summary {
   period: { days: number };
+  series: SeriesDay[];
+  heatmap: { weekday: number; hour: number; total: number }[];
+  messages: { inbound: number };
+  trends: { conversations: number | null; orders: number | null; revenue: number | null; inbound: number | null };
   conversations: {
     total: number;
     byStatus: Partial<Record<ConversationStatus, number>>;
@@ -24,15 +34,6 @@ interface Summary {
     byStatus: Partial<Record<OrderStatus, number>>;
     revenue: number;
   };
-}
-
-interface AuditEntry {
-  id: string;
-  action: string;
-  entityType: string;
-  entityId: string | null;
-  actorName: string;
-  createdAt: string;
 }
 
 const CONV_STATUS_LABEL: Record<ConversationStatus, string> = {
@@ -55,39 +56,11 @@ function money(n: number) {
   return n.toLocaleString('es-PY', { maximumFractionDigits: 0 });
 }
 
-function ModernBarList({ rows, color = 'var(--primary)' }: { rows: { label: string; count: number }[]; color?: string }) {
-  const max = Math.max(1, ...rows.map((r) => r.count));
-  if (rows.length === 0) return <p style={{ fontSize: 12.5, color: 'var(--text-dim)' }}>Sin datos en este período.</p>;
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-      {rows.map((r) => (
-        <div key={r.label}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12.5, marginBottom: 4 }}>
-            <span style={{ fontWeight: 600, color: 'var(--text-main)' }}>{r.label}</span>
-            <span style={{ fontWeight: 700, color: 'var(--text-muted)' }}>{r.count}</span>
-          </div>
-          <div style={{ width: '100%', height: 7, background: 'var(--bg-surface-2)', borderRadius: 4, overflow: 'hidden' }}>
-            <div
-              style={{
-                width: `${(r.count / max) * 100}%`,
-                height: '100%',
-                background: color,
-                borderRadius: 4,
-                transition: 'width 0.4s ease'
-              }}
-            />
-          </div>
-        </div>
-      ))}
-    </div>
-  );
-}
 
 export function Reports() {
   const { user } = useAuth();
   const [days, setDays] = useState(30);
   const [summary, setSummary] = useState<Summary | null>(null);
-  const [audit, setAudit] = useState<AuditEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -99,9 +72,6 @@ export function Reports() {
     const requests: Promise<unknown>[] = [
       apiGet<Summary>(`/api/org/reports/summary?days=${days}`).then((data) => setSummary(data))
     ];
-    if (canSeeAudit) {
-      requests.push(apiGet<{ entries: AuditEntry[] }>('/api/org/reports/audit?pageSize=20').then((data) => setAudit(data.entries)));
-    }
     Promise.all(requests)
       .catch((err) => setError(err instanceof ApiError ? err.message : 'No se pudieron cargar los reportes'))
       .finally(() => setLoading(false));
@@ -137,7 +107,7 @@ export function Reports() {
     <div className="page-shell reports-page">
       {/* Header Toolbar */}
       <div style={{ marginBottom: 24 }}>
-        <PageHeader
+        <PageHeader tone="blue" hero={{ eyebrow: 'Reportes', title: 'Medí la atención y las ventas.', text: 'Tiempos de respuesta, canales, productividad de agentes y ventas en un solo tablero.', features: [{ icon: 'clock', label: 'Tiempos de respuesta' }, { icon: 'users', label: 'Productividad' }, { icon: 'chart', label: 'Ventas' }], art: ['chart', 'zap', 'clock'] }}
           icon={<IconChart />}
           title="Reportes de ventas y atención"
           subtitle="Estadísticas consolidadas de atención, canales, productividad de agentes y ventas."
@@ -153,168 +123,78 @@ export function Reports() {
         />
       </div>
 
-      {/* KPI Cards */}
-      <div
-        className="reports-kpis"
-        style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
-          gap: 16,
-          marginBottom: 24
-        }}
-      >
-        <div className="card reports-kpi-card" style={{ padding: '16px 20px', borderRadius: 14, background: 'var(--bg-surface)' }}>
-          <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-dim)', textTransform: 'uppercase' }}>
-            Conversaciones Totales
-          </div>
-          <div style={{ fontSize: 28, fontWeight: 900, color: 'var(--text-main)', marginTop: 4 }}>
-            {summary.conversations.total}
-          </div>
-          <div style={{ fontSize: 11.5, color: 'var(--primary-glow)', marginTop: 4 }}>
-            En los últimos {days} días
-          </div>
-        </div>
+      <section className="reports-kpis">
+        <StatTile label="Conversaciones" value={summary.conversations.total.toLocaleString('es')} trend={summary.trends.conversations} hint="vs. período anterior" icon={<Ui name="chat" size={16} />} />
+        <StatTile label="Mensajes recibidos" value={summary.messages.inbound.toLocaleString('es')} trend={summary.trends.inbound} hint="de clientes" icon={<Ui name="mail" size={16} />} />
+        <StatTile label="Tasa de resolución" value={`${summary.conversations.resolutionRate}%`} hint="cerradas o resueltas" icon={<Ui name="check-circle" size={16} />} />
+        <StatTile label="Primera respuesta" value={summary.conversations.avgFirstResponseMinutes !== null ? `${summary.conversations.avgFirstResponseMinutes} min` : '—'} hint="promedio del período" icon={<Ui name="clock" size={16} />} />
+        <StatTile label="Pedidos" value={summary.orders.total.toLocaleString('es')} trend={summary.trends.orders} hint="vs. período anterior" icon={<Ui name="cart" size={16} />} />
+        <StatTile label="Facturación" value={`Gs. ${money(summary.orders.revenue)}`} trend={summary.trends.revenue} hint="sin cancelados" icon={<Ui name="chart" size={16} />} />
+      </section>
 
-        <div className="card reports-kpi-card" style={{ padding: '16px 20px', borderRadius: 14, background: 'var(--bg-surface)' }}>
-          <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-dim)', textTransform: 'uppercase' }}>
-            Tasa de Resolución
-          </div>
-          <div style={{ fontSize: 28, fontWeight: 900, color: '#10b981', marginTop: 4 }}>
-            {summary.conversations.resolutionRate}%
-          </div>
-          <div style={{ fontSize: 11.5, color: 'var(--text-muted)', marginTop: 4 }}>
-            Casos resueltos / cerrados
-          </div>
-        </div>
+      <section className="reports-panel">
+        <header className="reports-panel-head">
+          <div><h3><Ui name="chat" size={16} /> Conversaciones y mensajes por día</h3><p>Cómo se movió la atención durante el período.</p></div>
+        </header>
+        <TimeSeriesChart series={[
+          { name: 'Conversaciones', color: SERIES[0], points: summary.series.map((d) => ({ label: shortDay(d.day), value: d.conversations })) },
+          { name: 'Mensajes recibidos', color: SERIES[1], points: summary.series.map((d) => ({ label: shortDay(d.day), value: d.inbound })) }
+        ]} />
+      </section>
 
-        <div className="card reports-kpi-card" style={{ padding: '16px 20px', borderRadius: 14, background: 'var(--bg-surface)' }}>
-          <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-dim)', textTransform: 'uppercase' }}>
-            Tiempo Promedio 1.ª Respuesta
-          </div>
-          <div style={{ fontSize: 28, fontWeight: 900, color: 'var(--primary-glow)', marginTop: 4 }}>
-            {summary.conversations.avgFirstResponseMinutes !== null
-              ? `${summary.conversations.avgFirstResponseMinutes} min`
-              : '—'}
-          </div>
-          <div style={{ fontSize: 11.5, color: 'var(--text-muted)', marginTop: 4 }}>
-            Velocidad del equipo
-          </div>
-        </div>
-
-        <div className="card reports-kpi-card" style={{ padding: '16px 20px', borderRadius: 14, background: 'var(--bg-surface)' }}>
-          <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-dim)', textTransform: 'uppercase' }}>
-            Pedidos Generados
-          </div>
-          <div style={{ fontSize: 28, fontWeight: 900, color: 'var(--text-main)', marginTop: 4 }}>
-            {summary.orders.total}
-          </div>
-          <div style={{ fontSize: 11.5, color: 'var(--text-muted)', marginTop: 4 }}>
-            Cotizaciones / ventas
-          </div>
-        </div>
-
-        <div className="card reports-kpi-card" style={{ padding: '16px 20px', borderRadius: 14, background: 'var(--bg-surface)' }}>
-          <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-dim)', textTransform: 'uppercase' }}>
-            Facturación Total
-          </div>
-          <div style={{ fontSize: 22, fontWeight: 900, color: 'var(--primary-glow)', marginTop: 6 }}>
-            Gs. {money(summary.orders.revenue)}
-          </div>
-          <div style={{ fontSize: 11.5, color: 'var(--text-muted)', marginTop: 4 }}>
-            Pedidos válidos (no cancelados)
-          </div>
-        </div>
-      </div>
-
-      {/* Row 1: Estados y Canales */}
       <div className="reports-pair">
-        <div className="card reports-panel" style={{ padding: 22, borderRadius: 14, background: 'var(--bg-surface)' }}>
-          <h3 style={{ margin: '0 0 16px', fontSize: 15, fontWeight: 800, color: 'var(--text-main)' }}>
-            <Ui name="clipboard" size={16} /> Conversaciones por Estado
-          </h3>
-          <ModernBarList rows={conversationStatusRows} color="linear-gradient(90deg, #0284c7 0%, #38bdf8 100%)" />
-        </div>
+        <section className="reports-panel">
+          <header className="reports-panel-head"><div><h3><Ui name="globe" size={16} /> Canal de entrada</h3><p>Por dónde llegan los clientes.</p></div></header>
+          <DonutChart centerLabel="conversaciones" data={summary.conversations.byChannel.map((c) => ({
+            label: c.channel === 'whatsapp' ? 'WhatsApp' : c.channel === 'web' ? 'Widget web' : c.channel,
+            value: c.count
+          }))} />
+        </section>
 
-        <div className="card reports-panel" style={{ padding: 22, borderRadius: 14, background: 'var(--bg-surface)' }}>
-          <h3 style={{ margin: '0 0 16px', fontSize: 15, fontWeight: 800, color: 'var(--text-main)' }}>
-            <Ui name="globe" size={16} /> Conversaciones por Canal de Entrada
-          </h3>
-          <ModernBarList
-            rows={summary.conversations.byChannel.map((c) => ({
-              label: c.channel === 'whatsapp' ? 'WhatsApp' : c.channel === 'web' ? 'Widget Web' : c.channel,
-              count: c.count
-            }))}
-            color="linear-gradient(90deg, #10b981 0%, #34d399 100%)"
-          />
-        </div>
+        <section className="reports-panel">
+          <header className="reports-panel-head"><div><h3><Ui name="check-circle" size={16} /> Estado de las conversaciones</h3><p>Cuántas siguen abiertas y cuántas se cerraron.</p></div></header>
+          <DonutChart centerLabel="conversaciones" data={conversationStatusRows.filter((r) => r.count > 0).map((r) => ({ label: r.label, value: r.count }))} />
+        </section>
       </div>
 
-      {/* Row 2: Carga por Agente y Departamentos */}
       <div className="reports-pair">
-        <div className="card reports-panel" style={{ padding: 22, borderRadius: 14, background: 'var(--bg-surface)' }}>
-          <h3 style={{ margin: '0 0 16px', fontSize: 15, fontWeight: 800, color: 'var(--text-main)' }}>
-            <Ui name="user" size={16} /> Desempeño y Carga por Agente
-          </h3>
-          <ModernBarList
-            rows={summary.conversations.byAgent.map((a) => ({ label: a.name, count: a.count }))}
-            color="linear-gradient(90deg, #9333ea 0%, #c084fc 100%)"
-          />
-        </div>
+        <section className="reports-panel">
+          <header className="reports-panel-head"><div><h3><Ui name="user" size={16} /> Carga por agente</h3><p>Conversaciones asignadas a cada persona.</p></div></header>
+          <RankedBars data={summary.conversations.byAgent.map((a) => ({ label: a.name, value: a.count }))} color={SERIES[4]} />
+        </section>
 
-        <div className="card reports-panel" style={{ padding: 22, borderRadius: 14, background: 'var(--bg-surface)' }}>
-          <h3 style={{ margin: '0 0 16px', fontSize: 15, fontWeight: 800, color: 'var(--text-main)' }}>
-            <Ui name="building" size={16} /> Volumen por Departamento
-          </h3>
-          <ModernBarList
-            rows={summary.conversations.byDepartment.map((d) => ({ label: d.name, count: d.count }))}
-            color="linear-gradient(90deg, #f59e0b 0%, #fbbf24 100%)"
-          />
-        </div>
+        <section className="reports-panel">
+          <header className="reports-panel-head"><div><h3><Ui name="building" size={16} /> Volumen por área</h3><p>A qué área llegan las consultas.</p></div></header>
+          <RankedBars data={summary.conversations.byDepartment.map((d) => ({ label: d.name, value: d.count }))} color={SERIES[2]} />
+        </section>
       </div>
 
-      {/* Row 3: Pedidos por Estado */}
-      <div className="card reports-panel reports-orders" style={{ padding: 22, borderRadius: 14, background: 'var(--bg-surface)', marginBottom: 20 }}>
-        <h3 style={{ margin: '0 0 16px', fontSize: 15, fontWeight: 800, color: 'var(--text-main)' }}>
-          <Ui name="cart" size={16} /> Estado de Pedidos y Logística
-        </h3>
-        <ModernBarList rows={orderStatusRows} color="linear-gradient(90deg, #2563eb 0%, #60a5fa 100%)" />
+      <section className="reports-panel">
+        <header className="reports-panel-head"><div><h3><Ui name="clock" size={16} /> Cuándo escriben tus clientes</h3><p>Mensajes recibidos por día de la semana y hora. Cuanto más intenso, más movimiento.</p></div></header>
+        <Heatmap cells={summary.heatmap} />
+      </section>
+
+      <div className="reports-pair">
+        <section className="reports-panel">
+          <header className="reports-panel-head"><div><h3><Ui name="cart" size={16} /> Pedidos por estado</h3><p>En qué etapa está cada pedido.</p></div></header>
+          <RankedBars data={orderStatusRows.map((r) => ({ label: r.label, value: r.count }))} color={SERIES[3]} />
+        </section>
+
+        <section className="reports-panel">
+          <header className="reports-panel-head"><div><h3><Ui name="chart" size={16} /> Facturación por día</h3><p>Ventas registradas, sin los pedidos cancelados.</p></div></header>
+          <TimeSeriesChart height={200} formatValue={(value) => `Gs. ${money(value)}`} series={[
+            { name: 'Facturación', color: SERIES[2], points: summary.series.map((d) => ({ label: shortDay(d.day), value: d.revenue })) }
+          ]} />
+        </section>
       </div>
 
-      {/* Audit Logs */}
+      {/* Registro de auditoría: buscador, filtros y paginación propios (no dependen del selector de días de arriba). */}
       {canSeeAudit && (
         <div className="card reports-panel reports-audit" style={{ padding: 22, borderRadius: 14, background: 'var(--bg-surface)' }}>
           <h3 style={{ margin: '0 0 16px', fontSize: 15, fontWeight: 800, color: 'var(--text-main)' }}>
             <Ui name="lock" size={16} /> Registro de Auditoría de Operaciones
           </h3>
-          <div style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-              <thead>
-                <tr style={{ borderBottom: '1px solid var(--border-color)', textAlign: 'left' }}>
-                  <th style={{ padding: '8px 10px', color: 'var(--text-dim)' }}>Acción</th>
-                  <th style={{ padding: '8px 10px', color: 'var(--text-dim)' }}>Entidad</th>
-                  <th style={{ padding: '8px 10px', color: 'var(--text-dim)' }}>Usuario</th>
-                  <th style={{ padding: '8px 10px', color: 'var(--text-dim)' }}>Fecha y Hora</th>
-                </tr>
-              </thead>
-              <tbody>
-                {audit.map((e) => (
-                  <tr key={e.id} style={{ borderBottom: '1px solid var(--border-subtle)' }}>
-                    <td style={{ padding: '10px', fontWeight: 600, color: 'var(--text-main)' }}>{e.action}</td>
-                    <td style={{ padding: '10px', color: 'var(--text-muted)' }}>{e.entityType}</td>
-                    <td style={{ padding: '10px', color: 'var(--primary-glow)' }}>{e.actorName}</td>
-                    <td style={{ padding: '10px', color: 'var(--text-dim)' }}>{formatTime(e.createdAt)}</td>
-                  </tr>
-                ))}
-                {audit.length === 0 && (
-                  <tr>
-                    <td colSpan={4} style={{ padding: 16, textAlign: 'center', color: 'var(--text-dim)' }}>
-                      Sin actividad registrada todavía.
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
+          <AuditLogPanel />
         </div>
       )}
     </div>

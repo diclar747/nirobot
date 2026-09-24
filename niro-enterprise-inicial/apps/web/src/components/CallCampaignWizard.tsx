@@ -5,7 +5,7 @@ import { Modal } from './Modal';
 import { Ui } from './Ui';
 import { CRM_STAGES as CRM_STAGE_DEFS, type CrmStage } from '../lib/crmStage';
 import { ContactAvatar } from '../routes/Contacts';
-import type { CallAccount, CallAudio, CallCampaign } from '../types';
+import type { CallAccount, CallAudio, CallCampaign, Department, OrgUser } from '../types';
 
 interface AudContact {
   id: string; name: string | null; phone: string | null; email: string | null; avatarUrl: string | null;
@@ -25,7 +25,7 @@ export const CALL_CAMPAIGN_TYPES = [
 ];
 
 type SurveyAction = 'NONE' | 'INTERESTED' | 'FOLLOW_UP' | 'OPT_OUT';
-interface SurveyOption { key: string; label: string; action: SurveyAction; replyMessage: string; crmStage?: CrmStage | '' }
+interface SurveyOption { key: string; label: string; action: SurveyAction; replyMessage: string; crmStage?: CrmStage | ''; departmentId?: string; userId?: string }
 
 // Datos de una campaña existente para precargar el asistente (editar, relanzar o rellamar a un contacto).
 export interface WizardSource {
@@ -95,6 +95,16 @@ export function CallCampaignWizard({ accounts, audios, onClose, onCreated, mode 
   const [surveyEnabled, setSurveyEnabled] = useState(Boolean(src?.surveyEnabled && source?.survey));
   const [question, setQuestion] = useState(source?.survey?.question || src?.surveyQuestion || '¿Desea recibir más información?');
   const [options, setOptions] = useState<SurveyOption[]>(source?.survey?.options?.length ? source.survey.options : DEFAULT_OPTIONS);
+  // Para "Derivar a": las mismas áreas y agentes que usa el menú del bot de WhatsApp.
+  const [departments, setDepartments] = useState<Department[]>([]);
+  const [orgUsers, setOrgUsers] = useState<OrgUser[]>([]);
+  useEffect(() => {
+    Promise.all([apiGet<{ departments: Department[] }>('/api/org/departments'), apiGet<{ users: OrgUser[] }>('/api/org/users')])
+      .then(([d, u]) => { setDepartments(d.departments); setOrgUsers(u.users); })
+      .catch(() => {});
+  }, []);
+  const destinationValue = (option: SurveyOption) => (option.userId ? `user:${option.userId}` : option.departmentId ? `dep:${option.departmentId}` : '');
+  const setDestination = (index: number, value: string) => setOptions((cur) => cur.map((x, j) => (j === index ? { ...x, departmentId: value.startsWith('dep:') ? value.slice(4) : '', userId: value.startsWith('user:') ? value.slice(5) : '' } : x)));
   const [suggesting, setSuggesting] = useState(false);
   const [suggestNote, setSuggestNote] = useState<string | null>(null);
   const [confirmed, setConfirmed] = useState(false);
@@ -206,7 +216,7 @@ export function CallCampaignWizard({ accounts, audios, onClose, onCreated, mode 
         maxAttempts: Number(maxAttempts), pauseBetweenSeconds: Number(pause), answerTimeoutSeconds: Number(answerTimeout), retryDelaySeconds: Number(retryDelay),
         allowedFrom: windowFrom || null, allowedTo: windowTo || null,
         surveyEnabled, surveyQuestion: surveyEnabled ? question.trim() : null, surveyResponseMethod: 'WHATSAPP',
-        surveyOptions: surveyEnabled ? options.filter((o) => o.key.trim() && o.label.trim()).map((o) => ({ key: o.key.trim(), label: o.label.trim(), action: o.action, crmStage: o.crmStage || null, replyMessage: o.replyMessage.trim() || null })) : []
+        surveyOptions: surveyEnabled ? options.filter((o) => o.key.trim() && o.label.trim()).map((o) => ({ key: o.key.trim(), label: o.label.trim(), action: o.action, crmStage: o.crmStage || null, replyMessage: o.replyMessage.trim() || null, departmentId: o.departmentId || null, userId: o.userId || null })) : []
       };
       const saved = mode === 'edit' && src
         ? await apiPatch<{ campaign: CallCampaign }>(`/api/org/wa-calls/campaigns/${src.id}`, payload)
@@ -344,6 +354,13 @@ export function CallCampaignWizard({ accounts, audios, onClose, onCreated, mode 
                         </select></label>
                       <label><span>Respuesta automática por WhatsApp</span>
                         <textarea className="input" rows={2} maxLength={1000} value={o.replyMessage} onChange={(e) => setOptions((cur) => cur.map((x, j) => (j === i ? { ...x, replyMessage: e.target.value } : x)))} placeholder="Si lo dejás vacío se usa un mensaje de agradecimiento por defecto." /></label>
+                      <label><span>Derivar el chat a</span>
+                        <select className="input" value={destinationValue(o)} onChange={(e) => setDestination(i, e.target.value)}>
+                          <option value="">No derivar (solo aplica lo de arriba)</option>
+                          {departments.length > 0 && <optgroup label="Áreas">{departments.map((d) => <option key={d.id} value={`dep:${d.id}`}>Área: {d.name}</option>)}</optgroup>}
+                          <optgroup label="Personas">{orgUsers.filter((u) => u.active).map((u) => <option key={u.id} value={`user:${u.id}`}>Agente: {u.name}</option>)}</optgroup>
+                        </select>
+                        <small>Igual que en el menú del bot de WhatsApp: al elegir esta opción, el chat pasa a esa área o agente y el equipo lo ve con Aceptar/Rechazar.</small></label>
                     </div>
                   </div>))}
                 <button type="button" className="btn secondary small" onClick={() => setOptions((cur) => [...cur, { key: String(cur.length + 1), label: '', action: 'NONE', replyMessage: '' }])} disabled={options.length >= 10}><Ui name="plus" size={14} /> Agregar opción</button>

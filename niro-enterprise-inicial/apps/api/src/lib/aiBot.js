@@ -1,7 +1,7 @@
 // Bot conversacional con IA: arma el contexto de la conversación y pide la respuesta a Niro IA.
 //
 // Reglas de silencio (para que la IA nunca pise a una persona):
-//   - Si la organización tiene la IA apagada, no responde.
+//   - Solo responde cuando el flujo del bot llegó a un bloque IA (los callers lo verifican).
 //   - Si no hay NIRO_AI_API_KEY configurada, no responde.
 //   - Si un agente humano ya tomó la conversación (assignedToId), no responde.
 //   - Si la conversación está resuelta o cerrada, no responde.
@@ -19,12 +19,13 @@ const DEFAULT_PERSONA =
   'Si no sabés algo o te piden un precio, condición o dato que no tenés, decilo y ofrecé pasar la conversación a un agente humano. ' +
   'Nunca inventes precios, plazos ni stock.';
 
-function aiAvailable(settings) {
-  return !!(settings && settings.aiEnabled) && niroAi.isConfigured();
+// El asistente IA "suelto" de Configuración se retiró: la IA solo habla cuando el flujo del bot (/bot) llega a un bloque IA.
+function aiAvailable() {
+  return niroAi.isConfigured();
 }
 
 function shouldReply(conversation, settings) {
-  if (!aiAvailable(settings)) return false;
+  if (!aiAvailable()) return false;
   if (!conversation) return false;
   if (conversation.assignedToId) return false;
   if (conversation.status === 'RESOLVED' || conversation.status === 'CLOSED') return false;

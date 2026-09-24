@@ -35,6 +35,29 @@ async function setup() {
 }
 
 describe('Encuesta posterior a la llamada: respuestas automáticas', () => {
+  // Una encuesta vieja no puede quedarse con los mensajes del cliente para siempre: si el cliente escribe "1"
+  // semanas después (por ejemplo para elegir una opción del menú del bot), eso ya no es una respuesta de encuesta.
+  test('pasada la ventana de 24 h, "1" ya no se toma como respuesta de encuesta (lo atiende el bot)', async () => {
+    const { org, contacts, campaignId } = await setup();
+    jest.spyOn(whatsapp, 'sendText').mockResolvedValue('WA1');
+    await prisma.callCampaignRecipient.updateMany({
+      where: { campaignId },
+      data: { updatedAt: new Date(Date.now() - 5 * 24 * 60 * 60 * 1000) }
+    });
+    const result = await registerInboundResponse(org.id, contacts.interesado.phone, '1');
+    expect(result).toBeNull();
+    expect(await prisma.callSurveyResponse.count()).toBe(0);
+  });
+
+  test('si ya respondió antes, un "1" nuevo no se traga el mensaje', async () => {
+    const { org, contacts } = await setup();
+    jest.spyOn(whatsapp, 'sendText').mockResolvedValue('WA1');
+    const first = await registerInboundResponse(org.id, contacts.interesado.phone, '1');
+    expect(first).not.toBeNull();
+    const second = await registerInboundResponse(org.id, contacts.interesado.phone, '1');
+    expect(second).toBeNull();
+  });
+
   test('cada opción guarda la respuesta, aplica su acción y contesta el texto configurado', async () => {
     const { org, contacts } = await setup();
     const sent = jest.spyOn(whatsapp, 'sendText').mockResolvedValue('WA1');
@@ -67,8 +90,9 @@ describe('Encuesta posterior a la llamada: respuestas automáticas', () => {
     const { org } = await setup();
     const sent = jest.spyOn(whatsapp, 'sendText').mockResolvedValue('WA1');
     await registerInboundResponse(org.id, '595981000001', '1');
+    // Repetir "1" ya no cuenta como respuesta: el mensaje sigue su camino normal (lo atiende el bot).
     const again = await registerInboundResponse(org.id, '595981000001', '1');
-    expect(again.duplicate).toBe(true);
+    expect(again).toBeNull();
     expect(sent).toHaveBeenCalledTimes(1);
     expect(await registerInboundResponse(org.id, '595981000002', 'hola qué tal')).toBeNull();
     expect(sent).toHaveBeenCalledTimes(1);

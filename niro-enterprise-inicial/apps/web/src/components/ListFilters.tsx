@@ -1,5 +1,4 @@
 import { Ui } from './Ui';
-import '../styles/list-filters.css';
 
 export interface ListFilterState { q: string; group: string; type: string; from: string; to: string }
 export const EMPTY_FILTERS: ListFilterState = { q: '', group: 'all', type: '', from: '', to: '' };

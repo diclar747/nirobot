@@ -133,7 +133,7 @@ export function OrgUsers() {
 
   return (
     <PageShell>
-      <PageHeader
+      <PageHeader tone="indigo" hero={{ eyebrow: 'Tu equipo', title: 'Cada persona, con el acceso justo.', text: 'Sumá agentes, asigná roles y controlá quién está activo.', features: [{ icon: 'user-plus', label: 'Altas en segundos' }, { icon: 'shield', label: 'Roles y permisos' }, { icon: 'check-circle', label: 'Estado de cada usuario' }], art: ['users', 'shield', 'user-plus'] }}
         icon={<IconUsers />}
         title="Usuarios y equipo"
         subtitle="Gestioná accesos, roles y estado de tu equipo de ventas y atención."

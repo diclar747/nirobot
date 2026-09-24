@@ -31,7 +31,7 @@ export function SmsAdmin() {
 
   return (
     <PageShell>
-      <PageHeader icon={<Ui name="smartphone" size={22} />} title="SMS · administración" subtitle="Saldo del proveedor, SMS vendidos y saldo de cada empresa." actions={<button type="button" className="btn secondary" onClick={registerWebhook}><Ui name="plug" size={15} /> Registrar webhook de entregas</button>} />
+      <PageHeader tone="rose" hero={{ eyebrow: 'Administración SMS', title: 'Saldo, ventas y consumo de cada empresa.', compact: true }} icon={<Ui name="smartphone" size={22} />} title="SMS · administración" subtitle="Saldo del proveedor, SMS vendidos y saldo de cada empresa." actions={<button type="button" className="btn secondary" onClick={registerWebhook}><Ui name="plug" size={15} /> Registrar webhook de entregas</button>} />
       {error && <div className="alert error">{error}</div>}
       {!data ? <LoadingRows /> : (
         <>

@@ -37,7 +37,19 @@ const botFlowSchema = z.object({
   edges: z.array(botEdgeSchema).max(160)
 });
 
-const botFlowTestSchema = z.object({ message: z.string().min(1).max(2000), flow: botFlowSchema.optional() });
+// El simulador manda, además del mensaje, el estado de la conversación simulada: así el primer mensaje se trata
+// como conversación nueva (saludo/menú) y, una vez derivada, el bot deja de responder igual que en la realidad.
+const botFlowTestSchema = z.object({
+  message: z.string().min(1).max(2000),
+  flow: botFlowSchema.optional(),
+  state: z.object({
+    started: z.boolean().default(false),
+    tags: z.array(z.string().max(40)).max(30).default([]),
+    assignedToId: z.string().max(80).nullable().default(null),
+    lastBotReply: z.string().max(4000).default(''),
+    departmentId: z.string().max(80).nullable().default(null)
+  }).optional()
+});
 
 const updateOrgSettingsSchema = z
   .object({

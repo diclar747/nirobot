@@ -35,3 +35,6 @@
 .ns-switch span { position: absolute; inset: 0; border-radius: 999px; background: var(--border-color); transition: background .15s; } .ns-switch span::after { content: ''; position: absolute; top: 3px; left: 3px; width: 18px; height: 18px; border-radius: 50%; background: #fff; transition: transform .15s; box-shadow: 0 1px 3px rgba(0, 0, 0, .3); }
 .ns-switch input:checked + span { background: #10b981; } .ns-switch input:checked + span::after { transform: translateX(20px); } .ns-switch input:focus-visible + span { outline: 2px solid #10b981; outline-offset: 2px; }
 .ns-foot { display: flex; justify-content: flex-end; margin-top: 16px; }
+/* Avisos de Facebook / Instagram (lib/facebookBridge.js) */
+.nc-item.facebook .nc-icon, .nt-toast.facebook .nt-icon { background: rgba(24, 119, 242, .16); color: #1877f2; }
+.nt-toast.facebook { border-left-color: #1877f2; }

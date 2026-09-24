@@ -9,7 +9,8 @@ const { extensionFor } = require('./attachments');
 const STATUS_TTL_MS = 24 * 60 * 60 * 1000;
 const RETRY_DELAYS_MS = [1, 5, 15].map((minutes) => minutes * 60 * 1000);
 const STUCK_AFTER_MS = 5 * 60 * 1000;
-const MAX_AUDIENCE = Math.max(1, Number(process.env.STATUS_MAX_AUDIENCE || 2000));
+// Sin tope por defecto: STATUS_MAX_AUDIENCE queda disponible para quien quiera reactivar un límite propio.
+const MAX_AUDIENCE = Number(process.env.STATUS_MAX_AUDIENCE) > 0 ? Number(process.env.STATUS_MAX_AUDIENCE) : Number.MAX_SAFE_INTEGER; // finito: Infinity no serializa bien a JSON (queda null)
 const NOT_CONNECTED = /no esta conectado/i;
 
 class StatusPostError extends Error {
@@ -103,7 +104,7 @@ async function publishClaimed(postId) {
     }
     const audience = await resolveAudience(post.organizationId, post);
     if (audience.count === 0) throw new StatusPostError('La audiencia no tiene contactos con un número válido', { retryable: false });
-    if (audience.count > MAX_AUDIENCE) throw new StatusPostError(`La audiencia (${audience.count}) supera el máximo de ${MAX_AUDIENCE} contactos; usá una etiqueta o una lista más chica`, { retryable: false });
+    if (audience.count > MAX_AUDIENCE) throw new StatusPostError(`La audiencia (${audience.count}) supera el máximo de ${MAX_AUDIENCE} contactos configurado en el servidor`, { retryable: false });
 
     let content;
     let options = {};
@@ -133,6 +134,7 @@ async function publishClaimed(postId) {
       data: { status: 'published', waMessageId, publishedAt, expiresAt: new Date(publishedAt.getTime() + STATUS_TTL_MS), audienceCount: audience.count, errorMessage: null, nextAttemptAt: null }
     });
     await emitPost(updated);
+    require('./apiWebhooks').emitWebhook(updated.organizationId, 'status.published', { status: sanitizePost(updated) }).catch(() => {});
     await retirePrevious(updated);
     return updated;
   } catch (error) {
@@ -270,7 +272,70 @@ async function metrics(organizationId) {
   return { byStatus, publishedToday, scheduled: byStatus.scheduled || 0, failed: byStatus.failed || 0, nextScheduledAt: next ? next.nextAttemptAt : null };
 }
 
+// Crear una publicación de estado. Lo usan el panel (/estados) y la API pública (POST /api/v1/status):
+// una sola validación y un solo camino de guardado para los dos.
+const MIN_LEAD_MS = 30 * 1000;
+
+async function createPost({ organizationId, createdByUserId = null, data, file = null }) {
+  const { StatusPostError: _e } = module.exports; // evita warnings de linters por el orden de declaración
+  void _e;
+  const { HttpError } = require('./errors');
+  const { prepareStatusMedia } = require('./statusMedia');
+  const { extensionFor: ext } = require('./attachments');
+
+  if (data.contentType === 'text' && !String(data.textContent || '').trim()) throw new HttpError(400, 'Escribí el texto del estado');
+  if (data.contentType !== 'text' && !file) throw new HttpError(400, data.contentType === 'video' ? 'Falta el video del estado' : 'Falta la imagen del estado');
+
+  let scheduledAt = null;
+  if (data.mode === 'SCHEDULED') {
+    scheduledAt = data.scheduledAt ? new Date(data.scheduledAt) : null;
+    if (!scheduledAt || Number.isNaN(scheduledAt.getTime())) throw new HttpError(400, 'Indicá la fecha y hora de publicación');
+    if (scheduledAt.getTime() < Date.now() + MIN_LEAD_MS) throw new HttpError(400, 'La fecha de programación debe estar en el futuro');
+  }
+
+  const audience = await resolveAudience(organizationId, data);
+  if (audience.count === 0) throw new HttpError(400, 'La audiencia seleccionada no tiene contactos con un número válido');
+  if (audience.count > MAX_AUDIENCE) throw new HttpError(400, `La audiencia (${audience.count}) supera el máximo de ${MAX_AUDIENCE} contactos configurado en el servidor`);
+
+  if (data.mode === 'NOW' && whatsapp().getStatus(organizationId).status !== 'connected') {
+    throw new HttpError(409, 'WhatsApp no está conectado. Reconectá la línea para publicar.');
+  }
+
+  let storageKey = null;
+  let mimeType = null;
+  try {
+    if (data.contentType !== 'text') {
+      const media = await prepareStatusMedia(file, data.contentType);
+      mimeType = media.mimeType;
+      storageKey = await saveFile(organizationId, media.buffer, ext(mimeType));
+    }
+
+    const post = await prisma.whatsappStatusPost.create({
+      data: {
+        organizationId, createdByUserId, contentType: data.contentType,
+        textContent: data.contentType === 'text' ? data.textContent.trim() : null,
+        caption: data.contentType !== 'text' && data.caption ? data.caption.trim() : null,
+        mediaStorageKey: storageKey, mimeType,
+        backgroundColor: data.contentType === 'text' ? (data.backgroundColor || '#075E54') : null,
+        fontStyle: data.contentType === 'text' ? (data.fontStyle ?? 0) : null,
+        audienceType: data.audienceType, audienceTags: data.audienceTags, audienceContactIds: data.audienceContactIds,
+        audienceCount: audience.count, publicationMode: data.mode === 'DRAFT' ? 'NOW' : data.mode, scheduledAt,
+        status: data.mode === 'NOW' ? 'processing' : data.mode === 'SCHEDULED' ? 'scheduled' : 'draft',
+        nextAttemptAt: data.mode === 'SCHEDULED' ? scheduledAt : null
+      }
+    });
+    storageKey = null;
+
+    // Las inmediatas se envían en segundo plano; el resultado llega por el socket (y por GET del estado).
+    if (data.mode === 'NOW') publishClaimed(post.id).catch((err) => console.error('[status-posts] publish failed', err));
+    return { post, audience };
+  } catch (err) {
+    if (storageKey) await deleteFile(storageKey).catch(() => {});
+    throw err;
+  }
+}
+
 module.exports = {
-  StatusPostError, MAX_AUDIENCE, RETRY_DELAYS_MS, sanitizePost, emitPost, resolveAudience,
+  StatusPostError, MAX_AUDIENCE, RETRY_DELAYS_MS, MIN_LEAD_MS, sanitizePost, emitPost, resolveAudience, createPost,
   publishNow, publishClaimed, runDue, tick, recoverStuck, expirePublished, removePost, duplicatePost, metrics
 };

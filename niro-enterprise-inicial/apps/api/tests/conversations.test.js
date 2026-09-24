@@ -173,7 +173,7 @@ describe('Nuevo chat iniciado por un agente', () => {
   test('un contacto con teléfono abre un chat de WhatsApp a nombre de quien lo inicia, sin bienvenida del bot', async () => {
     const org = await createOrganization(prisma, { slug: `nc-${Date.now()}` });
     await prisma.organization.update({ where: { id: org.id }, data: { trialEndsAt: new Date(Date.now() + 3600000) } });
-    await prisma.organizationSettings.update({ where: { organizationId: org.id }, data: { aiEnabled: true, welcomeMessage: 'Hola, bienvenido' } });
+    await prisma.organizationSettings.update({ where: { organizationId: org.id }, data: { botFlow: require('./helpers/flows').menuFlow({ welcome: 'Hola, bienvenido' }) } });
     const owner = await createUser(prisma, { organizationId: org.id, email: `nc${Date.now()}@t.test`, role: 'OWNER' });
     const contact = await prisma.contact.create({ data: { organizationId: org.id, name: 'Ana', phone: '595981000001' } });
     const { agent, csrfToken } = await loginAgent(app, owner.email);

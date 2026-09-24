@@ -1,4 +1,4 @@
-import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { apiDelete, apiGet, apiPost, apiUpload, ApiError } from '../lib/api';
 import { getSocket } from '../lib/socket';
 import { useAlerts } from '../context/AlertContext';
@@ -8,6 +8,7 @@ import { StatusViewersModal } from '../components/StatusViewers';
 import type { Contact } from '../types';
 import '../styles/status-posts.css';
 import { Ui } from '../components/Ui';
+import { EmojiPicker } from '../components/EmojiPicker';
 
 type PostStatus = 'draft' | 'scheduled' | 'processing' | 'published' | 'failed' | 'cancelled' | 'deleted' | 'expired';
 
@@ -90,6 +91,8 @@ export function StatusPosts() {
 
   const [contentType, setContentType] = useState<'text' | 'image' | 'video'>('text');
   const [text, setText] = useState('');
+  const [showEmoji, setShowEmoji] = useState(false);
+  const textRef = useRef<HTMLTextAreaElement | null>(null);
   const [color, setColor] = useState(COLORS[0]);
   const [file, setFile] = useState<File | null>(null);
   const [filePreview, setFilePreview] = useState<string | null>(null);
@@ -163,6 +166,20 @@ export function StatusPosts() {
   const videoTooBig = contentType === 'video' && Boolean(file) && (file as File).size > MAX_VIDEO_MB * 1024 * 1024;
   const canSubmit = !busy && audienceCount !== 0 && !tooLarge && !videoTooLong && !videoTooBig && (contentType === 'text' ? text.trim().length > 0 : Boolean(file));
 
+  function insertEmoji(emoji: string) {
+    const input = textRef.current;
+    if (!input) { setText((current) => `${current}${emoji}`); return; }
+    const start = input.selectionStart ?? text.length;
+    const end = input.selectionEnd ?? text.length;
+    const next = `${text.slice(0, start)}${emoji}${text.slice(end)}`.slice(0, 700);
+    setText(next);
+    requestAnimationFrame(() => {
+      input.focus();
+      const pos = Math.min(start + emoji.length, next.length);
+      input.setSelectionRange(pos, pos);
+    });
+  }
+
   async function submit(event: FormEvent) {
     event.preventDefault();
     if (!canSubmit) return;
@@ -211,25 +228,19 @@ export function StatusPosts() {
   return (
     <div className="page-shell sp-page">
       <PageHeader
-        icon={<Ui name="megaphone" size={24} />}
+        tone="teal"
+        icon={<Ui name="megaphone" size={22} />}
         title="Estados de WhatsApp"
         subtitle="Creá, programá y gestioná tus publicaciones y campañas desde un solo lugar."
         actions={<Pill tone={!metrics ? 'neutral' : metrics.connected ? 'success' : 'danger'} dot>{!metrics ? 'Consultando conexión…' : metrics.connected ? 'WhatsApp conectado' : 'WhatsApp desconectado'}</Pill>}
+        hero={{
+          eyebrow: 'Centro de estados',
+          title: 'Tu marca, presente cada día.',
+          text: 'Compartí novedades al instante o prepará secuencias de contenido para tus próximas campañas.',
+          features: [{ icon: 'clock', label: 'Historias de 24 horas' }, { icon: 'calendar', label: 'Publicación programada' }, { icon: 'megaphone', label: 'Multicampañas' }],
+          art: ['image', 'megaphone', 'video']
+        }}
       />
-
-      <section className="sp-hero" aria-label="Centro de estados">
-        <div>
-          <span className="sp-eyebrow">CENTRO DE ESTADOS</span>
-          <h2>Tu marca, presente cada día.</h2>
-          <p>Compartí novedades al instante o prepará secuencias de contenido para tus próximas campañas.</p>
-          <div className="sp-hero-features">
-            <span><Ui name="clock" size={15} /> Historias de 24 horas</span>
-            <span><Ui name="calendar" size={15} /> Publicación programada</span>
-            <span><Ui name="megaphone" size={15} /> Multicampañas</span>
-          </div>
-        </div>
-        <div className="sp-hero-art" aria-hidden="true"><Ui name="image" size={32} /><Ui name="megaphone" size={36} /><Ui name="video" size={28} /></div>
-      </section>
 
       <div className="sp-tabs" role="group" aria-label="Vista de estados">
         <button type="button" aria-pressed={view === 'posts'} className={view === 'posts' ? 'on' : ''} onClick={() => setView('posts')}><Ui name="image" size={19} /><span>Publicaciones<small>Crear estados y ver el historial</small></span></button>
@@ -259,8 +270,19 @@ export function StatusPosts() {
               <>
                 <label className="field">
                   <span>Texto ({text.length}/700)</span>
-                  <textarea className="input" rows={4} maxLength={700} value={text} onChange={(e) => setText(e.target.value)} placeholder="Escribí lo que querés publicar…" />
+                  <textarea ref={textRef} className="input" rows={4} maxLength={700} value={text} onChange={(e) => setText(e.target.value)} placeholder="Escribí lo que querés publicar…" />
                 </label>
+                <div className="sp-emoji-toolbar">
+                  <div className="sp-emoji-anchor">
+                    <button type="button" className="sp-emoji-toggle" data-emoji-toggle onClick={() => setShowEmoji((v) => !v)} aria-expanded={showEmoji}>😊 Emojis</button>
+                    {showEmoji && <EmojiPicker keepOpen onPick={(emoji) => insertEmoji(emoji)} onClose={() => setShowEmoji(false)} />}
+                  </div>
+                  <span className="sp-emoji-quick">
+                    {['👋', '✨', '🎉', '📣', '✅', '💬'].map((emoji) => (
+                      <button type="button" key={emoji} onClick={() => insertEmoji(emoji)}>{emoji}</button>
+                    ))}
+                  </span>
+                </div>
                 <div className="sp-colors" aria-label="Color de fondo">
                   {COLORS.map((c) => (
                     <button type="button" key={c} className={c === color ? 'on' : ''} style={{ background: c }} onClick={() => setColor(c)} aria-label={`Color ${c}`} />

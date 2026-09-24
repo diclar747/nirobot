@@ -1,4 +1,5 @@
 import { FormEvent, useCallback, useEffect, useState } from 'react';
+import { Ui } from '../components/Ui';
 import { apiDelete, apiGet, apiPatch, apiPost, ApiError } from '../lib/api';
 import { Modal } from '../components/Modal';
 import { EmptyState, LoadingRows, PageHeader, PageShell, Panel, Pill } from '../components/PageKit';
@@ -34,7 +35,7 @@ export function SuperadminPlans() {
 
   return (
     <PageShell>
-      <PageHeader title="Planes" subtitle="Definí precios y cuántos agentes incluye cada plan. Los cambios se aplican al instante."
+      <PageHeader tone="violet" icon={<Ui name="star" size={22} />} hero={{ eyebrow: 'Planes', title: 'Precios y agentes de cada plan.', compact: true }} title="Planes" subtitle="Definí precios y cuántos agentes incluye cada plan. Los cambios se aplican al instante."
         actions={<button className="btn" onClick={() => setEditing('new')}>＋ Nuevo plan</button>} />
       {error && <div className="campaign-alert error" style={{ marginBottom: 12 }}>{error}</div>}
       <Panel flush title="Planes de suscripción">

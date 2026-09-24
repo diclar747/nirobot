@@ -65,4 +65,4 @@ function findUnknownVariables(template) {
   return [...unknown];
 }
 
-module.exports = { personalizeCampaignMessage, findUnknownVariables, PUBLIC_VARIABLES, VARIABLE_KEYS };
+module.exports = { personalizeCampaignMessage, findUnknownVariables, realName, PUBLIC_VARIABLES, VARIABLE_KEYS };

@@ -102,7 +102,7 @@ export function CrmBoard() {
   return (
     <div className="crm-board-wrap">
       <div className="crm-board-header">
-        <PageHeader
+        <PageHeader tone="violet" hero={{ eyebrow: 'Embudo de ventas', title: 'Llevá cada oportunidad hasta el cierre.', compact: true }}
           icon={<IconLayers />}
           title="Embudo de ventas (CRM)"
           subtitle="Arrastrá las tarjetas para cambiar la etapa del cliente. Hacé clic en un contacto para ver notas y detalles."

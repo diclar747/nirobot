@@ -9,10 +9,12 @@ import type { Conversation, Message } from '../types';
 
 export interface AppNotification {
   id: string;
-  type: 'message' | 'transfer';
+  type: 'message' | 'transfer' | 'facebook';
   title: string;
   body: string;
+  /** Para 'facebook' no hay chat: se abre la sección del panel (section). */
   conversationId: string;
+  section?: string;
   at: number;
   read: boolean;
 }
@@ -30,6 +32,8 @@ interface Ctx {
   open: (n: AppNotification) => void;
   dismissToast: (id: string) => void;
   setActiveConversation: (id: string | null) => void;
+  /** La organización/usuario tiene el módulo Facebook / Instagram (menú + avisos). */
+  facebookEnabled: boolean;
 }
 
 const NotificationsContext = createContext<Ctx | null>(null);
@@ -43,6 +47,10 @@ function preview(m: Message) {
     return mime.startsWith('audio/') ? 'Nota de voz' : mime.startsWith('image/') ? 'Foto' : mime.startsWith('video/') ? 'Video' : 'Archivo';
   }
   return text.length > 110 ? `${text.slice(0, 110)}…` : text || 'Nuevo mensaje';
+}
+
+function targetOf(n: Pick<AppNotification, 'type' | 'conversationId' | 'section'>) {
+  return n.type === 'facebook' ? `/facebook-instagram/${n.section || 'notificaciones'}` : `/inbox?conversation=${n.conversationId}`;
 }
 
 export function NotificationsProvider({ children }: { children: ReactNode }) {
@@ -62,6 +70,15 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
   const baseTitle = useRef(typeof document !== 'undefined' ? document.title : 'Niro');
 
   useEffect(() => { installSoundUnlock(); }, []);
+
+  const [facebookEnabled, setFacebookEnabled] = useState(false);
+  const facebookEnabledRef = useRef(false);
+  useEffect(() => { facebookEnabledRef.current = facebookEnabled; }, [facebookEnabled]);
+  useEffect(() => {
+    setFacebookEnabled(false);
+    if (!enabled) return;
+    apiGet<{ enabled: boolean }>('/api/org/facebook/status').then((res) => setFacebookEnabled(Boolean(res.enabled))).catch(() => {});
+  }, [enabled, userId]);
 
   useEffect(() => {
     if (!storageKey) return;
@@ -95,7 +112,7 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
     if (p.desktop && typeof Notification !== 'undefined' && Notification.permission === 'granted' && document.hidden) {
       try {
         const desktop = new Notification(n.title, { body: n.body, tag: `niro-${n.conversationId}`, icon: '/favicon.ico' });
-        desktop.onclick = () => { window.focus(); navigate(`/inbox?conversation=${n.conversationId}`); desktop.close(); };
+        desktop.onclick = () => { window.focus(); navigate(targetOf(n)); desktop.close(); };
       } catch { /* el navegador no permite avisos */ }
     }
   }, [navigate]);
@@ -133,26 +150,33 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
       push({ type: 'message', conversationId, title: contactLabel(conversation.contact), body: preview(message) });
     };
 
+    // Avisos del panel de Facebook/Instagram (lib/facebookBridge.js en la API).
+    const onFacebook = (n: { id: string; title: string; body: string; section: string }) => {
+      if (!facebookEnabledRef.current) return;
+      push({ type: 'facebook', conversationId: `fb:${n.id}`, section: n.section, title: n.title, body: n.body });
+    };
+
     const onConversationUpdated = ({ conversation }: { conversation: Conversation }) => { conversationCache.current.set(conversation.id, { at: Date.now(), conversation }); };
 
     socket.on('transfer:incoming', onTransfer);
     socket.on('message:new', onMessage);
     socket.on('conversation:updated', onConversationUpdated);
-    return () => { socket.off('transfer:incoming', onTransfer); socket.off('message:new', onMessage); socket.off('conversation:updated', onConversationUpdated); };
+    socket.on('facebook:notification', onFacebook);
+    return () => { socket.off('transfer:incoming', onTransfer); socket.off('message:new', onMessage); socket.off('conversation:updated', onConversationUpdated); socket.off('facebook:notification', onFacebook); };
   }, [enabled, userId, push, fetchConversation]);
 
   const markRead = useCallback((id: string) => setItems((cur) => cur.map((n) => (n.id === id ? { ...n, read: true } : n))), []);
   const markAllRead = useCallback(() => setItems((cur) => cur.map((n) => ({ ...n, read: true }))), []);
   const clearAll = useCallback(() => { setItems([]); setToasts([]); }, []);
   const dismissToast = useCallback((id: string) => setToasts((cur) => cur.filter((t) => t.id !== id)), []);
-  const open = useCallback((n: AppNotification) => { markRead(n.id); dismissToast(n.id); navigate(`/inbox?conversation=${n.conversationId}`); }, [markRead, dismissToast, navigate]);
+  const open = useCallback((n: AppNotification) => { markRead(n.id); dismissToast(n.id); navigate(targetOf(n)); }, [markRead, dismissToast, navigate]);
   const setActiveConversation = useCallback((id: string | null) => {
     activeConversation.current = id;
     if (id) setItems((cur) => (cur.some((n) => n.conversationId === id && !n.read) ? cur.map((n) => (n.conversationId === id ? { ...n, read: true } : n)) : cur));
   }, []);
 
-  const value = useMemo<Ctx>(() => ({ items, unread, toasts, prefs, updatePrefs, markAllRead, markRead, clearAll, open, dismissToast, setActiveConversation }),
-    [items, unread, toasts, prefs, updatePrefs, markAllRead, markRead, clearAll, open, dismissToast, setActiveConversation]);
+  const value = useMemo<Ctx>(() => ({ items, unread, toasts, prefs, updatePrefs, markAllRead, markRead, clearAll, open, dismissToast, setActiveConversation, facebookEnabled }),
+    [items, unread, toasts, prefs, updatePrefs, markAllRead, markRead, clearAll, open, dismissToast, setActiveConversation, facebookEnabled]);
   return <NotificationsContext.Provider value={value}>{children}</NotificationsContext.Provider>;
 }
 

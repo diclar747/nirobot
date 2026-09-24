@@ -116,7 +116,7 @@ export function Contacts() {
 
   return (
     <PageShell>
-      <PageHeader title="Contactos" subtitle="Todos los contactos de tu WhatsApp en un solo lugar: editá, etiquetá y enviá al CRM."
+      <PageHeader tone="sky" icon={<Ui name="contact" size={22} />} hero={{ eyebrow: 'Libreta de contactos', title: 'Toda tu agenda, lista para vender.', text: 'Buscá, etiquetá y llevá cada contacto al CRM o a una campaña en un clic.', features: [{ icon: 'refresh', label: 'Sincronizado con tu teléfono' }, { icon: 'tag', label: 'Etiquetas' }, { icon: 'download', label: 'Exportación a Excel' }], art: ['user', 'contact', 'tag'] }} title="Contactos" subtitle="Todos los contactos de tu WhatsApp en un solo lugar: editá, etiquetá y enviá al CRM."
         actions={<>
           <button className="btn secondary" onClick={sync} disabled={syncing}>{syncing ? 'Sincronizando…' : <><Ui name="refresh" size={16} /> Sincronizar teléfono</>}</button>
           <a className="btn" href="/api/org/contacts/export.csv" download><Ui name="download" size={16} /> Descargar contactos</a>

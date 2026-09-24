@@ -4,8 +4,15 @@ import type { OrganizationSummary } from '../types';
 import { Modal } from '../components/Modal';
 import { EmptyState, LoadingRows, PageHeader, PageShell, Panel, PersonCell, Pill, StatCard, StatGrid } from '../components/PageKit';
 import { IconBuilding, IconUsers } from '../components/icons';
+import { Ui } from '../components/Ui';
+import { useNavigate } from 'react-router-dom';
+import { useAuth } from '../context/AuthContext';
+import type { CurrentUser } from '../types';
 
 export function SuperadminOrganizations() {
+  const navigate = useNavigate();
+  const { setUser } = useAuth();
+  const [entering, setEntering] = useState<string | null>(null);
   const [organizations, setOrganizations] = useState<OrganizationSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -28,6 +35,20 @@ export function SuperadminOrganizations() {
     load();
   }, []);
 
+  // Soporte: entra al sistema como esta empresa (sesión prestada de 2 h, auditada).
+  async function enterAs(org: OrganizationSummary) {
+    setEntering(org.id);
+    setError(null);
+    try {
+      const data = await apiPost<{ user: CurrentUser }>(`/api/superadmin/organizations/${org.id}/impersonate`, {});
+      setUser(data.user);
+      navigate('/dashboard');
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'No se pudo entrar como esta empresa');
+      setEntering(null);
+    }
+  }
+
   async function toggleActive(org: OrganizationSummary) {
     try {
       await apiPatch(`/api/superadmin/organizations/${org.id}`, { active: !org.active });
@@ -42,7 +63,7 @@ export function SuperadminOrganizations() {
 
   return (
     <PageShell>
-      <PageHeader
+      <PageHeader tone="slate" hero={{ eyebrow: 'Plataforma', title: 'Todas las empresas clientes.', compact: true }}
         icon={<IconBuilding />}
         title="Organizaciones"
         subtitle="Empresas clientes de la plataforma, sus planes y estado de servicio."
@@ -97,6 +118,9 @@ export function SuperadminOrganizations() {
                       </Pill>
                     </td>
                     <td className="actions">
+                      <button className="btn small" disabled={entering === org.id || !org.active} title={org.active ? `Ver el sistema como ${org.name}` : 'La organización está suspendida'} onClick={() => enterAs(org)}>
+                        {entering === org.id ? 'Entrando…' : <><Ui name="external" size={14} /> Entrar</>}
+                      </button>
                       <button className="btn secondary small" onClick={() => toggleActive(org)}>
                         {org.active ? 'Suspender' : 'Activar'}
                       </button>

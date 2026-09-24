@@ -20,8 +20,8 @@ const {
 } = require('@whiskeysockets/baileys');
 const { prisma } = require('./prisma');
 const { emitToOrg } = require('./realtime');
-const { runBotFlow, conversationUpdateData } = require('./botFlow');
 const { registerInboundResponse } = require('./callSurveys');
+const { HANDOFF_TAG } = require('./botFlow');
 const aiBot = require('./aiBot');
 const push = require('./push');
 const { saveFile } = require('./storage');
@@ -906,8 +906,20 @@ async function connectSession(organizationId, options = {}) {
         .catch((err) => console.error('[whatsapp] status sync failed:', err.message || err));
     }
     if (chatMessages.length === 0 && statusMessages.length > 0) return;
-    enqueueMessages(organizationId, sock, chatMessages, payload.type !== 'notify')
-      .catch(err => console.error('[whatsapp] message sync failed:', err.message));
+    // Baileys marca type 'append' tanto para el historial como para mensajes EN VIVO que llegan mientras
+    // la sesión se sincroniza. Tratarlos todos como historial hacía que el bot no respondiera justo a esos
+    // (p. ej. el cliente elegía "1" del menú y no pasaba nada). Se decide por la fecha del mensaje.
+    const live = [];
+    const history = [];
+    for (const message of chatMessages) ((payload.type === 'notify' || isRecentMessage(message)) ? live : history).push(message);
+    if (live.length > 0) {
+      enqueueMessages(organizationId, sock, live, false)
+        .catch(err => console.error('[whatsapp] message sync failed:', err.message));
+    }
+    if (history.length > 0) {
+      enqueueMessages(organizationId, sock, history, true)
+        .catch(err => console.error('[whatsapp] message sync failed:', err.message));
+    }
   });
 
   sock.ev.on('messages.reaction', (reactions) => {
@@ -1130,6 +1142,15 @@ const statusHelpers = {
   phoneFromJid: (jid) => phoneFromJid(jid)
 };
 
+// Un mensaje "en vivo" es el que acaba de llegar; el historial que manda WhatsApp al sincronizar es más viejo.
+const LIVE_MESSAGE_WINDOW_MS = 5 * 60 * 1000;
+function isRecentMessage(message, now = Date.now()) {
+  const raw = message && message.messageTimestamp;
+  const seconds = Number(raw && typeof raw === 'object' && 'toNumber' in raw ? raw.toNumber() : raw);
+  if (!Number.isFinite(seconds) || seconds <= 0) return true; // sin fecha: se asume en vivo
+  return now - seconds * 1000 <= LIVE_MESSAGE_WINDOW_MS;
+}
+
 function enqueueMessages(organizationId, sock, messages, historical = false, contacts = []) {
   const previous = messageQueues.get(organizationId) || Promise.resolve();
   const next = previous.catch(() => {}).then(async () => {
@@ -1208,8 +1229,9 @@ async function handleInboundMessage(organizationId, sock, waMessage, { historica
   }
   if (!historical && (await require('./whatsappSync').isEnabled(organizationId, 'avatars'))) contact = await ensureContactAvatar(sock, contact, resolvedJid || rawJid);
 
+  // Un solo chat por contacto, como WhatsApp: si el anterior estaba cerrado se reabre (no se crea otro en la lista).
   let conversation = await prisma.conversation.findFirst({
-    where: { organizationId: organizationId, contactId: contact.id, channel: 'whatsapp', ...(historical ? {} : { status: { not: 'CLOSED' } }) },
+    where: { organizationId: organizationId, contactId: contact.id, channel: 'whatsapp' },
     orderBy: { updatedAt: 'desc' },
     include: CONVERSATION_INCLUDE
   });
@@ -1220,6 +1242,16 @@ async function handleInboundMessage(organizationId, sock, waMessage, { historica
       data: { organizationId: organizationId, contactId: contact.id, channel: 'whatsapp' },
       include: CONVERSATION_INCLUDE
     });
+  } else if (!historical && conversation.status === 'CLOSED') {
+    // Vuelve a abrirse con el mensaje nuevo. Se quita "Derivado" para que el bot pueda volver a atender
+    // si nadie lo tiene asignado; si un agente lo tenía, sigue siendo suyo.
+    const tags = Array.isArray(conversation.tags) ? conversation.tags.filter((tag) => tag !== HANDOFF_TAG) : [];
+    conversation = await prisma.conversation.update({
+      where: { id: conversation.id },
+      data: { status: 'OPEN', ...(conversation.assignedToId ? {} : { tags }) },
+      include: CONVERSATION_INCLUDE
+    });
+    emitToOrg(organizationId, 'conversation:updated', { conversation: sanitizeConversation(conversation) });
   }
 
   // Baileys may replay an upsert after a reconnect. Do not create a duplicate
@@ -1308,44 +1340,17 @@ async function handleInboundMessage(organizationId, sock, waMessage, { historica
   });
   const organizationName = settings && settings.organization ? settings.organization.name : null;
 
-  if (isNewConversation) {
-    const flowResult = settings ? runBotFlow(settings.botFlow, { content: caption, contact, conversation: updated, isNewConversation: true }) : null;
-    if (flowResult) {
-      const flowData = conversationUpdateData(updated, flowResult);
-      if (Object.keys(flowData).length > 0) {
-        updated = await prisma.conversation.update({ where: { id: conversation.id }, data: flowData, include: CONVERSATION_INCLUDE });
-        emitToOrg(organizationId, 'conversation:updated', { conversation: sanitizeConversation(updated) });
-      }
-      for (const reply of flowResult.replies) {
-        await sendBotMessage(conversation.id, organizationId, reply);
-        if (phone) await sendText(organizationId, phone, reply).catch((err) => console.error('[whatsapp] flow welcome send failed', err));
-      }
-    }
-    return;
-  }
-
-  const flowResult = settings ? runBotFlow(settings.botFlow, { content: caption, contact, conversation: updated, isNewConversation: false }) : null;
-  if (flowResult) {
-    const flowData = conversationUpdateData(updated, flowResult);
-    if (Object.keys(flowData).length > 0) {
-      updated = await prisma.conversation.update({ where: { id: conversation.id }, data: flowData, include: CONVERSATION_INCLUDE });
-    }
-    for (const reply of flowResult.replies) {
-      await sendBotMessage(conversation.id, organizationId, reply);
-      if (phone) await sendText(organizationId, phone, reply).catch((err) => console.error('[whatsapp] flow reply send failed', err));
-    }
-    if (flowResult.conversation && flowResult.conversation.handoff) await require('./botHandoff').announceHandoff({ organizationId, conversation: updated });
-    if (flowResult.useAi && aiBot.shouldReply(updated, settings)) {
-      const aiSettings = flowResult.aiPrompt ? { ...settings, systemPrompt: `${settings.systemPrompt || ''} ${flowResult.aiPrompt}`.trim() } : settings;
-      const reply = await aiBot.generateReply(conversation.id, aiSettings, organizationName);
-      if (reply && reply.content) {
-        await sendBotMessage(conversation.id, organizationId, reply.content, 'ai');
-        if (phone) await sendText(organizationId, phone, reply.content).catch((err) => console.error('[whatsapp] flow ai reply failed', err));
-      }
-    }
-    emitToOrg(organizationId, 'conversation:updated', { conversation: sanitizeConversation(updated) });
-    return;
-  }
+  // Un solo motor para el primer mensaje y los siguientes (ver lib/botRunner.js).
+  await require('./botRunner').handleBotTurn({
+    organizationId,
+    conversation: updated,
+    contact,
+    content: caption,
+    isNewConversation,
+    settings,
+    organizationName,
+    deliver: phone ? (text) => sendText(organizationId, phone, text) : null
+  });
 }
 
 // Vista de un estado propio: resuelve quién es (los LID se traducen a teléfono cuando se puede) y la registra.
@@ -1569,6 +1574,7 @@ module.exports = {
   listGroups: listGroups,
   backfillAvatars: (organizationId, options) => { const entry = sessions.get(organizationId); return entry && entry.sock ? backfillContactAvatars(organizationId, entry.sock, options) : Promise.resolve({ started: false }); },
   ingestMessages: enqueueMessages,
+  isRecentMessage,
   getSessionReference: (organizationId) => sessionDir(organizationId),
   sendText: sendText,
   sendMedia: sendMedia,

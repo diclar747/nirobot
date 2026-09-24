@@ -1995,7 +1995,7 @@ const AUTHOR_LABELS: Record<string, { icon: UiIconName; label: string }> = {
 };
 
 function MessageAuthor({ message }: { message: Message }) {
-  if (message.direction === 'NOTE') return <span className="chat-author"><Ui name="note" size={12} /> Nota interna{message.sender ? ` · ${message.sender.name}` : ''}</span>;
+  if (message.direction === 'NOTE') return <span className="chat-author"><Ui name="note" size={12} /> Nota interna{message.staffOnly ? ' · solo administración' : ''}{message.sender ? ` · ${message.sender.name}` : ''}</span>;
   if (message.direction === 'INBOUND') return <span className="chat-author">Cliente</span>;
   if (message.sender) return <span className="chat-author agent" title="Agente que respondió"><Ui name="user" size={12} /> {message.sender.name}</span>;
   if (message.viaCampaign) return <span className="chat-author campaign"><Ui name="megaphone" size={12} /> Campaña</span>;
@@ -2226,6 +2226,8 @@ function ContactInfoPanel({
   const [showAddNote, setShowAddNote] = useState(false);
   const [savingNote, setSavingNote] = useState(false);
   const [resolving, setResolving] = useState(false);
+  const [returningToBot, setReturningToBot] = useState(false);
+  const { notify } = useAlerts();
 
   useEffect(() => {
     apiGet<{ messages: Message[] }>(`/api/org/conversations/${conversation.id}/messages`)
@@ -2261,6 +2263,21 @@ function ContactInfoPanel({
       console.error(err);
     } finally {
       setResolving(false);
+    }
+  }
+
+  // Un chat derivado a un agente queda mudo para el bot para siempre (aunque se cierre y reabra),
+  // hasta que alguien lo libere: sin este botón no había forma de devolverlo al bot desde la pantalla.
+  const isHandedOff = Boolean(conversation.assignedTo) || conversation.tags.includes('Derivado');
+  async function handleReturnToBot() {
+    setReturningToBot(true);
+    try {
+      const res = await patchConversation(conversation, { assignedToId: null, tags: conversation.tags.filter((t) => t !== 'Derivado') });
+      if (res) { onConversationChange(res.conversation); notify('El bot vuelve a atender esta conversación.', { tone: 'success' }); }
+    } catch (err) {
+      notify(err instanceof ApiError ? err.message : 'No se pudo devolver la conversación al bot', { tone: 'error' });
+    } finally {
+      setReturningToBot(false);
     }
   }
 
@@ -2413,6 +2430,17 @@ function ContactInfoPanel({
         >
           <Ui name="user-plus" size={18} /> Asignar agente
         </button>
+        {isHandedOff && (
+          <button
+            type="button"
+            className="crm-quick-action-btn"
+            onClick={() => { void handleReturnToBot(); }}
+            disabled={returningToBot}
+            title="Este chat está derivado a un agente: el bot no le responde hasta que se libere"
+          >
+            <Ui name="bot" size={18} /> {returningToBot ? 'Devolviendo...' : 'Devolver al bot'}
+          </button>
+        )}
         <button
           type="button"
           className="crm-quick-action-btn"

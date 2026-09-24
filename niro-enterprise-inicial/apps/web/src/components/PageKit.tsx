@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import { Ui, type UiIconName } from './Ui';
 import '../styles/page-kit.css';
 
 export type Tone = 'primary' | 'success' | 'warning' | 'danger' | 'violet' | 'neutral';
@@ -8,28 +9,77 @@ export function PageShell({ children, narrow }: { children: ReactNode; narrow?: 
   return <div className={`page-shell ${narrow ? 'is-narrow' : ''}`}>{children}</div>;
 }
 
+/** Color de cada módulo: pinta el ícono del encabezado y el banner. Todos dentro de la paleta del sistema. */
+export type ModuleTone = 'emerald' | 'sky' | 'blue' | 'indigo' | 'violet' | 'fuchsia' | 'rose' | 'amber' | 'teal' | 'cyan' | 'slate';
+
+export interface PageHeroProps {
+  eyebrow: string;
+  title: string;
+  text?: ReactNode;
+  /** Hasta 3-4 puntos destacados con ícono. */
+  features?: { icon: UiIconName; label: string }[];
+  /** Tres íconos para el arte de la derecha (el del medio va resaltado). */
+  art?: [UiIconName, UiIconName, UiIconName];
+  /** Algo vivo a la derecha en vez del arte (ej. "Seguimiento en tiempo real"). */
+  badge?: ReactNode;
+  /** Variante baja para pantallas de trabajo (tablero, constructor): sin puntos ni arte. */
+  compact?: boolean;
+}
+
+export function PageHero({ tone = 'sky', eyebrow, title, text, features, art, badge, compact }: PageHeroProps & { tone?: ModuleTone }) {
+  return (
+    <section className={`page-hero ${compact ? 'is-compact' : ''}`} data-tone={tone} aria-label={eyebrow}>
+      <div className="page-hero-copy">
+        <span className="page-hero-eyebrow">{eyebrow}</span>
+        <h2>{title}</h2>
+        {text && <p>{text}</p>}
+        {!compact && features && features.length > 0 && (
+          <div className="page-hero-features">
+            {features.map((feature) => <span key={feature.label}><Ui name={feature.icon} size={15} /> {feature.label}</span>)}
+          </div>
+        )}
+      </div>
+      {badge ? <div className="page-hero-badge">{badge}</div> : !compact && art && (
+        <div className="page-hero-art" aria-hidden="true">
+          <Ui name={art[0]} size={28} /><Ui name={art[1]} size={34} /><Ui name={art[2]} size={26} />
+        </div>
+      )}
+    </section>
+  );
+}
+
 export function PageHeader({
   icon,
   title,
   subtitle,
-  actions
+  actions,
+  tone,
+  hero,
+  className
 }: {
   icon?: ReactNode;
   title: string;
   subtitle?: string;
   actions?: ReactNode;
+  tone?: ModuleTone;
+  /** Banner del módulo, debajo del título, con el mismo color. */
+  hero?: PageHeroProps;
+  className?: string;
 }) {
   return (
-    <header className="page-header">
-      <div className="page-header-main">
-        {icon && <div className="page-header-icon">{icon}</div>}
-        <div className="page-header-text">
-          <h1 className="page-title">{title}</h1>
-          {subtitle && <p className="page-subtitle">{subtitle}</p>}
+    <>
+      <header className={`page-header ${className || ''}`} data-tone={tone}>
+        <div className="page-header-main">
+          {icon && <div className="page-header-icon">{icon}</div>}
+          <div className="page-header-text">
+            <h1 className="page-title">{title}</h1>
+            {subtitle && <p className="page-subtitle">{subtitle}</p>}
+          </div>
         </div>
-      </div>
-      {actions && <div className="page-header-actions">{actions}</div>}
-    </header>
+        {actions && <div className="page-header-actions">{actions}</div>}
+      </header>
+      {hero && <PageHero tone={tone} {...hero} />}
+    </>
   );
 }
 

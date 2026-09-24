@@ -48,7 +48,15 @@ function renderMessage(template, recipient, options) {
 
 // Lee una lista pegada o subida (.txt/.csv): una persona por línea, "nombre,número" o "número,nombre" o solo "número".
 // Separadores: coma, punto y coma, tabulación o espacios. La primera línea de títulos ("nombre,numero") se ignora.
-function parseRecipientList(text, { max = 20000 } = {}) {
+// allowInternational (WhatsApp): si no es un celular de Paraguay, acepta también un número internacional completo
+// (11 a 15 dígitos con código de país, ej. 5491155554444).
+function internationalPhone(raw) {
+  let digits = String(raw ?? '').replace(/\D/g, '');
+  if (digits.startsWith('00')) digits = digits.slice(2);
+  return /^[1-9]\d{10,14}$/.test(digits) && !digits.startsWith('595') ? digits : null;
+}
+
+function parseRecipientList(text, { max = 20000, allowInternational = false } = {}) {
   const rows = [];
   const seen = new Set();
   const lines = String(text || '').replace(/^﻿/, '').split(/\r?\n/);
@@ -64,12 +72,12 @@ function parseRecipientList(text, { max = 20000 } = {}) {
     }
     const name = (line.slice(0, match.index) + ' ' + line.slice(match.index + match[0].length))
       .replace(/["';,\t|]+/g, ' ').replace(/\s{2,}/g, ' ').trim() || null;
-    const phone = normalizePyPhone(match[0]);
-    if (!phone) rows.push({ line: index + 1, raw: line, name, phone: null, valid: false, reason: 'Número no válido (celular de Paraguay: 09XX XXX XXX)' });
+    const phone = normalizePyPhone(match[0]) || (allowInternational ? internationalPhone(match[0]) : null);
+    if (!phone) rows.push({ line: index + 1, raw: line, name, phone: null, valid: false, reason: allowInternational ? 'Número no válido (ej. 0985 768 793 o con código de país)' : 'Número no válido (celular de Paraguay: 09XX XXX XXX)' });
     else if (seen.has(phone)) rows.push({ line: index + 1, raw: line, name, phone, valid: false, reason: 'Número repetido' });
     else { seen.add(phone); rows.push({ line: index + 1, raw: line, name, phone, valid: true, reason: null }); }
   }
   return rows;
 }
 
-module.exports = { GSM_LIMIT, UCS2_LIMIT, normalizePyPhone, stripToAscii, analyzeText, renderMessage, parseRecipientList };
+module.exports = { GSM_LIMIT, UCS2_LIMIT, normalizePyPhone, internationalPhone, stripToAscii, analyzeText, renderMessage, parseRecipientList };

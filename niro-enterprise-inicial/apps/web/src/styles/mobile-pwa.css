@@ -39,7 +39,7 @@ button:focus-visible, a:focus-visible { outline: 3px solid #38bdf8; outline-offs
   .mobile-menu-open .modern-sidebar.collapsed .sidebar-nav-item-content { justify-content: flex-start; }
   .sidebar-collapse-toggle { display: none; }
   .sidebar-nav-item { min-height: 46px; }
-  .mobile-menu-open .mobile-menu-backdrop { display: block; position: fixed; inset: 0; z-index: 109; background: #02061799; border: 0; }
+  .mobile-menu-open .mobile-menu-backdrop { display: block; position: fixed; inset: 0; z-index: 109; background: transparent; border: 0; }
   .pwa-install { left: auto; right: 12px; bottom: max(12px, env(safe-area-inset-bottom)); }
   body:has(.crm-inbox-grid) > #root .pwa-install { display: none; }
   body:has(.mobile-menu-open) > #root .pwa-install { display: flex; z-index: 111; left: 16px; right: auto; }
@@ -70,7 +70,7 @@ button:focus-visible, a:focus-visible { outline: 3px solid #38bdf8; outline-offs
   .composer-action-btn { min-width: 40px; min-height: 40px; }
   .crm-emoji-picker { max-width: calc(100vw - 24px); }
   .crm-inbox-grid.mobile-info-open > .crm-info-column { display: flex; position: absolute; inset: 0 0 0 auto; width: min(360px, 92%); z-index: 52; overflow-y: auto; box-shadow: -12px 0 32px #0004; }
-  .mobile-info-open .mobile-info-backdrop { display: block; position: absolute; inset: 0; z-index: 51; background: #02061788; border: 0; }
+  .mobile-info-open .mobile-info-backdrop { display: block; position: absolute; inset: 0; z-index: 51; background: transparent; border: 0; }
   .crm-transfer-banner { max-width: calc(100vw - 24px); flex-wrap: wrap; left: 12px; right: 12px; bottom: calc(12px + env(safe-area-inset-bottom)); }
   .modal-backdrop { padding: 12px; padding-bottom: max(12px, env(safe-area-inset-bottom)); }
   .modal { width: 100% !important; min-width: 0 !important; max-height: calc(100dvh - 32px); overflow-y: auto; border-radius: 20px; }

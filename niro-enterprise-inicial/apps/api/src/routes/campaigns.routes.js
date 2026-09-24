@@ -11,7 +11,8 @@ const { extensionFor } = require('../lib/attachments');
 const { contactAvatarUrlFor } = require('../lib/avatars');
 const campaigns = require('../lib/campaigns');
 const whatsapp = require('../lib/whatsapp');
-const { findUnknownVariables, PUBLIC_VARIABLES } = require('../lib/campaignVariables');
+const { findUnknownVariables, realName, PUBLIC_VARIABLES } = require('../lib/campaignVariables');
+const smsText = require('../lib/smsText');
 
 const router = express.Router();
 
@@ -69,7 +70,53 @@ router.get('/audience', async (req, res, next) => {
   }
 });
 
+// Lee una lista pegada: una persona por línea, "número, nombre", "nombre, número" o solo el número.
+// Acepta 0985…, 985…, 595985… y números internacionales completos; marca inválidos y repetidos.
+router.post('/parse-list', requireCsrf, (req, res, next) => {
+  try {
+    const rows = smsText.parseRecipientList(String(req.body?.text || '').slice(0, 1_500_000), { max: 10000, allowInternational: true });
+    const valid = rows.filter((r) => r.valid);
+    res.json({
+      rows: rows.slice(0, 500),
+      truncated: rows.length > 500,
+      summary: { total: rows.length, valid: valid.length, invalid: rows.filter((r) => !r.valid && r.reason !== 'Número repetido').length, duplicates: rows.filter((r) => r.reason === 'Número repetido').length },
+      recipients: valid.map((r) => ({ name: r.name, phone: r.phone }))
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
 const CAMPAIGN_MANAGERS = requireRole('OWNER', 'ADMIN', 'SUPERVISOR');
+
+// Números pegados en la campaña → contactos del CRM. Los que no existen se crean con su nombre; a los que ya existen
+// sin nombre real se les completa. Devuelve { contactId, displayName } en el orden de la lista, sin repetidos.
+async function resolveManualRecipients(organizationId, list) {
+  const byPhone = new Map();
+  for (const item of list) {
+    const phone = smsText.normalizePyPhone(item.phone) || smsText.internationalPhone(item.phone);
+    if (!phone) continue;
+    const name = realName(item.name) ? item.name.trim().slice(0, 120) : null;
+    if (!byPhone.has(phone) || (!byPhone.get(phone) && name)) byPhone.set(phone, name);
+  }
+  if (byPhone.size === 0) return [];
+  const phones = [...byPhone.keys()];
+  const findExisting = () => prisma.contact.findMany({ where: { organizationId, phone: { in: phones } }, select: { id: true, phone: true, name: true }, orderBy: { createdAt: 'asc' } });
+  let existing = await findExisting();
+  const known = new Set(existing.map((c) => c.phone));
+  const missing = phones.filter((phone) => !known.has(phone));
+  if (missing.length > 0) {
+    await prisma.contact.createMany({ data: missing.map((phone) => ({ organizationId, phone, name: byPhone.get(phone) || null })) });
+    existing = await findExisting();
+  }
+  const contactByPhone = new Map();
+  for (const contact of existing) if (!contactByPhone.has(contact.phone)) contactByPhone.set(contact.phone, contact);
+  const toName = [...contactByPhone.values()].filter((c) => !realName(c.name) && byPhone.get(c.phone));
+  for (let i = 0; i < toName.length; i += 50) {
+    await prisma.$transaction(toName.slice(i, i + 50).map((c) => prisma.contact.update({ where: { id: c.id }, data: { name: byPhone.get(c.phone) } })));
+  }
+  return phones.map((phone) => ({ contactId: contactByPhone.get(phone).id, displayName: byPhone.get(phone) || null }));
+}
 
 // Valida el cuerpo (mensaje, fecha, grupos, audiencia) y devuelve los campos comunes de crear/editar una campaña.
 async function campaignInput(req, data) {
@@ -105,15 +152,22 @@ async function campaignInput(req, data) {
     },
     select: { id: true }
   });
-  if (recipients.length === 0 && groupTargets.length === 0) {
+  if (recipients.length === 0 && groupTargets.length === 0 && data.manualRecipients.length === 0) {
     throw new HttpError(400, 'Ningún contacto seleccionado tiene un teléfono registrado');
+  }
+  const manual = await resolveManualRecipients(req.auth.organizationId, data.manualRecipients);
+  // Contactos sin repetir: los de la lista pegada conservan su nombre para personalizar el mensaje.
+  const contactTargets = new Map(recipients.map((c) => [c.id, null]));
+  for (const item of manual) if (!contactTargets.has(item.contactId) || item.displayName) contactTargets.set(item.contactId, item.displayName);
+  if (contactTargets.size === 0 && groupTargets.length === 0) {
+    throw new HttpError(400, 'Ninguno de los números pegados es válido. Usá un número por línea, por ejemplo 0985768793, Juan');
   }
 
   const profileRates = { CONSERVATIVE: 10, BALANCED: 40, PERFORMANCE: 60, HIGH_PERFORMANCE: 100 };
   const messagesPerHour = data.messagesPerHour || profileRates[data.speedProfile] || Math.min(100, (data.ratePerMinute || 1) * 60);
   return {
     scheduledAt,
-    recipientCount: recipients.length + groupTargets.length,
+    recipientCount: contactTargets.size + groupTargets.length,
     messagesPerHour,
     fields: {
       name: data.name,
@@ -127,7 +181,7 @@ async function campaignInput(req, data) {
       scheduledAt,
       status: scheduledAt ? 'SCHEDULED' : 'DRAFT'
     },
-    recipientsCreate: [...recipients.map((c) => ({ contactId: c.id })), ...groupTargets]
+    recipientsCreate: [...[...contactTargets].map(([contactId, displayName]) => ({ contactId, displayName })), ...groupTargets]
   };
 }
 
@@ -200,11 +254,14 @@ router.get('/:id/config', async (req, res, next) => {
   try {
     const campaign = await prisma.campaign.findFirst({ where: { id: req.params.id, organizationId: req.auth.organizationId }, include: CAMPAIGN_INCLUDE });
     if (!campaign) throw new HttpError(404, 'Campaña no encontrada');
-    const recipients = await prisma.campaignRecipient.findMany({ where: { campaignId: campaign.id }, select: { contactId: true, groupJid: true, status: true }, orderBy: { createdAt: 'asc' } });
+    const recipients = await prisma.campaignRecipient.findMany({ where: { campaignId: campaign.id }, select: { contactId: true, groupJid: true, displayName: true, status: true, contact: { select: { phone: true } } }, orderBy: { createdAt: 'asc' } });
+    // Los que vinieron de la lista pegada (con nombre propio) vuelven a la lista para poder editarla.
+    const pasted = recipients.filter((r) => r.contactId && r.displayName && r.contact?.phone);
     res.json({
       campaign: campaigns.sanitizeCampaign(campaign, await campaigns.getCounts(campaign.id)),
-      contactIds: recipients.filter((r) => r.contactId).map((r) => r.contactId),
-      groupJids: recipients.filter((r) => r.groupJid).map((r) => r.groupJid)
+      contactIds: recipients.filter((r) => r.contactId && !pasted.includes(r)).map((r) => r.contactId),
+      groupJids: recipients.filter((r) => r.groupJid).map((r) => r.groupJid),
+      manualRecipients: pasted.map((r) => ({ phone: r.contact.phone, name: r.displayName }))
     });
   } catch (err) {
     next(err);
@@ -309,7 +366,7 @@ router.get('/:id', async (req, res, next) => {
         readAt: r.readAt,
         waMessageId: r.waMessageId,
         contact: r.contact
-          ? { id: r.contact.id, name: r.contact.name, phone: r.contact.phone, avatarUrl: contactAvatarUrlFor(r.contact.avatarUrl) }
+          ? { id: r.contact.id, name: r.displayName || r.contact.name, phone: r.contact.phone, avatarUrl: contactAvatarUrlFor(r.contact.avatarUrl) }
           : { id: r.id, name: r.groupName || 'Grupo', phone: null, avatarUrl: null, isGroup: true }
       }))
     });

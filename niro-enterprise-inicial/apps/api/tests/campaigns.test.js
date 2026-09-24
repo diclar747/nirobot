@@ -71,7 +71,8 @@ describe('Campañas de WhatsApp', () => {
   });
 
   test('el endpoint de sesiones es seguro y la sincronización exige una sesión conectada', async () => {
-    const { agent, csrfToken } = await setup();
+    const { agent, csrfToken, organization } = await setup();
+    await prisma.organizationSettings.update({ where: { organizationId: organization.id }, data: { syncContactsEnabled: true } });
     const sessions = await agent.get('/api/org/whatsapp/sessions');
     expect(sessions.status).toBe(200);
     expect(sessions.body.sessions).toEqual([]);

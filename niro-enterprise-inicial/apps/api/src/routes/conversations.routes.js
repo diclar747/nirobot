@@ -16,12 +16,11 @@ const {
   shareContactSchema
 } = require('../validation/conversations.validation');
 const { HttpError } = require('../lib/errors');
-const { runBotFlow, conversationUpdateData } = require('../lib/botFlow');
-const aiBot = require('../lib/aiBot');
+const { handleBotTurn } = require('../lib/botRunner');
 const niroAi = require('../lib/niroAi');
 const push = require('../lib/push');
 const { KINDS: aiUsageKinds, recordAiUsage } = require('../lib/aiUsage');
-const { CONVERSATION_INCLUDE, MESSAGE_INCLUDE, sanitizeConversation, sanitizeMessage, broadcastMessage, sendBotMessage } = require('../lib/conversations');
+const { CONVERSATION_INCLUDE, MESSAGE_INCLUDE, sanitizeConversation, sanitizeMessage, broadcastMessage } = require('../lib/conversations');
 const { upload } = require('../middleware/upload');
 const { saveFile, resolvePath } = require('../lib/storage');
 const { extensionFor, normalizeMimeType, sendAttachmentFile } = require('../lib/attachments');
@@ -152,13 +151,16 @@ router.post('/', requireCsrf, async (req, res, next) => {
     // Un contacto con teléfono se atiende por WhatsApp: sin canal, el chat quedaba "manual" y lo que se escribía nunca salía.
     const channel = data.channel || (chosenContact.phone ? 'whatsapp' : 'manual');
 
-    // Si ya hay un chat abierto con ese contacto se abre ese, en vez de duplicarlo.
+    // Un solo chat por contacto: se abre el que ya existe (si estaba cerrado, se reabre) en vez de duplicarlo.
     if (channel === 'whatsapp' && data.contactId) {
-      const existing = await prisma.conversation.findFirst({
-        where: { organizationId: req.auth.organizationId, contactId, channel: 'whatsapp', status: { not: 'CLOSED' } },
+      let existing = await prisma.conversation.findFirst({
+        where: { organizationId: req.auth.organizationId, contactId, channel: 'whatsapp' },
         orderBy: { updatedAt: 'desc' },
         include: CONVERSATION_INCLUDE
       });
+      if (existing && existing.status === 'CLOSED') {
+        existing = await prisma.conversation.update({ where: { id: existing.id }, data: { status: 'OPEN' }, include: CONVERSATION_INCLUDE });
+      }
       if (existing) return res.status(200).json({ conversation: sanitizeConversation(existing), existing: true });
     }
 
@@ -191,15 +193,17 @@ router.post('/', requireCsrf, async (req, res, next) => {
     let finalConversation = conversation;
     // La bienvenida automática es para clientes que escriben primero, no para chats iniciados por un agente.
     if (!data.departmentId && channel !== 'whatsapp') {
-      const settings = await prisma.organizationSettings.findUnique({ where: { organizationId: req.auth.organizationId } });
-      const flowResult = runBotFlow(settings?.botFlow, { content: '', contact: conversation.contact, conversation, isNewConversation: true });
-      if (flowResult) {
-        const flowData = conversationUpdateData(conversation, flowResult);
-        if (Object.keys(flowData).length > 0) {
-          finalConversation = await prisma.conversation.update({ where: { id: conversation.id }, data: flowData, include: CONVERSATION_INCLUDE });
-        }
-        for (const reply of flowResult.replies) await sendBotMessage(conversation.id, req.auth.organizationId, reply);
-      }
+      const settings = await prisma.organizationSettings.findUnique({ where: { organizationId: req.auth.organizationId }, include: { organization: { select: { name: true } } } });
+      const turn = await handleBotTurn({
+        organizationId: req.auth.organizationId,
+        conversation,
+        contact: conversation.contact,
+        content: '',
+        isNewConversation: true,
+        settings,
+        organizationName: settings?.organization?.name || null
+      });
+      if (turn) finalConversation = turn.conversation;
     }
 
     const payload = sanitizeConversation(finalConversation);
@@ -215,13 +219,19 @@ async function loadVisibleConversation(req, id) {
   return prisma.conversation.findFirst({ where, include: CONVERSATION_INCLUDE });
 }
 
+// Las notas marcadas como "solo administración" no se listan para los agentes.
+const STAFF_ROLES = ['OWNER', 'ADMIN', 'SUPERVISOR'];
+function staffOnlyFilter(req) {
+  return STAFF_ROLES.includes(req.auth.role) ? {} : { staffOnly: false };
+}
+
 router.get('/:id', async (req, res, next) => {
   try {
     const conversation = await loadVisibleConversation(req, req.params.id);
     if (!conversation) throw new HttpError(404, 'Conversación no encontrada');
 
     const messages = await prisma.message.findMany({
-      where: { conversationId: conversation.id },
+      where: { conversationId: conversation.id, ...staffOnlyFilter(req) },
       include: MESSAGE_INCLUDE,
       orderBy: { createdAt: 'desc' },
       take: 50
@@ -240,7 +250,7 @@ router.get('/:id/messages', async (req, res, next) => {
 
     const before = req.query.before;
     const messages = await prisma.message.findMany({
-      where: { conversationId: conversation.id, ...(before && !Number.isNaN(new Date(before).getTime()) ? { createdAt: { lt: new Date(before) } } : {}) },
+      where: { conversationId: conversation.id, ...staffOnlyFilter(req), ...(before && !Number.isNaN(new Date(before).getTime()) ? { createdAt: { lt: new Date(before) } } : {}) },
       include: MESSAGE_INCLUDE,
       orderBy: { createdAt: 'desc' },
       take: 50
@@ -504,6 +514,8 @@ router.post('/:id/transfer-response', requirePermission('transferChats'), requir
           conversationId: conversation.id,
           senderUserId: req.auth.userId,
           direction: 'NOTE',
+          // Solo la ve la administración: el agente ya sabe que aceptó, y al cliente no le aporta nada.
+          staffOnly: true,
           content: `✅ ${agentName} aceptó la transferencia de la conversación.`
         },
         include: MESSAGE_INCLUDE
@@ -618,31 +630,18 @@ router.post('/:id/messages', requireCsrf, async (req, res, next) => {
         where: { organizationId: req.auth.organizationId },
         include: { organization: { select: { name: true } } }
       });
-      const flowResult = runBotFlow(settings?.botFlow, { content: data.content, contact: updated.contact, conversation: updated, isNewConversation: false });
-      if (flowResult) {
-        const flowData = conversationUpdateData(updated, flowResult);
-        if (Object.keys(flowData).length > 0) {
-          updated = await prisma.conversation.update({ where: { id: conversation.id }, data: flowData, include: CONVERSATION_INCLUDE });
-        }
-        for (const reply of flowResult.replies) {
-          const botMessage = await sendBotMessage(conversation.id, req.auth.organizationId, reply);
-          if (updated.channel === 'whatsapp' && updated.contact?.phone) {
-            whatsapp.sendText(req.auth.organizationId, updated.contact.phone, reply).catch((err) => console.error('[whatsapp] flow reply failed', err));
-          }
-          if (botMessage) emitToOrg(req.auth.organizationId, 'message:updated', { conversationId: conversation.id, message: sanitizeMessage(botMessage) });
-        }
-        if (flowResult.conversation && flowResult.conversation.handoff) await require('../lib/botHandoff').announceHandoff({ organizationId: req.auth.organizationId, conversation: updated });
-        if (flowResult.useAi && aiBot.shouldReply(updated, settings)) {
-          const aiSettings = flowResult.aiPrompt ? { ...settings, systemPrompt: `${settings.systemPrompt || ''} ${flowResult.aiPrompt}`.trim() } : settings;
-          const reply = await aiBot.generateReply(conversation.id, aiSettings, settings.organization?.name || null);
-          if (reply && reply.content) {
-            const botMessage = await sendBotMessage(conversation.id, req.auth.organizationId, reply.content, 'ai');
-            if (updated.channel === 'whatsapp' && updated.contact?.phone) whatsapp.sendText(req.auth.organizationId, updated.contact.phone, reply.content).catch((err) => console.error('[whatsapp] flow ai reply failed', err));
-            if (botMessage) emitToOrg(req.auth.organizationId, 'message:updated', { conversationId: conversation.id, message: sanitizeMessage(botMessage) });
-          }
-        }
-        emitToOrg(req.auth.organizationId, 'conversation:updated', { conversation: sanitizeConversation(updated) });
-      }
+      await handleBotTurn({
+        organizationId: req.auth.organizationId,
+        conversation: updated,
+        contact: updated.contact,
+        content: data.content,
+        isNewConversation: false,
+        settings,
+        organizationName: settings?.organization?.name || null,
+        deliver: updated.channel === 'whatsapp' && updated.contact?.phone
+          ? (text) => whatsapp.sendText(req.auth.organizationId, updated.contact.phone, text)
+          : null
+      });
     }
 
     res.status(201).json({ message: payload });

@@ -61,12 +61,15 @@ async function sendApiMessage({
   }
   if (!contact) throw new HttpError(404, 'Contacto no encontrado para ese teléfono');
 
+  // Un solo chat por contacto: si estaba cerrado se reabre en vez de crear otro en la lista.
   let conversation = await prisma.conversation.findFirst({
-    where: { organizationId, contactId: contact.id, channel: 'whatsapp', status: { not: 'CLOSED' } },
+    where: { organizationId, contactId: contact.id, channel: 'whatsapp' },
     orderBy: { updatedAt: 'desc' }
   });
   if (!conversation) {
     conversation = await prisma.conversation.create({ data: { organizationId, contactId: contact.id, channel: 'whatsapp' } });
+  } else if (conversation.status === 'CLOSED') {
+    conversation = await prisma.conversation.update({ where: { id: conversation.id }, data: { status: 'OPEN' } });
   }
 
   let storageKey = null;

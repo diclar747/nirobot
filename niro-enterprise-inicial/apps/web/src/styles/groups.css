@@ -1,0 +1,26 @@
+.groups-toolbar{display:flex;gap:10px;margin:4px 0 14px;flex-wrap:wrap}
+.groups-toolbar .input:first-child{flex:1;min-width:220px}
+.groups-list{display:flex;flex-direction:column;gap:8px}
+.group-row{display:flex;align-items:center;gap:10px;padding:8px 12px;border:1px solid var(--border-color);border-radius:12px;background:var(--bg-surface)}
+.group-row.open{border-color:var(--primary,#0284c7)}
+.group-main{display:flex;flex:1;min-width:0;align-items:center;gap:12px;padding:4px 0;border:0;background:transparent;color:inherit;text-align:left;cursor:pointer;font:inherit}
+.group-avatar{display:inline-grid;flex:none;width:40px;height:40px;place-items:center;border-radius:12px;color:#fff;font-size:14px;font-weight:700}
+.group-avatar-img{flex:none;width:40px;height:40px;border-radius:12px;object-fit:cover}
+.group-avatar-img.round,.group-avatar.round{border-radius:50%}
+.group-info{display:flex;min-width:0;flex:1;flex-direction:column}
+.group-info strong,.group-member-info strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:14px}
+.group-info small,.group-member-info small{overflow:hidden;color:var(--text-muted,#64748b);text-overflow:ellipsis;white-space:nowrap;font-size:12px}
+.group-badges{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:6px}
+.group-chevron{color:var(--text-muted,#64748b);font-size:14px}
+.group-detail{margin:-2px 0 6px 12px;padding:12px;border:1px solid var(--border-color);border-radius:12px;background:var(--bg-surface)}
+.group-detail-tools{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-bottom:10px}
+.group-detail-tools .input{flex:1;min-width:180px}
+.group-filter{display:inline-flex;overflow:hidden;border:1px solid var(--border-color);border-radius:8px}
+.group-filter button{padding:7px 11px;border:0;background:transparent;color:inherit;font-size:12px;cursor:pointer}
+.group-filter button.active{background:var(--primary,#0284c7);color:#fff}
+.group-members{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:8px;max-height:420px;overflow:auto}
+.group-member{display:flex;align-items:center;gap:10px;padding:8px 10px;border:1px solid var(--border-color);border-radius:10px}
+.group-member .group-avatar,.group-member .group-avatar-img{width:34px;height:34px;border-radius:50%;font-size:12px}
+.group-member-info{display:flex;min-width:0;flex:1;flex-direction:column}
+.groups-none{padding:18px;color:var(--text-muted,#64748b);text-align:center;font-size:13px}
+@media (max-width:700px){.group-badges{display:none}.group-members{grid-template-columns:1fr}}

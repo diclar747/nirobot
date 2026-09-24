@@ -1,0 +1,68 @@
+# Stack aparte del sistema de Facebook/Instagram, pensado para vivir en la MISMA
+# red Docker que NiroBot (nirobot_niro) sin tocar su docker-compose. `web` (el
+# nginx de Niro) llega a este servicio por el nombre de red "facebook".
+# Deploy: docker compose --env-file ../secrets/facebook.env up -d --build
+
+services:
+  facebook-db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: autofacebook
+      POSTGRES_USER: autofacebook
+      POSTGRES_PASSWORD: ${FACEBOOK_DB_PASSWORD:?Set FACEBOOK_DB_PASSWORD}
+    volumes:
+      - facebook_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U autofacebook -d autofacebook"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    networks: [facebook]
+
+  facebook:
+    build: ./sistema
+    restart: unless-stopped
+    environment:
+      NIRO_PORT: 8787
+      NIRO_HOST: 0.0.0.0
+      # Vive bajo niro.com.py/facebook (sin subdominio propio); ver server.mjs BASE_PATH.
+      NIRO_BASE_PATH: /facebook
+      # Base del panel que ya existía (organización NIRO_LEGACY_ORG_ID). Las demás organizaciones
+      # reciben su propia base af_<orgId> creada con la conexión de administración (supervisor.mjs).
+      NIRO_DATABASE_URL: postgres://autofacebook:${FACEBOOK_DB_PASSWORD:?Set FACEBOOK_DB_PASSWORD}@facebook-db:5432/autofacebook
+      NIRO_ADMIN_DATABASE_URL: postgres://autofacebook:${FACEBOOK_DB_PASSWORD:?Set FACEBOOK_DB_PASSWORD}@facebook-db:5432/postgres
+      NIRO_LEGACY_ORG_ID: ${FACEBOOK_LEGACY_ORG_ID:?Set FACEBOOK_LEGACY_ORG_ID}
+      NIRO_HEADLESS: "true"
+      # Sin pantalla en el servidor: login de Facebook e Instagram por la "ventana remota" del panel.
+      NIRO_REMOTE_VIEW: "true"
+      # Apagado a propósito durante la Fase 1 (revisión): nadie publica ni pide grupos solo.
+      NIRO_SCHEDULER_AUTOSTART: "false"
+      NIRO_PANEL_PASSWORD: ${FACEBOOK_PANEL_PASSWORD:?Set FACEBOOK_PANEL_PASSWORD}
+      NIRO_SESSION_SECRET: ${FACEBOOK_SESSION_SECRET:?Set FACEBOOK_SESSION_SECRET}
+      # "facebook" es el nombre interno por el que lo llama niro-api directo (puente de sesión,
+      # sin pasar por nginx) — sin esto rejectRequest() lo rechaza con 421.
+      NIRO_ALLOWED_HOSTS: niro.com.py,nirobot.cnid.com.py,facebook
+      NIRO_AI_API_URL: https://niro.cnid.com.py/api/v1
+      NIRO_AI_API_KEY: ${NIRO_AI_API_KEY:-}
+    volumes:
+      - facebook_data:/app/data
+    depends_on:
+      facebook-db:
+        condition: service_healthy
+    expose:
+      - "8787"
+    networks:
+      facebook: {}
+      nirobot_niro:
+        aliases: [facebook]
+
+networks:
+  facebook:
+    driver: bridge
+  nirobot_niro:
+    external: true
+
+volumes:
+  facebook_pgdata:
+  facebook_data:

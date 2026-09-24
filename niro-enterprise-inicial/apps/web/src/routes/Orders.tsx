@@ -68,7 +68,7 @@ export function Orders() {
 
   return (
     <PageShell>
-      <PageHeader
+      <PageHeader tone="amber" hero={{ eyebrow: 'Pedidos y ventas', title: 'De la conversación a la venta.', text: 'Registrá pedidos y cotizaciones, seguí su estado y controlá la facturación.', features: [{ icon: 'cart', label: 'Pedidos' }, { icon: 'clipboard', label: 'Cotizaciones' }, { icon: 'check-circle', label: 'Seguimiento de estado' }], art: ['cart', 'package', 'clipboard'] }}
         icon={<IconPackage />}
         title="Pedidos y ventas"
         subtitle="Seguimiento de pedidos, cotizaciones y facturación de tu negocio."

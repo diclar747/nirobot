@@ -17,6 +17,7 @@ const server = http.createServer(app);
 const io = attachSocketServer(server);
 
 server.listen(port, () => console.log(`[NIRO API] escuchando en ${port}`));
+require('./lib/facebookBridge').start();
 
 if (process.env.WHATSAPP_RESUME_SESSIONS !== 'false') {
   whatsapp.resumeSessions().catch((err) => console.error('[whatsapp] resumeSessions failed', err));

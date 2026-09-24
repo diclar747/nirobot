@@ -12,7 +12,6 @@ import { SmsBuyModal } from '../components/SmsBuyModal';
 import { SmsListInput } from '../components/SmsListInput';
 import { SmsCampaignWizard, type NeedBalance, type WizardSource } from '../components/SmsCampaignWizard';
 import { analyzeText, formatPhone, gs, num, type ParsedList, type SmsCampaign, type SmsCampaignStatus, type SmsMessage, type SmsMessageStatus, type SmsOverview, type SmsPurchase, type SmsTransaction } from '../lib/sms';
-import '../styles/list-filters.css';
 import '../styles/sms.css';
 
 type Tab = 'overview' | 'campaigns' | 'quick' | 'history' | 'balance';
@@ -149,7 +148,7 @@ export function Sms() {
 
   return (
     <PageShell>
-      <PageHeader icon={<Ui name="smartphone" size={22} />} title="SMS" subtitle="Enviá SMS masivos a tus contactos, seguí cada envío y recargá saldo cuando lo necesites."
+      <PageHeader tone="rose" hero={{ eyebrow: 'Mensajería SMS', title: 'Llegá incluso sin WhatsApp.', text: 'Enviá SMS masivos, seguí cada entrega y recargá saldo cuando lo necesites.', features: [{ icon: 'smartphone', label: 'Celulares de Paraguay' }, { icon: 'check-circle', label: 'Estado de entrega' }, { icon: 'zap', label: 'Recarga al instante' }], art: ['smartphone', 'send', 'mail'] }} icon={<Ui name="smartphone" size={22} />} title="SMS" subtitle="Enviá SMS masivos a tus contactos, seguí cada envío y recargá saldo cuando lo necesites."
         actions={<><button type="button" className="btn secondary" onClick={() => openBuy()} disabled={!canBuy}><Ui name="plus" size={15} /> Comprar saldo</button><button type="button" className="btn" onClick={() => setWizard({ mode: 'create' })}>＋ Nueva campaña</button></>} />
 
       {overview && !overview.providerReady && <div className="alert error">El envío de SMS todavía no está configurado en el servidor. Avisale al administrador de la plataforma.</div>}

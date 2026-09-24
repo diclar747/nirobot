@@ -56,7 +56,7 @@ export function OrgDepartments() {
 
   return (
     <PageShell>
-      <PageHeader
+      <PageHeader tone="emerald" hero={{ eyebrow: 'Áreas de atención', title: 'Cada consulta, al área correcta.', text: 'Organizá tu equipo por áreas —ventas, soporte, logística— para derivar conversaciones.', features: [{ icon: 'building', label: 'Áreas' }, { icon: 'users', label: 'Integrantes' }, { icon: 'transfer', label: 'Derivación' }], art: ['building', 'users', 'transfer'] }}
         icon={<IconLayers />}
         title="Departamentos"
         subtitle="Organizá tu equipo por áreas (ventas, soporte, logística) para derivar conversaciones."

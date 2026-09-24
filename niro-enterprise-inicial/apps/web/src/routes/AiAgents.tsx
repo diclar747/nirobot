@@ -58,7 +58,7 @@ export function AiAgents() {
 
   return (
     <PageShell>
-      <PageHeader
+      <PageHeader tone="fuchsia" hero={{ eyebrow: 'Inteligencia artificial', title: 'Agentes que trabajan por vos.', text: 'Creá agentes con su propio prompt y probá sus respuestas antes de llevarlas al bot de WhatsApp.', features: [{ icon: 'sparkles', label: 'Prompts a medida' }, { icon: 'chat', label: 'Pruebas en vivo' }, { icon: 'bot', label: 'Listos para el bot' }], art: ['sparkles', 'bot', 'chat'] }}
         icon={<AgentIcon />}
         title="Agentes IA"
         subtitle="Agentes con su propio prompt, potenciados por la API de Niro IA. Se usan para tareas puntuales o para probar respuestas antes de llevarlas al bot de WhatsApp."

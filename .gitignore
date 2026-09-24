@@ -7,3 +7,11 @@ niro-enterprise-inicial.zip
 # Archivo de bloqueo de tareas programadas de Claude Code (estado local de la sesión).
 .claude/scheduled_tasks.lock
 backups/
+
+# Contraseñas/secretos del servidor (facebook.env, etc.): nunca al repositorio.
+secrets/
+# Scripts SQL puntuales contra la base de producción.
+/*.sql
+# Paquete de Facebook: el volcado trae datos reales (grupos, chats, contactos); el sistema/.gitignore ya saca data/ y .env.
+niro-autofacebook-paquete/base-de-datos/
+niro-autofacebook-paquete/sistema/.claude/

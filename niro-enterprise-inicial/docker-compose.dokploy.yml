@@ -40,6 +40,11 @@ services:
       WHATSAPP_QR_FLOW_ROOT: /app/storage/whatsapp-sessions/.qr-flows
       NIRO_AI_BASE_URL: ${NIRO_AI_BASE_URL:-https://niro.cnid.com.py}
       NIRO_AI_API_KEY: ${NIRO_AI_API_KEY:-}
+      # Puente de sesión con el panel de Facebook/Instagram (niro-facebook, misma red Docker).
+      FACEBOOK_PANEL_URL: ${FACEBOOK_PANEL_URL:-http://facebook:8787}
+      FACEBOOK_PANEL_PASSWORD: ${FACEBOOK_PANEL_PASSWORD:-}
+      # Organizaciones que pueden usar Facebook / Instagram: "*" o vacío = todas; si no, ids separados por coma.
+      FACEBOOK_PANEL_ORG_IDS: ${FACEBOOK_PANEL_ORG_IDS:-}
       VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY:-}
       VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY:-}
       VAPID_SUBJECT: ${VAPID_SUBJECT:-}

@@ -4,11 +4,9 @@ const rateLimit = require('express-rate-limit');
 const { prisma } = require('../lib/prisma');
 const { audit } = require('../lib/audit');
 const { emitToOrg } = require('../lib/realtime');
-const { renderWelcome, matchMenuOption } = require('../lib/bot');
-const { runBotFlow, conversationUpdateData } = require('../lib/botFlow');
-const aiBot = require('../lib/aiBot');
+const { handleBotTurn } = require('../lib/botRunner');
 const push = require('../lib/push');
-const { CONVERSATION_INCLUDE, MESSAGE_INCLUDE, sanitizeConversation, sanitizeMessage, broadcastMessage, sendBotMessage } = require('../lib/conversations');
+const { CONVERSATION_INCLUDE, MESSAGE_INCLUDE, sanitizeConversation, sanitizeMessage, broadcastMessage } = require('../lib/conversations');
 const { startSchema, messageSchema, tokenSchema } = require('../validation/widget.validation');
 const { HttpError } = require('../lib/errors');
 const { upload } = require('../middleware/upload');
@@ -83,21 +81,17 @@ router.post('/:slug/start', async (req, res, next) => {
       metadata: { channel: 'web' }
     });
 
-    const flowResult = runBotFlow(organization.settings?.botFlow, { content: '', contact, conversation, isNewConversation: true });
-    if (flowResult) {
-      const flowData = conversationUpdateData(conversation, flowResult);
-      if (Object.keys(flowData).length > 0) {
-        conversation = await prisma.conversation.update({ where: { id: conversation.id }, data: flowData, include: CONVERSATION_INCLUDE });
-      }
-      for (const reply of flowResult.replies) await sendBotMessage(conversation.id, organization.id, reply);
-    } else if (organization.settings?.aiEnabled) {
-      await sendBotMessage(conversation.id, organization.id, renderWelcome(organization.settings));
-      conversation = await prisma.conversation.update({
-        where: { id: conversation.id },
-        data: { updatedAt: new Date() },
-        include: CONVERSATION_INCLUDE
-      });
-    }
+    // Mismo motor que WhatsApp (lib/botRunner.js): saludo, menú, CRM, derivación y IA.
+    const turn = await handleBotTurn({
+      organizationId: organization.id,
+      conversation,
+      contact,
+      content: '',
+      isNewConversation: true,
+      settings: organization.settings,
+      organizationName: organization.name
+    });
+    if (turn) conversation = turn.conversation;
 
     emitToOrg(organization.id, 'conversation:new', { conversation: sanitizeConversation(conversation) });
 
@@ -158,34 +152,15 @@ router.post('/:slug/messages', async (req, res, next) => {
         where: { organizationId: conversation.organizationId },
         include: { organization: { select: { name: true } } }
       });
-      const flowResult = runBotFlow(settings?.botFlow, { content: data.content, contact: updated.contact, conversation: updated, isNewConversation: false });
-      if (flowResult) {
-        const flowData = conversationUpdateData(updated, flowResult);
-        const routed = Object.keys(flowData).length > 0
-          ? await prisma.conversation.update({ where: { id: conversation.id }, data: flowData, include: CONVERSATION_INCLUDE })
-          : updated;
-        for (const reply of flowResult.replies) await sendBotMessage(conversation.id, conversation.organizationId, reply);
-        if (flowResult.useAi && aiBot.shouldReply(routed, settings)) {
-          const aiSettings = flowResult.aiPrompt ? { ...settings, systemPrompt: `${settings.systemPrompt || ''} ${flowResult.aiPrompt}`.trim() } : settings;
-          const reply = await aiBot.generateReply(conversation.id, aiSettings, settings.organization?.name || null);
-          if (reply && reply.content) await sendBotMessage(conversation.id, conversation.organizationId, reply.content, 'ai');
-        }
-        emitToOrg(conversation.organizationId, 'conversation:updated', { conversation: sanitizeConversation(routed) });
-      } else {
-        const option = settings?.aiEnabled ? matchMenuOption(settings, data.content) : null;
-        if (option) {
-        const routed = await prisma.conversation.update({
-          where: { id: conversation.id },
-          data: { departmentId: option.departmentId },
-          include: CONVERSATION_INCLUDE
-        });
-        await sendBotMessage(conversation.id, conversation.organizationId, `Te derivamos a ${option.label}. En un momento te atienden.`);
-        emitToOrg(conversation.organizationId, 'conversation:updated', { conversation: sanitizeConversation(routed) });
-        } else if (aiBot.shouldReply(updated, settings)) {
-        const reply = await aiBot.generateReply(conversation.id, settings, settings.organization?.name || null);
-        if (reply && reply.content) await sendBotMessage(conversation.id, conversation.organizationId, reply.content, 'ai');
-        }
-      }
+      await handleBotTurn({
+        organizationId: conversation.organizationId,
+        conversation: updated,
+        contact: updated.contact,
+        content: data.content,
+        isNewConversation: false,
+        settings,
+        organizationName: settings?.organization?.name || null
+      });
     }
 
     res.status(201).json({ message: payload });

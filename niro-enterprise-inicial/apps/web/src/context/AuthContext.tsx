@@ -1,13 +1,14 @@
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react';
 import { apiGet, apiPost, ApiError, refreshSession } from '../lib/api';
-import { ensureSocketConnected } from '../lib/socket';
+import { connectSocketFor, disconnectSocket } from '../lib/socket';
 import type { CurrentUser } from '../types';
 
 interface AuthContextValue {
   user: CurrentUser | null;
   loading: boolean;
   login: (email: string, password: string) => Promise<CurrentUser>;
-  logout: () => Promise<void>;
+  logout: () => Promise<CurrentUser | null>;
+  stopImpersonation: () => Promise<CurrentUser>;
   refreshMe: () => Promise<void>;
   setUser: (user: CurrentUser) => void;
 }
@@ -48,9 +49,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => { cancelled = true; };
   }, [refreshMe]);
 
-  // Al iniciar sesión (o restaurarla) el tiempo real tiene que estar conectado: si la conexión se intentó antes de que
-  // existiera la cookie de sesión, se reconecta ahora.
-  useEffect(() => { if (user) ensureSocketConnected(); }, [user?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  // El tiempo real sigue a la sesión: se abre al entrar, se reabre si entra otra persona en la misma pestaña
+  // y se corta al salir (antes quedaba conectado como el usuario anterior y el nuevo figuraba "Desconectado").
+  useEffect(() => {
+    if (user) connectSocketFor(user.id);
+    else if (!loading) disconnectSocket();
+  }, [user?.id, loading]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Si el administrador cambia tus permisos, se reflejan al volver a esta pestaña.
   useEffect(() => {
@@ -70,16 +74,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return data.user;
   }, []);
 
+  // Cerrar sesión dentro de una sesión de soporte devuelve al superadmin a su panel: el servidor contesta con su usuario.
   const logout = useCallback(async () => {
+    let restored: CurrentUser | null = null;
     try {
-      await apiPost('/api/auth/logout');
+      const data = await apiPost<{ user?: CurrentUser } | undefined>('/api/auth/logout');
+      restored = data?.user ?? null;
     } finally {
-      setUser(null);
+      setUser(restored);
     }
+    return restored;
+  }, []);
+
+  const stopImpersonation = useCallback(async () => {
+    const data = await apiPost<{ user: CurrentUser }>('/api/auth/stop-impersonation');
+    setUser(data.user);
+    return data.user;
   }, []);
 
   return (
-    <AuthContext.Provider value={{ user, loading, login, logout, refreshMe, setUser }}>{children}</AuthContext.Provider>
+    <AuthContext.Provider value={{ user, loading, login, logout, stopImpersonation, refreshMe, setUser }}>{children}</AuthContext.Provider>
   );
 }
 

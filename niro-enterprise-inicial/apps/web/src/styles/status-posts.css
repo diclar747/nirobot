@@ -78,7 +78,6 @@
 /* Renovación visual exclusiva de /estados. */
 .sp-page { --sp-radius: 18px; }
 .sp-page .page-header { padding-bottom: 4px; }
-.sp-page .page-header-icon { background: linear-gradient(135deg, #059669, #0284c7); }
 .sp-page .page-subtitle { line-height: 1.6; }
 .sp-hero { position: relative; overflow: hidden; display: flex; align-items: center; justify-content: space-between; gap: 24px; padding: 28px 30px; border: 1px solid var(--border-color); border-radius: var(--sp-radius); background: radial-gradient(ellipse at 90% 0%, rgba(16,185,129,.16), transparent 55%), linear-gradient(130deg, var(--bg-surface), var(--bg-surface-2)); box-shadow: var(--shadow-app); }
 .sp-eyebrow { color: var(--primary-text); font-size: 10px; font-weight: 800; letter-spacing: .15em; }
@@ -202,3 +201,11 @@
 .sv-reaction { font-size: 20px; line-height: 1; }
 .sv-empty { display: flex; flex-direction: column; gap: 4px; padding: 26px 12px; color: var(--text-dim); font-size: 12.5px; text-align: center; }
 .sv-empty strong { color: var(--text-main); font-size: 14px; }
+
+.sp-emoji-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: -4px 0 2px; }
+.sp-emoji-anchor { position: relative; }
+.sp-emoji-toggle { padding: 8px 14px; border: 1px solid var(--border-color); border-radius: 999px; background: var(--bg-surface); color: var(--text-main); cursor: pointer; font-size: 13px; font-weight: 700; }
+.sp-emoji-toggle:hover { border-color: var(--primary-glow); background: var(--primary-soft); }
+.sp-emoji-quick { display: flex; gap: 4px; }
+.sp-emoji-quick button { width: 34px; height: 34px; border: 0; border-radius: 8px; background: transparent; cursor: pointer; font-size: 19px; }
+.sp-emoji-quick button:hover { background: var(--bg-surface-hover); }

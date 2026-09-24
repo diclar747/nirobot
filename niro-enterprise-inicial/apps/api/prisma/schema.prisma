@@ -106,6 +106,7 @@ model Organization {
   callDirectRecords CallDirectRecord[]
   callEvents    CallEvent[]
   callAuditLogs CallAuditLog[]
+  webhooks              ApiWebhook[]
   apiKeys       ApiKey[]
   aiUsageLogs   AiUsageLog[]
   whatsappStatuses WhatsappStatus[]
@@ -172,6 +173,7 @@ model User {
   // Auto chat: los chats nuevos sin asignar le llegan solos (sin que un administrador se los transfiera).
   autoChat           Boolean            @default(false)
   outcomes           ConversationOutcome[] @relation("OutcomeAgent")
+  callSurveyOptions  CallSurveyOption[]
 }
 
 model Department {
@@ -183,6 +185,7 @@ model Department {
   organization   Organization       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   members        DepartmentMember[]
   conversations  Conversation[]
+  surveyOptions  CallSurveyOption[]
 
   @@unique([organizationId, name])
 }
@@ -273,6 +276,8 @@ model Message {
   quotedSender    String?
   transcription   String?          @db.Text
   reactions       Json             @default("[]")
+  // Nota interna que solo ve la administración (propietario/admin/supervisor), no los agentes. Ej.: "X aceptó la transferencia".
+  staffOnly       Boolean          @default(false)
   createdAt       DateTime         @default(now())
   conversation    Conversation     @relation(fields: [conversationId], references: [id], onDelete: Cascade)
   campaign       Campaign?        @relation(fields: [campaignId], references: [id], onDelete: SetNull)
@@ -336,6 +341,7 @@ model CampaignRecipient {
   contactId    String?
   groupJid     String?
   groupName    String?
+  displayName  String? // nombre pegado en la lista de la campaña: manda sobre el del contacto al personalizar
   status       CampaignRecipientStatus @default(PENDING)
   waMessageId  String?
   errorMessage String?
@@ -533,14 +539,19 @@ model CallSurvey {
 }
 
 model CallSurveyOption {
-  id        String   @id @default(cuid())
-  surveyId  String
-  optionKey String
-  optionLabel String
+  id           String      @id @default(cuid())
+  surveyId     String
+  optionKey    String
+  optionLabel  String
   replyMessage String?
-  action    String   @default("AUTO")
-  crmStage  String?
-  survey    CallSurvey @relation(fields: [surveyId], references: [id], onDelete: Cascade)
+  action       String      @default("AUTO")
+  crmStage     String?
+  // Igual que el menú del bot de WhatsApp: si se elige un área o un agente, el chat se deriva al aceptar la opción.
+  departmentId String?
+  userId       String?
+  survey       CallSurvey  @relation(fields: [surveyId], references: [id], onDelete: Cascade)
+  department   Department? @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+  user         User?       @relation(fields: [userId], references: [id], onDelete: SetNull)
 
   @@unique([surveyId, optionKey])
 }
@@ -611,6 +622,7 @@ model ApiKey {
   organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   createdBy       User?        @relation(fields: [createdByUserId], references: [id], onDelete: SetNull)
   messages        Message[]
+  webhooks        ApiWebhook[]
 
   @@index([organizationId, revokedAt, createdAt])
 }
@@ -668,6 +680,25 @@ model OrderItem {
   order     Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
 }
 
+// Webhooks de la API pública: a dónde avisar cuando entra un mensaje, cambia su estado o se actualiza un chat.
+model ApiWebhook {
+  id             String       @id @default(cuid())
+  organizationId String
+  apiKeyId       String?
+  url            String
+  secret         String
+  events         String[]     @default([])
+  active         Boolean      @default(true)
+  lastStatus     Int?
+  lastError      String?
+  lastDeliveryAt DateTime?
+  createdAt      DateTime     @default(now())
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  apiKey         ApiKey?      @relation(fields: [apiKeyId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId, active])
+}
+
 model AuditLog {
   id             String   @id @default(cuid())
   organizationId String?
@@ -691,6 +722,8 @@ model RefreshToken {
   replacedByHash String?
   userAgent      String?
   ip             String?
+  // Sesión prestada: superadmin que entró como este usuario desde el panel (soporte). Null = sesión normal.
+  impersonatorId String?
   user           User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])

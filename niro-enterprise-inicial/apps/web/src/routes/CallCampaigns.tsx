@@ -1,4 +1,5 @@
 import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
+import { PageHeader } from '../components/PageKit';
 import { apiDelete, apiGet, apiPost, apiUpload, ApiError } from '../lib/api';
 import { getSocket } from '../lib/socket';
 import { Modal } from '../components/Modal';
@@ -160,29 +161,25 @@ export function CallCampaigns() {
 
   return (
     <div className="page-shell call-page">
-      <header className="page-header call-page-header">
-        <div className="page-header-main">
-          <div className="page-header-icon call-header-icon"><Glyph c="☎" size={22} /></div>
-          <div className="page-header-text">
-            <h1 className="page-title">Campañas de llamadas</h1>
-            <p className="page-subtitle">Programá llamadas autorizadas, reproducí un audio y seguí cada resultado desde un solo lugar.</p>
-          </div>
-        </div>
-        <div className="page-header-actions call-header-actions">
+      <PageHeader
+        tone="sky"
+        className="call-page-header"
+        icon={<Ui name="phone" size={22} />}
+        title="Campañas de llamadas"
+        subtitle="Programá llamadas autorizadas, reproducí un audio y seguí cada resultado desde un solo lugar."
+        actions={<>
           <button type="button" className="btn secondary" onClick={load} disabled={loading}><Glyph c="↻" size={15} /> Actualizar</button>
           <button type="button" className="btn secondary" onClick={() => setShowConnect(true)}><Glyph c="◉" size={15} /> Cuenta WhatsApp</button>
           <button type="button" className="btn" onClick={() => setWizard({ mode: 'create' })}>＋ Nueva campaña</button>
-        </div>
-      </header>
-
-      <section className="call-hero">
-        <div>
-          <span className="call-eyebrow">WHATSAPP VOICE CENTER</span>
-          <h2>Gestioná tus llamadas desde un solo lugar.</h2>
-          <p>Prepará campañas, supervisá cada resultado y mantené todo el historial de voz organizado.</p>
-        </div>
-        <div className="call-hero-badge"><span className="call-live-dot" /> Seguimiento en tiempo real</div>
-      </section>
+        </>}
+        hero={{
+          eyebrow: 'WhatsApp Voice Center',
+          title: 'Gestioná tus llamadas desde un solo lugar.',
+          text: 'Prepará campañas, supervisá cada resultado y mantené todo el historial de voz organizado.',
+          features: [{ icon: 'volume', label: 'Llamadas con audio' }, { icon: 'calendar', label: 'Campañas programadas' }, { icon: 'zap', label: 'Resultados en tiempo real' }],
+          art: ['volume', 'phone', 'clock']
+        }}
+      />
 
       {provider && !provider.available && <div className="call-provider-warning"><strong>Proveedor de llamadas pendiente</strong><span>{provider.reason}</span></div>}
       {provider?.mode === 'mock' && <div className="call-provider-note"><strong>Modo simulador local activo</strong><span>Permite probar estados, pausa, reanudación, encuesta e historial sin llamar a personas reales.</span></div>}
@@ -332,9 +329,28 @@ function HistoryTable({ attempts, onRedial, onChanged }: { attempts: any[]; onRe
 function AudioLibrary({ audios, onChange }: { audios: CallAudio[]; onChange: () => void }) {
   const { confirm, notify } = useAlerts();
   const [file, setFile] = useState<File | null>(null); const [name, setName] = useState(''); const [busy, setBusy] = useState(false); const [error, setError] = useState<string | null>(null);
+  const MAX_AUDIO_SECONDS = 60;
+  // Se avisa al elegir el archivo, sin esperar a subirlo: igual que un mensaje de voz de WhatsApp, hasta 1 minuto.
+  function pickFile(picked: File | null) {
+    setError(null);
+    if (!picked) { setFile(null); return; }
+    const el = document.createElement('audio');
+    el.preload = 'metadata';
+    el.onloadedmetadata = () => {
+      URL.revokeObjectURL(el.src);
+      if (Number.isFinite(el.duration) && el.duration > MAX_AUDIO_SECONDS + 0.5) {
+        setError(`Este audio dura ${Math.round(el.duration)} s; el máximo para una llamada es ${MAX_AUDIO_SECONDS} s (1 minuto). Recortalo y volvé a intentar.`);
+        setFile(null);
+      } else {
+        setFile(picked);
+      }
+    };
+    el.onerror = () => setFile(picked); // no se pudo medir en el navegador: se valida igual al subir
+    el.src = URL.createObjectURL(picked);
+  }
   async function upload(e: FormEvent) { e.preventDefault(); if (!file) return; setBusy(true); setError(null); try { const form = new FormData(); form.append('file', file); form.append('name', name || file.name.replace(/\.[^.]+$/, '')); await apiUpload('/api/org/wa-calls/audios', form); setFile(null); setName(''); notify('Audio cargado', { tone: 'success' }); onChange(); } catch (err) { setError(err instanceof ApiError ? err.message : 'No se pudo cargar el audio'); } finally { setBusy(false); } }
   async function remove(audio: CallAudio) { const ok = await confirm({ title: 'Eliminar audio', message: `¿Eliminar “${audio.name}”? Si lo usa una campaña, el sistema no lo va a permitir.`, confirmLabel: 'Eliminar', tone: 'danger' }); if (!ok) return; try { await apiDelete(`/api/org/wa-calls/audios/${audio.id}`); notify('Audio eliminado', { tone: 'success' }); onChange(); } catch (err) { notify(err instanceof ApiError ? err.message : 'No se pudo eliminar el audio', { tone: 'error' }); } }
-  return <section className="call-library-grid"><div className="call-table-card"><div className="call-section-heading"><div><h2>Biblioteca de audios</h2><p>Los audios que subís se reproducen en las llamadas de tus campañas.</p></div></div>{audios.length ? <div className="call-audio-list">{audios.map((audio) => <div className="call-audio-row" key={audio.id}><span className="call-audio-icon"><Ui name="volume" size={18} /></span><div><strong>{audio.name}</strong><small>Audio subido · {formatBytes(audio.size)}{audio.durationSeconds ? ` · ${audio.durationSeconds}s` : ''}</small></div><audio controls preload="none" src={audio.fileUrl} /><button type="button" className="btn secondary small" onClick={() => remove(audio)} aria-label={`Eliminar ${audio.name}`}><Ui name="trash" size={14} /></button></div>)}</div> : <EmptyState text="Subí tu primer audio para empezar" />}</div><div className="call-upload-card"><form onSubmit={upload}><span className="call-form-kicker">NUEVO AUDIO</span><h2>Subir audio</h2><p>Elegí un archivo de tu computadora o teléfono. Acepta MP3, WAV, M4A, OGG, OPUS, AAC y AMR; si hace falta, se convierte solo a MP3.</p><input className="input" placeholder="Nombre del audio (opcional)" value={name} onChange={(e) => setName(e.target.value)} /><label className="call-file-picker"><input type="file" accept="audio/*,.mp3,.wav,.m4a,.aac,.ogg,.opus,.amr" onChange={(e) => setFile(e.target.files?.[0] || null)} />{file ? <><Ui name="volume" size={16} /> {file.name} · {formatBytes(file.size)}</> : <><Ui name="download" size={16} style={{ transform: 'rotate(180deg)' }} /> Elegir un audio</>}</label>{error && <div className="call-inline-error">{error}</div>}<button className="btn" disabled={!file || busy}>{busy ? 'Cargando…' : 'Subir audio'}</button></form></div></section>;
+  return <section className="call-library-grid"><div className="call-table-card"><div className="call-section-heading"><div><h2>Biblioteca de audios</h2><p>Los audios que subís se reproducen en las llamadas de tus campañas.</p></div></div>{audios.length ? <div className="call-audio-list">{audios.map((audio) => <div className="call-audio-row" key={audio.id}><span className="call-audio-icon"><Ui name="volume" size={18} /></span><div><strong>{audio.name}</strong><small>Audio subido · {formatBytes(audio.size)}{audio.durationSeconds ? ` · ${audio.durationSeconds}s` : ''}</small></div><audio controls preload="none" src={audio.fileUrl} /><button type="button" className="btn secondary small" onClick={() => remove(audio)} aria-label={`Eliminar ${audio.name}`}><Ui name="trash" size={14} /></button></div>)}</div> : <EmptyState text="Subí tu primer audio para empezar" />}</div><div className="call-upload-card"><form onSubmit={upload}><span className="call-form-kicker">NUEVO AUDIO</span><h2>Subir audio</h2><p>Elegí un archivo de tu computadora o teléfono. Acepta MP3, WAV, M4A, OGG, OPUS, AAC y AMR; si hace falta, se convierte solo a MP3. <b>Máximo 60 segundos</b> (como un audio de WhatsApp).</p><input className="input" placeholder="Nombre del audio (opcional)" value={name} onChange={(e) => setName(e.target.value)} /><label className="call-file-picker"><input type="file" accept="audio/*,.mp3,.wav,.m4a,.aac,.ogg,.opus,.amr" onChange={(e) => pickFile(e.target.files?.[0] || null)} />{file ? <><Ui name="volume" size={16} /> {file.name} · {formatBytes(file.size)}</> : <><Ui name="download" size={16} style={{ transform: 'rotate(180deg)' }} /> Elegir un audio</>}</label>{error && <div className="call-inline-error">{error}</div>}<button className="btn" disabled={!file || busy}>{busy ? 'Cargando…' : 'Subir audio'}</button></form></div></section>;
 }
 
 function AccountPanel({ accounts, provider, onConnect, onChange }: { accounts: CallAccount[]; provider: CallProviderInfo | null; onConnect: () => void; onChange: () => void }) {
