@@ -6,7 +6,6 @@ import { APP_THEMES, useTheme, type AppTheme } from '../context/ThemeContext';
 import { Logo } from './Logo';
 import { NiroMascot } from './NiroMascot';
 import { WhatsAppConnectModal } from './WhatsAppConnectModal';
-import { NotificationBell } from './NotificationBell';
 import { BillingGate } from './BillingGate';
 import { NotificationsProvider } from '../context/NotificationsContext';
 import { NotificationCenter, NotificationSettingsModal, NotificationToasts } from './NotificationCenter';
@@ -718,7 +717,6 @@ export function Layout() {
               </svg>
             </button>
             {!isSuperadmin && <NotificationCenter onOpenSettings={() => setShowNotifSettings(true)} />}
-            <NotificationBell />
 
             {/* Selector de plantilla de color */}
             <div className="theme-menu-anchor">

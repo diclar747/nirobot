@@ -3,6 +3,7 @@ import { useNotifications, type AppNotification } from '../context/Notifications
 import { playMessageSound, playTransferSound } from '../lib/sounds';
 import { Modal } from './Modal';
 import { Ui } from './Ui';
+import { PushNotificationsRow } from './NotificationBell';
 import '../styles/notifications.css';
 
 function timeAgo(at: number) {
@@ -126,6 +127,7 @@ export function NotificationSettingsModal({ onClose }: { onClose: () => void }) 
         <input type="range" min={10} max={100} value={Math.round(prefs.volume * 100)} onChange={(e) => updatePrefs({ volume: Number(e.target.value) / 100 })} aria-label="Volumen de las notificaciones" /></div>
       <Toggle checked={prefs.popups} onChange={(v) => updatePrefs({ popups: v })} title="Avisos emergentes" description="Un cuadro en pantalla cuando llega una transferencia o un mensaje." />
       <Toggle checked={prefs.desktop && permission === 'granted'} onChange={toggleDesktop} title="Avisos del navegador" description={!supported ? 'Tu navegador no los soporta.' : permission === 'denied' ? 'Están bloqueados: habilitalos desde los permisos del sitio en tu navegador.' : 'Te avisa aunque estés en otra pestaña o ventana.'} />
+      <PushNotificationsRow render={({ checked, disabled, description, onChange }) => <Toggle checked={checked} onChange={(v) => { if (!disabled) void onChange(v); }} title="Notificaciones push" description={description} />} />
       <div className="ns-foot"><button type="button" className="btn" onClick={onClose}>Listo</button></div>
     </Modal>
   );

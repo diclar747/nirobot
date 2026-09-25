@@ -1,0 +1,8 @@
+# node_modules se instala dentro de la imagen (npm ci): los del servidor son de otra versión de Node.
+node_modules
+tests
+storage
+coverage
+docs
+.env*
+*.log

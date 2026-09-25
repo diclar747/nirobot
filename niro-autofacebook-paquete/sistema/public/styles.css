@@ -913,16 +913,6 @@ html.dialog-open { overflow: hidden; }
   .dialog-foot .btn { width: 100%; }
 }
 
-/* Embebido dentro de Niro (iframe): el menú lateral y las secciones las da Niro. */
-:root[data-embed] .side, :root[data-embed] .side-toggle, :root[data-embed] .logo, :root[data-embed] .top-nav { display: none !important; }
-:root[data-embed] .topbar { grid-template-columns: minmax(0, 1fr) auto; }
-:root[data-embed] .layout, :root[data-embed][data-sidebar="collapsed"] .layout { grid-template-columns: minmax(0, 1fr) 320px; }
-:root[data-embed] .layout.no-right, :root[data-embed][data-sidebar="collapsed"] .layout.no-right { grid-template-columns: minmax(0, 1fr); }
-@media (max-width: 1360px) { :root[data-embed] .layout, :root[data-embed][data-sidebar="collapsed"] .layout { grid-template-columns: minmax(0, 1fr); } }
-@media (max-width: 640px) {
-  :root[data-embed] .layout, :root[data-embed] .layout.no-right { padding-bottom: 24px; }
-  :root[data-embed] .toasts, :root[data-embed] .sync-float { bottom: 16px; }
-}
 
 /* Ventana remota de Facebook (remote-view.js) */
 .rv-modal { background: transparent; backdrop-filter: none; }
@@ -936,10 +926,25 @@ html.dialog-open { overflow: hidden; }
 .rv-screen img { display: block; width: 100%; height: auto; cursor: pointer; user-select: none; min-height: 200px; }
 .rv-screen img.rv-loading { opacity: .4; }
 .rv-url { color: var(--muted); font-family: "DM Mono", monospace; overflow-wrap: anywhere; }
-/* Embebido: la barra superior también la pone Niro (búsqueda, avisos, cuenta). */
-:root[data-embed] .topbar { display: none; }
-:root[data-embed] .layout, :root[data-embed] .layout.no-right { padding-top: 18px; }
-:root[data-embed] .busy-bar { top: 0; }
-:root[data-embed] .side { top: 18px; }
 .rv-screen { position: relative; }
 .rv-screen.rv-busy::after { content: "Enviando…"; position: absolute; top: 8px; right: 8px; padding: 3px 10px; border-radius: 999px; background: var(--violet); color: #fff; font-size: 12px; font-weight: 700; }
+
+/* ----------------------------------------------------------------------------
+   Embebido dentro de Niro (iframe, html[data-embed]).
+   Niro pone el menú lateral con las secciones: acá se esconde solo el menú lateral propio (y su botón).
+   Todo lo demás queda: barra superior (buscar, secciones, + Crear, Messenger rápido, avisos, cuenta),
+   columna derecha (Automatizaciones, Próximas publicaciones, Contactos) y la vista previa al costado.
+   Sin el menú propio sobra ancho, así que el diseño de escritorio completo se mantiene hasta 1000 px
+   (el panel suelto lo achicaba desde 1360 px, y dentro de Niro el iframe mide ~1200 px).
+   ---------------------------------------------------------------------------- */
+:root[data-embed] .side, :root[data-embed] .side-toggle { display: none !important; }
+:root[data-embed] .layout, :root[data-embed][data-sidebar="collapsed"] .layout { grid-template-columns: minmax(0, 1fr) 300px; }
+:root[data-embed] .layout.no-right, :root[data-embed][data-sidebar="collapsed"] .layout.no-right { grid-template-columns: minmax(0, 1fr); }
+@media (min-width: 1000px) and (max-width: 1360px) {
+  :root[data-embed] .right { display: grid; }
+  :root[data-embed] .composer-grid { grid-template-columns: minmax(0, 1.25fr) minmax(280px, .85fr); }
+  :root[data-embed] .preview-card { position: sticky; }
+}
+@media (max-width: 999px) {
+  :root[data-embed] .layout, :root[data-embed][data-sidebar="collapsed"] .layout { grid-template-columns: minmax(0, 1fr); }
+}

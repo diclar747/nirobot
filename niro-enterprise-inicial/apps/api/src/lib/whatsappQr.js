@@ -17,6 +17,21 @@ function flowDir(flowId) {
   return path.join(FLOW_ROOT, flowId);
 }
 
+// QR de ingreso que nadie terminó de escanear: quedan carpetas sueltas. Se borran pasado un día.
+const STALE_FLOW_MS = 24 * 3600 * 1000;
+function pruneStaleFlows() {
+  let names;
+  try { names = fs.readdirSync(FLOW_ROOT); } catch { return; }
+  for (const name of names) {
+    const dir = path.join(FLOW_ROOT, name);
+    try {
+      if (Date.now() - fs.statSync(dir).mtimeMs > STALE_FLOW_MS) fs.rmSync(dir, { recursive: true, force: true });
+    } catch { /* ya no existe */ }
+  }
+}
+setImmediate(pruneStaleFlows);
+setInterval(pruneStaleFlows, 3600 * 1000).unref();
+
 function wait(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }

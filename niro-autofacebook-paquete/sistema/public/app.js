@@ -4,7 +4,7 @@ import { installExplorer } from "./explorer-ui.js";
 import { installCrm } from "./crm-ui.js";
 import { installAppearance } from "./appearance.js";
 import { createDialogs } from "./dialogs.js";
-import { createRemoteView } from "./remote-view.js?v=0.9.6";
+import { createRemoteView } from "./remote-view.js?v=0.9.7";
 
 // Prefijo cuando el panel vive bajo una ruta del sitio principal (ej. /facebook); "" si tiene dominio propio.
 const BASE = window.NIRO_BASE || "";

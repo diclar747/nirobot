@@ -135,6 +135,31 @@ function rotatePartialSession(organizationId) {
 
 // Moves dead credentials out of SESSION_ROOT (so a restart never tries to resume them) without
 // destroying them.
+// Las sesiones archivadas son credenciales que WhatsApp ya revocó: sirven solo para diagnosticar un rato.
+// Se guardan como mucho las 2 más recientes por organización y nunca más de 7 días (llegaron a ocupar ~700 MB).
+const REMOVED_KEEP_PER_ORG = 2;
+const REMOVED_MAX_AGE_MS = 7 * 24 * 3600 * 1000;
+function pruneRemovedSessions() {
+  let entries;
+  try { entries = fs.readdirSync(REMOVED_SESSION_ROOT); } catch { return; }
+  const byOrg = new Map();
+  for (const name of entries) {
+    const match = name.match(/^(.+)-[a-z]+-(\d{10,})$/);
+    if (!match) continue;
+    const list = byOrg.get(match[1]) || [];
+    list.push({ name, at: Number(match[2]) });
+    byOrg.set(match[1], list);
+  }
+  for (const list of byOrg.values()) {
+    list.sort((a, b) => b.at - a.at);
+    list.forEach((entry, index) => {
+      if (index < REMOVED_KEEP_PER_ORG && Date.now() - entry.at < REMOVED_MAX_AGE_MS) return;
+      fs.rmSync(path.join(REMOVED_SESSION_ROOT, entry.name), { recursive: true, force: true });
+    });
+  }
+}
+setImmediate(pruneRemovedSessions);
+
 function archiveSession(organizationId, label) {
   const dir = sessionDir(organizationId);
   if (!fs.existsSync(dir)) return;
@@ -152,6 +177,7 @@ function archiveSession(organizationId, label) {
     console.warn(`[whatsapp] no se pudo archivar la sesión de ${organizationId}: ${err.message}`);
     fs.rmSync(dir, { recursive: true, force: true });
   }
+  pruneRemovedSessions();
 }
 
 function isDeviceRemoved(error) {
